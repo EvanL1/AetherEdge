@@ -89,7 +89,17 @@ aether models products get <id>
 aether models instances list
 aether models instances list --product <product_id>
 aether models instances get <id>
+AETHER_ACCESS_TOKEN='<Admin JWT>' aether models instances create \
+  <product_name> <instance_name> --props 'owner="ops"' \
+  --expected-revision <revision> --confirmed
+AETHER_ACCESS_TOKEN='<Admin JWT>' aether models instances update <id> \
+  --props capacity=120 --expected-revision <revision> --confirmed
+AETHER_ACCESS_TOKEN='<Admin JWT>' aether models instances delete <id> \
+  --expected-revision <revision> --confirmed
 ```
+
+Read `<revision>` from `GET /api/instances/revision`. Property values are
+strict JSON literals, so string values require JSON quotes.
 
 ### Business Rules (automation :6002)
 ```bash

@@ -78,6 +78,7 @@ async fn live_snapshot_contains_validated_point_health_and_logical_routes() {
         snapshot.health_manifest().channel_ids().collect::<Vec<_>>(),
         vec![7]
     );
+    assert_eq!(snapshot.channel_freshness_timeout_ms(7), Some(90_000));
     assert_ne!(snapshot.digest(), 0);
 }
 
@@ -433,4 +434,97 @@ async fn constraint_only_change_advances_the_deterministic_digest() {
         second.point_manifest().layout_hash()
     );
     assert_ne!(first.digest(), second.digest());
+}
+
+#[tokio::test]
+async fn explicit_poll_interval_controls_freshness_and_digest_in_the_same_snapshot() {
+    let pool = live_topology_pool().await;
+    sqlx::query("ALTER TABLE channels ADD COLUMN config TEXT")
+        .execute(&pool)
+        .await
+        .expect("stored channel configuration column");
+    insert_channel_points(&pool).await;
+    sqlx::query(
+        r#"UPDATE channels SET config = '{"parameters":{"poll_interval_ms":120000}}' WHERE channel_id = 7"#,
+    )
+    .execute(&pool)
+    .await
+    .expect("slow polling policy");
+
+    let first = load_sqlite_live_topology(&pool)
+        .await
+        .expect("slow polling topology");
+    assert_eq!(first.channel_freshness_timeout_ms(7), Some(360_000));
+
+    sqlx::query(
+        r#"UPDATE channels SET config = '{"parameters":{"poll_interval_ms":240000}}' WHERE channel_id = 7"#,
+    )
+    .execute(&pool)
+    .await
+    .expect("updated polling policy");
+    let second = load_sqlite_live_topology(&pool)
+        .await
+        .expect("updated slow polling topology");
+
+    assert_eq!(second.channel_freshness_timeout_ms(7), Some(720_000));
+    assert_eq!(
+        first.point_manifest().layout_hash(),
+        second.point_manifest().layout_hash(),
+        "polling policy does not alter the physical SHM layout"
+    );
+    assert_ne!(
+        first.digest(),
+        second.digest(),
+        "a rule-control safety policy change must publish a new generation"
+    );
+}
+
+#[tokio::test]
+async fn maximum_poll_interval_has_a_bounded_three_poll_freshness_budget() {
+    let pool = live_topology_pool().await;
+    sqlx::query("ALTER TABLE channels ADD COLUMN config TEXT")
+        .execute(&pool)
+        .await
+        .expect("stored channel configuration column");
+    insert_channel_points(&pool).await;
+    sqlx::query(
+        r#"UPDATE channels SET config = '{"parameters":{"poll_interval_ms":86400000}}' WHERE channel_id = 7"#,
+    )
+    .execute(&pool)
+    .await
+    .expect("maximum polling policy");
+
+    let snapshot = load_sqlite_live_topology(&pool)
+        .await
+        .expect("maximum polling topology");
+
+    assert_eq!(snapshot.channel_freshness_timeout_ms(7), Some(259_200_000));
+}
+
+#[tokio::test]
+async fn invalid_persisted_poll_interval_fails_closed() {
+    let pool = live_topology_pool().await;
+    sqlx::query("ALTER TABLE channels ADD COLUMN config TEXT")
+        .execute(&pool)
+        .await
+        .expect("stored channel configuration column");
+    insert_channel_points(&pool).await;
+
+    for invalid in [
+        "not-json",
+        r#"{"parameters":{"poll_interval_ms":"120000"}}"#,
+        r#"{"parameters":{"poll_interval_ms":0}}"#,
+        r#"{"parameters":{"poll_interval_ms":86400001}}"#,
+    ] {
+        sqlx::query("UPDATE channels SET config = ? WHERE channel_id = 7")
+            .bind(invalid)
+            .execute(&pool)
+            .await
+            .expect("invalid polling policy fixture");
+
+        let error = load_sqlite_live_topology(&pool)
+            .await
+            .expect_err("invalid polling policy must not enter a runtime snapshot");
+        assert_eq!(error.kind(), PortErrorKind::InvalidData);
+    }
 }

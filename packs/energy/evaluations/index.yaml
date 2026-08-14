@@ -1,7 +1,7 @@
-schema: aether.pack.asset-index.v1
+schema: aether.pack.asset-index
 category: evaluations
 assets:
   - id: energy.pack-safety
     path: pack-safety.yaml
-    schema: aether.pack.evaluation-suite.v1
+    schema: aether.pack.evaluation-suite
     media_type: application/yaml

@@ -9,16 +9,17 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-aether-cloudlink = { version = "0.0.1", path = "../../../../crates/aether-cloudlink" }
-aether-ports = { version = "0.0.1", path = "../../../../crates/aether-ports" }
+aether-cloudlink = { version = "0.0.2", path = "../../../../crates/aether-cloudlink" }
+aether-ports = { version = "0.0.2", path = "../../../../crates/aether-ports" }
 async-trait = { workspace = true }
 tokio = { workspace = true }
+tokio-util = { workspace = true, features = ["rt"] }
 rumqttc = { version = "0.25.1", default-features = false, features = ["use-native-tls"] }
 thiserror = { workspace = true }
 
 [dev-dependencies]
-aether-domain = { version = "0.0.1", path = "../../../../crates/aether-domain" }
-aether-store-local = { version = "0.0.1", path = "../../../../libs/aether-store-local" }
+aether-domain = { version = "0.0.2", path = "../../../../crates/aether-domain" }
+aether-store-local = { version = "0.0.2", path = "../../../../libs/aether-store-local" }
 base64 = "0.22"
 ed25519-dalek = { version = "2.2", features = ["zeroize"] }
 serde_json = { workspace = true }

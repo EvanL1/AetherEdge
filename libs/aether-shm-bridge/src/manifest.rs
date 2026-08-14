@@ -6,7 +6,7 @@ use std::hash::{Hash, Hasher};
 use aether_domain::{ChannelCommandAddress, ChannelId, ChannelPointAddress, PointId, PointKind};
 use aether_ports::{PortError, PortErrorKind, PortResult};
 
-const POINT_MANIFEST_DOMAIN: &str = "aether.live-state.layout.v5.ownership-aligned";
+const POINT_MANIFEST_DOMAIN: &str = "aether.live-state.layout.ownership-aligned";
 const POINT_SLOTS_PER_CACHE_LINE: usize = 2;
 
 const CHANNEL_POINT_KINDS: [PointKind; 4] = [

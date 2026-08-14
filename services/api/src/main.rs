@@ -4,17 +4,20 @@
 //! - JWT auth (users, roles)
 //! - WebSocket real-time data push with subscriptions
 //! - POST /broadcast – push any JSON to all WebSocket clients
-//! - GET /api/v1/homepage – calculated points CRUD
-//! - GET /api/v1/network – read-only systemd-networkd view; remote writes disabled
-//! - GET /api/v1/config – admin-only config checks/export; remote mutation is disabled
-//! - /api/v1/{io,automation,history,uplink,alarm}/* – authenticated application gateway
+//! - GET /api/homepage – calculated points CRUD
+//! - GET /api/network – read-only systemd-networkd view; remote writes disabled
+//! - GET /api/config – admin-only configuration checks and export
+//! - /api/{io,automation,history,uplink,alarm}/* – authenticated application gateway
 
+use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::{
-    Router,
+    Json, Router,
     extract::{DefaultBodyLimit, Query, State, WebSocketUpgrade},
-    response::IntoResponse,
+    http::StatusCode,
+    response::{IntoResponse, Response},
     routing::{delete, get, post, put},
 };
 use dashmap::DashMap;
@@ -23,7 +26,7 @@ use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
-#[cfg(feature = "openapi")]
+#[cfg(any(feature = "swagger-ui", all(test, feature = "openapi")))]
 use utoipa::OpenApi;
 #[cfg(feature = "swagger-ui")]
 use utoipa_swagger_ui::{Config, SwaggerUi, Url};
@@ -52,13 +55,16 @@ mod ws;
 
 use crate::config::GatewayConfig;
 use crate::live_values::{build_gateway_value_source, run_gateway_topology_refresh};
-#[cfg(feature = "openapi")]
+#[cfg(any(feature = "swagger-ui", all(test, feature = "openapi")))]
 use crate::routes_data_processing::DataProcessingApiDoc;
 use crate::state::AppState;
 use crate::ws::WsHub;
 
 const BOOTSTRAP_ADMIN_PASSWORD_ENV: &str = "AETHER_BOOTSTRAP_ADMIN_PASSWORD";
 const MIN_BOOTSTRAP_ADMIN_PASSWORD_CHARS: usize = 16;
+const MAX_WS_CLIENT_ID_BYTES: usize = 128;
+const MAX_WS_DATA_TYPE_BYTES: usize = 64;
+const HTTP_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn bootstrap_admin_login_digest(password: &str) -> String {
     format!("{:x}", Md5::digest(password.as_bytes()))
@@ -119,12 +125,14 @@ where
 // ApiDoc / SecurityAddon are compiled only with the Swagger UI so shared
 // admin annotations can remain opt-in through `common/openapi`.
 
-#[cfg(feature = "openapi")]
+#[cfg(any(feature = "swagger-ui", all(test, feature = "openapi")))]
 #[derive(OpenApi)]
 #[openapi(
     paths(
         service_info,
         health_check,
+        liveness_check,
+        readiness_check,
         ws_handler,
         routes_auth::register,
         routes_auth::login,
@@ -152,11 +160,6 @@ where
         routes_network::apply_network_config,
         routes_config::check_config,
         routes_config::export_config,
-        routes_config::import_config,
-        routes_config::restart_services,
-        routes_config::start_upgrade,
-        routes_config::abort_upgrade,
-        routes_config::upgrade_status,
         common::admin_api::get_log_level,
         common::admin_api::set_log_level,
         common::admin_api::list_log_files,
@@ -183,7 +186,6 @@ where
         models::UserListData,
         models::DeletedUserData,
         models::AuthStatsData,
-        models::UserUpdateSuccess,
         models::HomepagePageData,
         models::HomepageResetData,
         models::GatewayDataResponse<models::HomepagePageData>,
@@ -217,9 +219,9 @@ where
 )]
 struct ApiDoc;
 
-#[cfg(feature = "openapi")]
+#[cfg(any(feature = "swagger-ui", all(test, feature = "openapi")))]
 struct SecurityAddon;
-#[cfg(feature = "openapi")]
+#[cfg(any(feature = "swagger-ui", all(test, feature = "openapi")))]
 impl utoipa::Modify for SecurityAddon {
     fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
         if let Some(components) = openapi.components.as_mut() {
@@ -273,6 +275,51 @@ struct WsParams {
     data_type: Option<String>,
 }
 
+fn validate_ws_params(params: &WsParams) -> Result<(), &'static str> {
+    if params
+        .client_id
+        .as_ref()
+        .is_some_and(|client_id| client_id.len() > MAX_WS_CLIENT_ID_BYTES)
+    {
+        return Err("client_id exceeds the 128-byte limit");
+    }
+    if params
+        .data_type
+        .as_ref()
+        .is_some_and(|data_type| data_type.len() > MAX_WS_DATA_TYPE_BYTES)
+    {
+        return Err("data_type exceeds the 64-byte limit");
+    }
+    Ok(())
+}
+
+fn invalid_ws_query_response(message: &str) -> Response {
+    (
+        StatusCode::BAD_REQUEST,
+        Json(serde_json::json!({
+            "error": {
+                "code": "INVALID_WS_QUERY",
+                "message": message,
+            }
+        })),
+    )
+        .into_response()
+}
+
+async fn validate_ws_query_before_upgrade(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let params = match Query::<WsParams>::try_from_uri(request.uri()) {
+        Ok(Query(params)) => params,
+        Err(rejection) => return rejection.into_response(),
+    };
+    if let Err(message) = validate_ws_params(&params) {
+        return invalid_ws_query_response(message);
+    }
+    next.run(request).await
+}
+
 #[utoipa::path(
     get,
     path = "/ws",
@@ -283,6 +330,7 @@ struct WsParams {
     ),
     responses(
         (status = 101, description = "WebSocket protocol upgrade"),
+        (status = 400, description = "WebSocket query parameter exceeds its size limit"),
         (status = 401, description = "Missing or invalid access token")
     ),
     security(
@@ -295,14 +343,20 @@ async fn ws_handler(
     ws: WebSocketUpgrade,
     Query(params): Query<WsParams>,
     State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+) -> Response {
+    if let Err(message) = validate_ws_params(&params) {
+        return invalid_ws_query_response(message);
+    }
     let client_id = params
         .client_id
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let data_type = params.data_type.unwrap_or_else(|| "general".to_string());
     let hub = Arc::clone(&state.ws_hub);
 
-    ws.on_upgrade(move |socket| ws::handle_socket(socket, client_id, data_type, hub))
+    ws.max_message_size(64 * 1024)
+        .max_frame_size(64 * 1024)
+        .on_upgrade(move |socket| ws::handle_socket(socket, client_id, data_type, hub))
+        .into_response()
 }
 
 #[utoipa::path(
@@ -323,6 +377,53 @@ async fn service_info() -> &'static str {
 )]
 async fn health_check() -> &'static str {
     "ok"
+}
+
+#[utoipa::path(
+    get,
+    path = "/live",
+    responses((status = 200, description = "Process is alive", body = String, content_type = "text/plain")),
+    tag = "Meta"
+)]
+async fn liveness_check() -> &'static str {
+    "ok"
+}
+
+#[utoipa::path(
+    get,
+    path = "/ready",
+    responses(
+        (status = 200, description = "Gateway dependencies are ready"),
+        (status = 503, description = "A required local dependency is unavailable")
+    ),
+    tag = "Meta"
+)]
+async fn readiness_check(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let database = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        sqlx::query("SELECT 1").execute(&state.db),
+    )
+    .await;
+    match database {
+        Ok(Ok(_)) => (
+            axum::http::StatusCode::OK,
+            Json(serde_json::json!({"status": "ready"})),
+        ),
+        Ok(Err(error)) => {
+            tracing::warn!(%error, "API readiness database probe failed");
+            (
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"status": "not_ready"})),
+            )
+        },
+        Err(_) => {
+            tracing::warn!("API readiness database probe timed out");
+            (
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"status": "not_ready"})),
+            )
+        },
+    }
 }
 
 // ── Router ────────────────────────────────────────────────────────────────────
@@ -380,18 +481,7 @@ fn build_router(state: Arc<AppState>) -> Router {
 
     let config_routes = Router::new()
         .route("/check", get(routes_config::check_config))
-        .route("/export", get(routes_config::export_config))
-        .route(
-            "/import",
-            post(routes_config::import_config).layer(DefaultBodyLimit::max(64 * 1024 * 1024)), // 64 MB for config ZIP
-        )
-        .route("/restart-services", post(routes_config::restart_services))
-        .route(
-            "/upgrade",
-            post(routes_config::start_upgrade).layer(DefaultBodyLimit::max(1024 * 1024 * 1024)), // 1024 MB for firmware
-        )
-        .route("/upgrade/abort", post(routes_config::abort_upgrade))
-        .route("/upgrade/status", get(routes_config::upgrade_status));
+        .route("/export", get(routes_config::export_config));
 
     // Routes that require auth. Layered ONCE on the merged router so
     // adding a new sub-router (e.g. /reports) cannot accidentally skip
@@ -400,23 +490,33 @@ fn build_router(state: Arc<AppState>) -> Router {
     // or pushes data to other clients (broadcast). /auth is the only
     // public surface (register/login/refresh) and is mounted below
     // without the layer.
-    let protected_v1 = Router::new()
+    let protected_api = Router::new()
         .route("/broadcast", post(routes_broadcast::broadcast_message))
         .route("/broadcast/status", get(routes_broadcast::broadcast_status))
         .nest("/homepage", homepage_routes)
         .nest("/network", network_routes)
         .nest("/config", config_routes)
         .merge(service_gateway::router());
-    let protected_v1 = match commissioned_data_processing_router(&state) {
-        Some(routes) => protected_v1.nest("/data-processing", routes),
-        None => protected_v1,
+    let protected_api = match commissioned_data_processing_router(&state) {
+        Some(routes) => protected_api.nest("/data-processing", routes),
+        None => protected_api,
     };
-    let protected_v1 = protected_v1.layer(axum::middleware::from_fn_with_state(
+    let protected_api = protected_api.layer(axum::middleware::from_fn_with_state(
         Arc::clone(&state),
         middleware_auth::require_jwt,
     ));
 
-    let api_v1 = Router::new().merge(protected_v1).nest("/auth", auth_routes);
+    let api = Router::new()
+        .merge(protected_api)
+        .nest("/auth", auth_routes);
+
+    // Narrow service-to-service surface. Its dedicated credential is checked
+    // by the exact alarm handler and grants no authority over generic operator
+    // broadcasts or any other management route.
+    let internal_api = Router::new().route(
+        "/alarm-events",
+        post(routes_broadcast::receive_alarm_event).layer(DefaultBodyLimit::max(64 * 1024)),
+    );
 
     // /api/admin/* — runtime log control. Must require auth: leaving these
     // open lets an attacker quietly escalate log verbosity or read log
@@ -442,14 +542,19 @@ fn build_router(state: Arc<AppState>) -> Router {
     let app = Router::new()
         .route("/", get(service_info))
         .route("/health", get(health_check))
+        .route("/live", get(liveness_check))
+        .route("/ready", get(readiness_check))
         .route(
             "/ws",
-            get(ws_handler).route_layer(axum::middleware::from_fn_with_state(
-                Arc::clone(&state),
-                middleware_auth::require_jwt,
-            )),
+            get(ws_handler)
+                .route_layer(axum::middleware::from_fn(validate_ws_query_before_upgrade))
+                .route_layer(axum::middleware::from_fn_with_state(
+                    Arc::clone(&state),
+                    middleware_auth::require_jwt,
+                )),
         )
-        .nest("/api/v1", api_v1)
+        .nest("/api", api)
+        .nest("/api/internal", internal_api)
         .nest("/api/admin", admin_routes);
 
     #[cfg(feature = "swagger-ui")]
@@ -482,6 +587,80 @@ fn build_router(state: Arc<AppState>) -> Router {
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
+
+fn bind_api_listener(addr: SocketAddr) -> anyhow::Result<tokio::net::TcpListener> {
+    let socket = if addr.is_ipv4() {
+        tokio::net::TcpSocket::new_v4()?
+    } else {
+        tokio::net::TcpSocket::new_v6()?
+    };
+    socket.set_reuseaddr(true)?;
+    socket.bind(addr)?;
+    Ok(socket.listen(1024)?)
+}
+
+async fn serve_bound_api(
+    listener: tokio::net::TcpListener,
+    app: Router,
+    shutdown: CancellationToken,
+) -> anyhow::Result<()> {
+    let graceful_shutdown = shutdown.clone();
+    let drain_signal = shutdown.clone();
+    let mut server = std::pin::pin!(async move {
+        axum::serve(listener, app)
+            .with_graceful_shutdown(async move {
+                tokio::select! {
+                    _ = common::shutdown::wait_for_shutdown() => {
+                        info!("Shutdown signal received");
+                        graceful_shutdown.cancel();
+                    },
+                    _ = graceful_shutdown.cancelled() => {
+                        tracing::warn!("Internal API shutdown requested");
+                    },
+                }
+            })
+            .await
+    });
+
+    let result = tokio::select! {
+        result = &mut server => result.map_err(anyhow::Error::from),
+        _ = drain_signal.cancelled() => {
+            match tokio::time::timeout(HTTP_DRAIN_TIMEOUT, &mut server).await {
+                Ok(result) => result.map_err(anyhow::Error::from),
+                Err(_) => {
+                    tracing::warn!(
+                        timeout_ms = HTTP_DRAIN_TIMEOUT.as_millis(),
+                        "API HTTP connections exceeded the graceful-drain deadline; closing them"
+                    );
+                    Ok(())
+                },
+            }
+        },
+    };
+
+    result
+}
+
+async fn finish_api_runtime(
+    server_result: anyhow::Result<()>,
+    shutdown: CancellationToken,
+    supervisor_task: tokio::task::JoinHandle<anyhow::Result<()>>,
+) -> anyhow::Result<()> {
+    shutdown.cancel();
+    let supervisor_result = supervisor_task
+        .await
+        .map_err(|error| anyhow::anyhow!("API task supervisor join failed: {error}"))
+        .and_then(|result| result);
+
+    match (server_result, supervisor_result) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(server_error), Ok(())) => Err(server_error),
+        (Ok(()), Err(supervisor_error)) => Err(supervisor_error),
+        (Err(server_error), Err(supervisor_error)) => Err(anyhow::anyhow!(
+            "API HTTP server failed: {server_error:#}; API task supervisor failed: {supervisor_error:#}"
+        )),
+    }
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -546,6 +725,13 @@ async fn main() -> anyhow::Result<()> {
         service_client,
     });
 
+    // Bind before starting any critical background task. A bad address or an
+    // occupied port must fail startup without leaving detached workers behind.
+    let app = build_router(Arc::clone(&state));
+    let bind_addr = common::bind_address(&state.config.api_host, state.config.api_port)?;
+    let listener = bind_api_listener(bind_addr)?;
+    info!("Listening on {}", bind_addr);
+
     // ── Background tasks ──────────────────────────────────────────────────────
     let shutdown = CancellationToken::new();
 
@@ -553,7 +739,9 @@ async fn main() -> anyhow::Result<()> {
     let topology_db = state.db.clone();
     let topology_config = state.config.as_ref().clone();
     let topology_shutdown = shutdown.clone();
-    tokio::spawn(async move {
+    let mut supervisor =
+        common::task_supervisor::CriticalTaskSupervisor::new(std::time::Duration::from_secs(5));
+    supervisor.spawn("gateway-topology-refresh", async move {
         run_gateway_topology_refresh(
             topology_source,
             topology_db,
@@ -565,7 +753,7 @@ async fn main() -> anyhow::Result<()> {
 
     let hb_hub = Arc::clone(&ws_hub);
     let hb_shutdown = shutdown.clone();
-    tokio::spawn(async move {
+    supervisor.spawn("websocket-heartbeat", async move {
         ws::run_heartbeat(hb_hub, hb_shutdown).await;
     });
 
@@ -575,7 +763,7 @@ async fn main() -> anyhow::Result<()> {
     let push_shm_path = state.config.shm_path.clone();
     let push_socket = state.config.point_watch_socket.clone();
     let push_debounce_ms = state.config.point_watch_debounce_ms;
-    tokio::spawn(async move {
+    supervisor.spawn("websocket-data-push", async move {
         ws::run_data_push(
             push_hub,
             push_shutdown,
@@ -587,16 +775,79 @@ async fn main() -> anyhow::Result<()> {
         )
         .await;
     });
+    let supervisor_shutdown = shutdown.clone();
+    let supervisor_task = tokio::spawn(async move { supervisor.run(supervisor_shutdown).await });
 
     // ── HTTP server ───────────────────────────────────────────────────────────
-    let app = build_router(Arc::clone(&state));
-
-    let bind_addr = common::bind_address(&state.config.api_host, state.config.api_port)?;
-
-    common::shutdown::serve_with_shutdown(bind_addr, app, shutdown).await?;
+    let server_result = serve_bound_api(listener, app, shutdown.clone()).await;
+    let runtime_result = finish_api_runtime(server_result, shutdown, supervisor_task).await;
+    common::logging::shutdown_logging_tasks().await;
+    runtime_result?;
 
     info!("api stopped");
     Ok(())
+}
+
+#[cfg(test)]
+mod runtime_lifecycle_tests {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use super::*;
+
+    #[tokio::test]
+    async fn listener_bind_failure_is_reported_synchronously() {
+        let occupied =
+            std::net::TcpListener::bind("127.0.0.1:0").expect("reserve an isolated API test port");
+        let address = occupied.local_addr().expect("reserved port address");
+
+        assert!(
+            bind_api_listener(address).is_err(),
+            "the API listener must report an occupied port before workers start"
+        );
+    }
+
+    #[tokio::test]
+    async fn server_failure_cancels_and_joins_background_tasks() {
+        let shutdown = CancellationToken::new();
+        let task_shutdown = shutdown.clone();
+        let drained = Arc::new(AtomicBool::new(false));
+        let drained_by_task = Arc::clone(&drained);
+        let supervisor_task = tokio::spawn(async move {
+            task_shutdown.cancelled().await;
+            drained_by_task.store(true, Ordering::Release);
+            Ok(())
+        });
+
+        let error = finish_api_runtime(
+            Err(anyhow::anyhow!("synthetic HTTP server failure")),
+            shutdown.clone(),
+            supervisor_task,
+        )
+        .await
+        .expect_err("server failure must remain visible");
+
+        assert!(shutdown.is_cancelled());
+        assert!(drained.load(Ordering::Acquire));
+        assert!(error.to_string().contains("synthetic HTTP server failure"));
+    }
+
+    #[tokio::test]
+    async fn concurrent_server_and_supervisor_failures_are_both_reported() {
+        let shutdown = CancellationToken::new();
+        let supervisor_task =
+            tokio::spawn(async { Err(anyhow::anyhow!("synthetic supervisor failure")) });
+
+        let error = finish_api_runtime(
+            Err(anyhow::anyhow!("synthetic HTTP server failure")),
+            shutdown,
+            supervisor_task,
+        )
+        .await
+        .expect_err("combined failure must remain visible");
+        let message = error.to_string();
+        assert!(message.contains("synthetic HTTP server failure"));
+        assert!(message.contains("synthetic supervisor failure"));
+    }
 }
 
 #[cfg(test)]
@@ -692,7 +943,104 @@ mod service_gateway_route_tests {
 
     use crate::test_support::{app_state, authorization_headers};
 
-    use super::build_router;
+    use super::{
+        MAX_WS_CLIENT_ID_BYTES, MAX_WS_DATA_TYPE_BYTES, WsParams, build_router, validate_ws_params,
+    };
+
+    #[tokio::test]
+    async fn liveness_and_readiness_are_separate_public_probes() {
+        let app = build_router(app_state().await);
+        for path in ["/health", "/live", "/ready"] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(path)
+                        .body(Body::empty())
+                        .expect("valid probe request"),
+                )
+                .await
+                .expect("probe response");
+            assert_eq!(response.status(), StatusCode::OK, "probe {path}");
+        }
+    }
+
+    #[tokio::test]
+    async fn retired_api_paths_are_not_mounted() {
+        let app = build_router(app_state().await);
+        for (path, method) in [
+            ("/api/v1/auth/login", "POST"),
+            ("/api/v1/io/health", "POST"),
+            ("/api/internal/v1/alarm-events", "POST"),
+            ("/api/config/import", "POST"),
+            ("/api/config/restart-services", "POST"),
+            ("/api/config/upgrade", "POST"),
+            ("/api/config/upgrade/abort", "POST"),
+            ("/api/config/upgrade/status", "GET"),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(method)
+                        .uri(path)
+                        .body(Body::empty())
+                        .expect("valid obsolete path request"),
+                )
+                .await
+                .expect("obsolete path response");
+            assert_eq!(response.status(), StatusCode::NOT_FOUND, "path {path}");
+        }
+    }
+
+    #[test]
+    fn websocket_query_limits_are_byte_exact() {
+        let accepted = WsParams {
+            client_id: Some("c".repeat(MAX_WS_CLIENT_ID_BYTES)),
+            data_type: Some("d".repeat(MAX_WS_DATA_TYPE_BYTES)),
+        };
+        assert!(validate_ws_params(&accepted).is_ok());
+
+        let client_id_too_long = WsParams {
+            client_id: Some("c".repeat(MAX_WS_CLIENT_ID_BYTES + 1)),
+            data_type: None,
+        };
+        assert!(validate_ws_params(&client_id_too_long).is_err());
+
+        let data_type_too_long = WsParams {
+            client_id: None,
+            data_type: Some("d".repeat(MAX_WS_DATA_TYPE_BYTES + 1)),
+        };
+        assert!(validate_ws_params(&data_type_too_long).is_err());
+    }
+
+    #[tokio::test]
+    async fn oversized_websocket_query_is_rejected_before_upgrade() {
+        let app = build_router(app_state().await);
+        for query in [
+            format!("client_id={}", "c".repeat(MAX_WS_CLIENT_ID_BYTES + 1)),
+            format!("data_type={}", "d".repeat(MAX_WS_DATA_TYPE_BYTES + 1)),
+        ] {
+            let mut request = Request::builder()
+                .uri(format!("/ws?{query}"))
+                .header("connection", "upgrade")
+                .header("upgrade", "websocket")
+                .header("sec-websocket-version", "13")
+                .header("sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ==")
+                .body(Body::empty())
+                .expect("valid WebSocket upgrade request");
+            request
+                .headers_mut()
+                .extend(authorization_headers("Viewer"));
+
+            let response = app
+                .clone()
+                .oneshot(request)
+                .await
+                .expect("WebSocket query response");
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST, "query {query}");
+        }
+    }
 
     #[tokio::test]
     async fn internal_application_gateway_is_mounted_only_behind_jwt_authentication() {
@@ -703,7 +1051,7 @@ mod service_gateway_route_tests {
             .clone()
             .oneshot(
                 Request::builder()
-                    .uri("/api/v1/io/health")
+                    .uri("/api/io/health")
                     .body(Body::empty())
                     .expect("valid unauthenticated request"),
             )
@@ -712,7 +1060,7 @@ mod service_gateway_route_tests {
         assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
 
         let mut authenticated_request = Request::builder()
-            .uri("/api/v1/io/health")
+            .uri("/api/io/health")
             .body(Body::empty())
             .expect("valid authenticated request");
         *authenticated_request.headers_mut() = authorization_headers("Engineer");
@@ -728,41 +1076,151 @@ mod service_gateway_route_tests {
     }
 
     #[tokio::test]
-    async fn application_gateway_mutations_are_role_and_confirmation_guarded() {
+    async fn uplink_gateway_is_authenticated_read_only_health_only() {
         let app = build_router(app_state().await);
 
-        let mut viewer_request = Request::builder()
-            .method("POST")
-            .uri("/api/v1/uplink/mqtt/disconnect")
-            .header("x-aether-confirmed", "true")
+        let unauthenticated_health = Request::builder()
+            .uri("/api/uplink/health")
             .body(Body::empty())
-            .expect("valid viewer request");
-        viewer_request
+            .expect("valid health request");
+        let unauthenticated = app
+            .clone()
+            .oneshot(unauthenticated_health)
+            .await
+            .expect("unauthenticated health response");
+        assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
+
+        let mut authenticated_health = Request::builder()
+            .uri("/api/uplink/health")
+            .body(Body::empty())
+            .expect("valid health request");
+        authenticated_health
             .headers_mut()
             .extend(authorization_headers("Viewer"));
-        let viewer_response = app
+        let health = app
             .clone()
-            .oneshot(viewer_request)
+            .oneshot(authenticated_health)
             .await
-            .expect("viewer gateway response");
-        assert_eq!(viewer_response.status(), StatusCode::FORBIDDEN);
+            .expect("authenticated health response");
+        assert_eq!(health.status(), StatusCode::BAD_GATEWAY);
 
-        let mut unconfirmed_request = Request::builder()
-            .method("POST")
-            .uri("/api/v1/uplink/mqtt/disconnect")
+        let mut retired_mqtt = Request::builder()
+            .uri("/api/uplink/mqtt/status")
             .body(Body::empty())
-            .expect("valid unconfirmed request");
-        unconfirmed_request
+            .expect("retired MQTT request");
+        retired_mqtt
+            .headers_mut()
+            .extend(authorization_headers("Viewer"));
+        let retired = app
+            .clone()
+            .oneshot(retired_mqtt)
+            .await
+            .expect("retired MQTT response");
+        assert_eq!(retired.status(), StatusCode::BAD_REQUEST);
+
+        for path in [
+            "/api/uplink/api/admin/logs/files",
+            "/api/uplink/api/internal/alarm-events",
+        ] {
+            let mut request = Request::builder()
+                .uri(path)
+                .body(Body::empty())
+                .expect("internal-only request");
+            request.headers_mut().extend(authorization_headers("Admin"));
+            let response = app
+                .clone()
+                .oneshot(request)
+                .await
+                .expect("internal-only response");
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{path}");
+        }
+    }
+
+    #[tokio::test]
+    async fn governed_mutations_use_one_canonical_request_id_end_to_end() {
+        let app = build_router(app_state().await);
+
+        let mut missing_device_command_id = Request::builder()
+            .method("POST")
+            .uri("/api/automation/api/instances/7/action")
+            .header("x-aether-confirmed", "true")
+            .body(Body::empty())
+            .expect("valid device action request");
+        missing_device_command_id
             .headers_mut()
             .extend(authorization_headers("Engineer"));
-        let unconfirmed_response = app
-            .oneshot(unconfirmed_request)
+        let missing_device_command_id_response = app
+            .clone()
+            .oneshot(missing_device_command_id)
             .await
-            .expect("unconfirmed gateway response");
+            .expect("missing device command ID response");
         assert_eq!(
-            unconfirmed_response.status(),
-            StatusCode::PRECONDITION_REQUIRED
+            missing_device_command_id_response.status(),
+            StatusCode::BAD_REQUEST
         );
+        let missing_body = to_bytes(missing_device_command_id_response.into_body(), 16 * 1024)
+            .await
+            .expect("read missing request ID response");
+        assert!(String::from_utf8_lossy(&missing_body).contains("MISSING_REQUEST_ID"));
+
+        let mut generated_request = Request::builder()
+            .method("POST")
+            .uri("/api/io/api/channels/7/commands")
+            .header("x-aether-confirmed", "true")
+            .body(Body::empty())
+            .expect("valid governed request");
+        generated_request
+            .headers_mut()
+            .extend(authorization_headers("Engineer"));
+        let generated_response = app
+            .clone()
+            .oneshot(generated_request)
+            .await
+            .expect("generated request ID response");
+        assert_eq!(generated_response.status(), StatusCode::BAD_GATEWAY);
+        let generated = generated_response
+            .headers()
+            .get("x-request-id")
+            .and_then(|value| value.to_str().ok())
+            .expect("generated request ID response header");
+        let parsed = uuid::Uuid::parse_str(generated).expect("generated canonical UUID");
+        assert_eq!(parsed.to_string(), generated);
+
+        let mut invalid_request = Request::builder()
+            .method("POST")
+            .uri("/api/io/api/channels/7/commands")
+            .header("x-aether-confirmed", "true")
+            .header("x-request-id", "not-a-uuid")
+            .body(Body::empty())
+            .expect("valid HTTP request");
+        invalid_request
+            .headers_mut()
+            .extend(authorization_headers("Engineer"));
+        let invalid_response = app
+            .clone()
+            .oneshot(invalid_request)
+            .await
+            .expect("invalid request ID response");
+        assert_eq!(invalid_response.status(), StatusCode::BAD_REQUEST);
+        let body = to_bytes(invalid_response.into_body(), 16 * 1024)
+            .await
+            .expect("read invalid request ID response");
+        assert!(String::from_utf8_lossy(&body).contains("INVALID_REQUEST_ID"));
+
+        let command_id = "0190aee621397a878448806f1b843201";
+        let mut outcome_request = Request::builder()
+            .uri(format!("/api/io/api/commands/{command_id}/outcome"))
+            .body(Body::empty())
+            .expect("valid outcome query");
+        outcome_request
+            .headers_mut()
+            .extend(authorization_headers("Viewer"));
+        let outcome_response = app
+            .oneshot(outcome_request)
+            .await
+            .expect("outcome query response");
+        assert_eq!(outcome_response.status(), StatusCode::BAD_GATEWAY);
+        assert!(!outcome_response.headers().contains_key("x-request-id"));
     }
 }
 
@@ -790,8 +1248,10 @@ mod openapi_tests {
         for (path, method) in [
             ("/", "get"),
             ("/health", "get"),
+            ("/live", "get"),
+            ("/ready", "get"),
             ("/ws", "get"),
-            ("/api/v1/auth/validate", "get"),
+            ("/api/auth/validate", "get"),
             ("/api/admin/logs/level", "get"),
             ("/api/admin/logs/level", "post"),
             ("/api/admin/logs/files", "get"),
@@ -805,7 +1265,7 @@ mod openapi_tests {
 
         for (path, method) in [
             ("/ws", "get"),
-            ("/api/v1/auth/validate", "get"),
+            ("/api/auth/validate", "get"),
             ("/api/admin/logs/level", "get"),
             ("/api/admin/logs/level", "post"),
             ("/api/admin/logs/files", "get"),
@@ -829,13 +1289,13 @@ mod openapi_tests {
 
         assert!(
             specification["paths"]
-                .get("/api/v1/data-processing/tasks")
+                .get("/api/data-processing/tasks")
                 .is_none(),
             "conditional routes must not appear in the base document"
         );
         assert_eq!(
             common::openapi_operation_count(&specification),
-            38,
+            35,
             "Router/OpenAPI operation drift"
         );
     }
@@ -845,18 +1305,17 @@ mod openapi_tests {
         let specification = json(ApiDoc::openapi());
 
         for (path, method) in [
-            ("/api/v1/auth/login", "post"),
-            ("/api/v1/auth/refresh", "post"),
-            ("/api/v1/auth/me", "get"),
-            ("/api/v1/homepage/{id}", "get"),
-            ("/api/v1/homepage/{id}", "put"),
-            ("/api/v1/homepage", "get"),
-            ("/api/v1/homepage/reset", "post"),
-            ("/api/v1/network", "get"),
-            ("/api/v1/broadcast", "post"),
-            ("/api/v1/broadcast/status", "get"),
-            ("/api/v1/config/check", "get"),
-            ("/api/v1/config/upgrade/status", "get"),
+            ("/api/auth/login", "post"),
+            ("/api/auth/refresh", "post"),
+            ("/api/auth/me", "get"),
+            ("/api/homepage/{id}", "get"),
+            ("/api/homepage/{id}", "put"),
+            ("/api/homepage", "get"),
+            ("/api/homepage/reset", "post"),
+            ("/api/network", "get"),
+            ("/api/broadcast", "post"),
+            ("/api/broadcast/status", "get"),
+            ("/api/config/check", "get"),
         ] {
             let schema = &specification["paths"][path][method]["responses"]["200"]["content"]["application/json"]
                 ["schema"];
@@ -866,20 +1325,18 @@ mod openapi_tests {
             );
         }
 
-        for (path, method) in [
-            ("/api/v1/auth/me", "put"),
-            ("/api/v1/auth/users/{id}", "put"),
-        ] {
+        for (path, method) in [("/api/auth/me", "put"), ("/api/auth/users/{id}", "put")] {
             let schema = &specification["paths"][path][method]["responses"]["200"]["content"]["application/json"]
                 ["schema"];
+            let schema = schema.to_string();
             assert!(
-                schema.to_string().contains("UserUpdateSuccess"),
-                "{method} {path} must document both compatibility success bodies"
+                schema.contains("GatewayDataResponse") && schema.contains("UserWithRole"),
+                "{method} {path} must document the canonical profile response"
             );
         }
 
         assert!(
-            specification["paths"]["/api/v1/auth/logout"]["post"]["security"].is_null(),
+            specification["paths"]["/api/auth/logout"]["post"]["security"].is_null(),
             "logout authenticates with the refresh token body, not Bearer auth"
         );
         assert!(
@@ -890,7 +1347,7 @@ mod openapi_tests {
             specification["paths"]["/health"]["get"]["responses"]["200"]["content"]["text/plain"]
                 .is_object()
         );
-        assert!(specification["paths"]["/api/v1/config/export"]["get"]["responses"]["200"]
+        assert!(specification["paths"]["/api/config/export"]["get"]["responses"]["200"]
             ["content"]["application/zip"]
             .is_object());
         assert_eq!(
@@ -906,7 +1363,7 @@ mod openapi_tests {
     #[test]
     fn homepage_openapi_is_industry_neutral_and_documents_safe_empty_reset() {
         let specification = json(ApiDoc::openapi());
-        let list_operation = specification["paths"]["/api/v1/homepage"]["get"]
+        let list_operation = specification["paths"]["/api/homepage"]["get"]
             .to_string()
             .to_lowercase();
 
@@ -917,7 +1374,7 @@ mod openapi_tests {
             );
         }
 
-        let reset_operation = &specification["paths"]["/api/v1/homepage/reset"]["post"];
+        let reset_operation = &specification["paths"]["/api/homepage/reset"]["post"];
         assert!(
             reset_operation["description"]
                 .as_str()
@@ -938,18 +1395,11 @@ mod openapi_tests {
     fn gateway_openapi_documents_fail_closed_management_boundaries() {
         let specification = json(ApiDoc::openapi());
 
-        let registration = &specification["paths"]["/api/v1/auth/register"]["post"];
+        let registration = &specification["paths"]["/api/auth/register"]["post"];
         assert!(registration["security"].is_null());
         assert!(registration["responses"]["403"].is_object());
 
-        for (path, method) in [
-            ("/api/v1/network", "put"),
-            ("/api/v1/network/apply", "post"),
-            ("/api/v1/config/import", "post"),
-            ("/api/v1/config/restart-services", "post"),
-            ("/api/v1/config/upgrade", "post"),
-            ("/api/v1/config/upgrade/abort", "post"),
-        ] {
+        for (path, method) in [("/api/network", "put"), ("/api/network/apply", "post")] {
             let operation = &specification["paths"][path][method];
             assert_eq!(
                 operation["security"][0]["bearer_auth"],
@@ -970,13 +1420,12 @@ mod openapi_tests {
         let specification = json(ApiDoc::openapi());
 
         for (path, method) in [
-            ("/api/v1/config/check", "get"),
-            ("/api/v1/config/export", "get"),
-            ("/api/v1/config/upgrade/status", "get"),
-            ("/api/v1/auth/users", "get"),
-            ("/api/v1/auth/users/{id}", "get"),
-            ("/api/v1/auth/users/{id}", "put"),
-            ("/api/v1/auth/users/{id}", "delete"),
+            ("/api/config/check", "get"),
+            ("/api/config/export", "get"),
+            ("/api/auth/users", "get"),
+            ("/api/auth/users/{id}", "get"),
+            ("/api/auth/users/{id}", "put"),
+            ("/api/auth/users/{id}", "delete"),
         ] {
             let operation = &specification["paths"][path][method];
             assert_eq!(
@@ -998,9 +1447,9 @@ mod openapi_tests {
         let specification = json(ApiDoc::openapi().nest("", DataProcessingApiDoc::openapi()));
 
         for (path, method) in [
-            ("/api/v1/data-processing/tasks", "get"),
-            ("/api/v1/data-processing/processors/health", "get"),
-            ("/api/v1/data-processing/process", "post"),
+            ("/api/data-processing/tasks", "get"),
+            ("/api/data-processing/processors/health", "get"),
+            ("/api/data-processing/process", "post"),
         ] {
             assert!(
                 specification["paths"][path][method].is_object(),
@@ -1012,7 +1461,7 @@ mod openapi_tests {
                 "missing Bearer security on commissioned {method} {path}"
             );
         }
-        let process = &specification["paths"]["/api/v1/data-processing/process"]["post"];
+        let process = &specification["paths"]["/api/data-processing/process"]["post"];
         for status in [
             "400", "401", "403", "404", "413", "415", "422", "428", "500", "502", "503", "504",
         ] {
@@ -1028,7 +1477,7 @@ mod openapi_tests {
         );
         assert_eq!(
             common::openapi_operation_count(&specification),
-            41,
+            38,
             "commissioned Router/OpenAPI drift"
         );
     }

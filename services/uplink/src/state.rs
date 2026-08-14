@@ -1,44 +1,14 @@
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
 
-use aether_ports::DurableOutbox;
-use sqlx::SqlitePool;
-use tokio::sync::{Mutex, Notify, RwLock};
+use aether_store_local::FileCloudLinkSpool;
+use tokio::sync::Notify;
 
-use crate::alarm_client::AlarmClient;
-use crate::automation_client::AutomationClient;
-use crate::config::EnvConfig;
-use crate::config_model::UplinkConfig;
-use crate::device::{DeviceIdentity, Topics};
-use crate::live_values::UplinkTopologyHandle;
+use crate::cloudlink_runtime::CloudLinkRuntimeStatus;
 
-/// Shared application state.
+/// Shared HTTP application state. Cloud delivery state is owned by CloudLink.
 pub struct AppState {
-    /// Shared SQLite pool – uplink_config table.
-    pub sqlite: SqlitePool,
-    /// Local durable queue between data collection and the MQTT uplink.
-    pub outbox: Arc<dyn DurableOutbox>,
-    /// Static env config.
-    pub env: Arc<EnvConfig>,
-    /// Atomically replaceable SQLite + committed point/health read generation.
-    pub live_topology: Arc<UplinkTopologyHandle>,
-    /// Dynamic config reloaded from `uplink_config`.
-    pub config: Arc<RwLock<UplinkConfig>>,
-    /// Resolved device identity (product SN + device SN).
-    pub device: Arc<DeviceIdentity>,
-    /// MQTT topics derived from device identity.
-    pub topics: Arc<Topics>,
-    /// Current MQTT publish client – None while disconnected.
-    pub mqtt_client: Arc<Mutex<Option<rumqttc::AsyncClient>>>,
-    /// True when MQTT is connected and ready.
-    pub mqtt_connected: Arc<AtomicBool>,
-    /// Signal for the MQTT task to reconnect (config changed or explicit API call).
-    pub reconnect_signal: Arc<Notify>,
-    /// When true the MQTT loop stays idle after a disconnect instead of auto-reconnecting.
-    /// Set by `POST /netApi/mqtt/disconnect`, cleared by `POST /netApi/mqtt/reconnect`.
-    pub disconnect_requested: Arc<AtomicBool>,
-    /// Typed loopback client for Automation queries and governed actions.
-    pub automation_client: AutomationClient,
-    /// Typed loopback client for Alarm replay requests.
-    pub alarm_client: AlarmClient,
+    pub spool: Arc<FileCloudLinkSpool>,
+    pub alarm_broadcast_token: Arc<str>,
+    pub cloudlink: Arc<CloudLinkRuntimeStatus>,
+    pub delivery_wake: Arc<Notify>,
 }

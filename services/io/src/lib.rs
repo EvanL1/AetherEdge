@@ -26,6 +26,7 @@ pub mod api {
         pub mod audit_handlers;
         pub mod channel_handlers;
         pub mod channel_management_handlers;
+        pub mod command_handlers;
         pub mod control_handlers;
         pub mod health;
         pub mod mapping_handlers;
@@ -72,7 +73,7 @@ pub mod runtime {
     pub mod test_utils;
 
     // Re-export common types
-    pub use lifecycle::{shutdown_handler, shutdown_services, start_cleanup_task};
+    pub use lifecycle::{run_cleanup_task, shutdown_handler};
     pub use reconnect::{ReconnectHelper, ReconnectPolicy};
 }
 
@@ -84,9 +85,6 @@ pub use error::{IoError, Result};
 // Re-export core functionality
 pub use core::bootstrap::ServiceArgs;
 pub use core::channels::{ChannelManager, RuntimeChannelConfig};
-
-// Re-export runtime helpers for convenience
-pub use runtime::shutdown_services;
 
 #[cfg(test)]
 pub use runtime::test_utils;

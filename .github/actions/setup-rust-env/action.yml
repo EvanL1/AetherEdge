@@ -43,15 +43,15 @@ runs:
       shell: bash
       run: |
         jwt_secret=$(openssl rand -hex 32)
-        uplink_token=$(openssl rand -hex 32)
-        if [[ "$jwt_secret" == "$uplink_token" ]]; then
+        alarm_token=$(openssl rand -hex 32)
+        if [[ "$jwt_secret" == "$alarm_token" ]]; then
           echo "Failed to generate distinct CI credentials" >&2
           exit 1
         fi
         echo "::add-mask::$jwt_secret"
-        echo "::add-mask::$uplink_token"
+        echo "::add-mask::$alarm_token"
         echo "JWT_SECRET_KEY=$jwt_secret" >> "$GITHUB_ENV"
-        echo "AETHER_UPLINK_CONTROL_TOKEN=$uplink_token" >> "$GITHUB_ENV"
+        echo "AETHER_ALARM_BROADCAST_TOKEN=$alarm_token" >> "$GITHUB_ENV"
 
     # Install protoc for gRPC compilation (optional)
     - name: Install Protoc

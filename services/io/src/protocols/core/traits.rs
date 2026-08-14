@@ -15,9 +15,14 @@
 
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
-use tokio::sync::mpsc;
+
+use aether_core::PointType;
 
 use crate::protocols::core::data::DataBatch;
+pub use crate::protocols::core::data_event_ingress::{
+    DataEventAdmission, DataEventIngressObserver, DataEventIngressStats, DataEventReceiver,
+    DataEventSink, data_event_channel_with_capacity,
+};
 
 /// Communication mode supported by a protocol.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -273,6 +278,11 @@ pub struct PointFailure {
     /// The point ID that failed.
     pub point_id: u32,
 
+    /// Point type when the adapter can identify it. Acquisition uses this to
+    /// degrade the exact SHM slot without guessing between telemetry/status.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub point_type: Option<PointType>,
+
     /// Error message describing the failure.
     /// Uses `Cow<'static, str>` to avoid allocation for static error messages.
     pub error: Cow<'static, str>,
@@ -283,6 +293,7 @@ impl PointFailure {
     pub fn new(point_id: u32, error: &'static str) -> Self {
         Self {
             point_id,
+            point_type: None,
             error: Cow::Borrowed(error),
         }
     }
@@ -291,6 +302,25 @@ impl PointFailure {
     pub fn with_error(point_id: u32, error: String) -> Self {
         Self {
             point_id,
+            point_type: None,
+            error: Cow::Owned(error),
+        }
+    }
+
+    /// Create a typed point failure with a static diagnostic.
+    pub fn typed(point_id: u32, point_type: PointType, error: &'static str) -> Self {
+        Self {
+            point_id,
+            point_type: Some(point_type),
+            error: Cow::Borrowed(error),
+        }
+    }
+
+    /// Create a typed point failure with a dynamic diagnostic.
+    pub fn typed_with_error(point_id: u32, point_type: PointType, error: String) -> Self {
+        Self {
+            point_id,
+            point_type: Some(point_type),
             error: Cow::Owned(error),
         }
     }
@@ -356,41 +386,6 @@ pub enum DataEvent {
     Heartbeat,
 }
 
-/// Event receiver owned by the unified channel task.
-pub type DataEventReceiver = mpsc::Receiver<DataEvent>;
-
-/// Cloneable sender used by one or more adapter background tasks.
-pub type DataEventSender = mpsc::Sender<DataEvent>;
-
-#[cfg(any(
-    test,
-    feature = "ble",
-    feature = "iec104",
-    feature = "gb32960",
-    feature = "jt808",
-    feature = "mqtt",
-    feature = "opcua",
-    feature = "zigbee",
-    all(feature = "can", target_os = "linux")
-))]
-const DATA_EVENT_CHANNEL_CAPACITY: usize = 1024;
-
-/// Create the bounded, single-consumer event queue for one runtime.
-#[cfg(any(
-    test,
-    feature = "ble",
-    feature = "iec104",
-    feature = "gb32960",
-    feature = "jt808",
-    feature = "mqtt",
-    feature = "opcua",
-    feature = "zigbee",
-    all(feature = "can", target_os = "linux")
-))]
-pub(crate) fn data_event_channel() -> (DataEventSender, DataEventReceiver) {
-    mpsc::channel(DATA_EVENT_CHANNEL_CAPACITY)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -399,22 +394,6 @@ mod tests {
     fn test_connection_state() {
         assert!(!ConnectionState::Disconnected.is_connected());
         assert!(ConnectionState::Connected.is_connected());
-    }
-
-    #[test]
-    fn data_event_queue_is_bounded_and_never_blocks_producers() {
-        let (sender, _receiver) = data_event_channel();
-
-        for _ in 0..DATA_EVENT_CHANNEL_CAPACITY {
-            sender
-                .try_send(DataEvent::Heartbeat)
-                .expect("configured queue capacity");
-        }
-
-        assert!(matches!(
-            sender.try_send(DataEvent::Heartbeat),
-            Err(mpsc::error::TrySendError::Full(DataEvent::Heartbeat))
-        ));
     }
 
     #[test]

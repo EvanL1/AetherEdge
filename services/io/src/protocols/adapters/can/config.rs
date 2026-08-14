@@ -3,8 +3,6 @@
 #[cfg(target_os = "linux")]
 use aether_config::io::MAX_CHANNEL_TIMING_MS;
 use aether_core::PointType;
-#[cfg(any(target_os = "linux", test))]
-use serde::de::{self, Visitor};
 use serde::{Deserialize, Serialize};
 #[cfg(any(target_os = "linux", test))]
 use serde_json::Value;
@@ -108,7 +106,6 @@ fn default_scale() -> f64 {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CanPointMapping {
-    #[serde(deserialize_with = "deserialize_can_id")]
     can_id: u32,
     start_bit: Option<u8>,
     byte_offset: Option<u8>,
@@ -233,49 +230,6 @@ fn mapping_error(point_id: u32, reason: &str) -> GatewayError {
     ))
 }
 
-#[cfg(any(target_os = "linux", test))]
-fn deserialize_can_id<'de, D>(deserializer: D) -> std::result::Result<u32, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    struct CanIdVisitor;
-
-    impl<'de> Visitor<'de> for CanIdVisitor {
-        type Value = u32;
-
-        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            formatter.write_str("a u32 CAN ID or a hexadecimal string prefixed with 0x")
-        }
-
-        fn visit_u64<E>(self, value: u64) -> std::result::Result<Self::Value, E>
-        where
-            E: de::Error,
-        {
-            u32::try_from(value).map_err(|_| E::custom("CAN ID exceeds u32"))
-        }
-
-        fn visit_i64<E>(self, value: i64) -> std::result::Result<Self::Value, E>
-        where
-            E: de::Error,
-        {
-            u32::try_from(value).map_err(|_| E::custom("CAN ID must be in the u32 range"))
-        }
-
-        fn visit_str<E>(self, value: &str) -> std::result::Result<Self::Value, E>
-        where
-            E: de::Error,
-        {
-            let hex = value
-                .strip_prefix("0x")
-                .or_else(|| value.strip_prefix("0X"))
-                .ok_or_else(|| E::custom("CAN ID string must use a 0x prefix"))?;
-            u32::from_str_radix(hex, 16).map_err(|_| E::custom("invalid hexadecimal CAN ID"))
-        }
-    }
-
-    deserializer.deserialize_any(CanIdVisitor)
-}
-
 /// CAN channel parameters configuration (deserialized from parameters_json).
 ///
 /// # Example JSON
@@ -293,8 +247,7 @@ where
 #[serde(deny_unknown_fields)]
 pub struct CanChannelParamsConfig {
     /// CAN device name (e.g., "can0", "vcan0").
-    /// Also accepts the legacy key "interface".
-    #[serde(default = "default_can_device", alias = "interface")]
+    #[serde(default = "default_can_device")]
     pub device: String,
 
     /// CAN bitrate in bits per second.
@@ -503,12 +456,32 @@ mod mapping_tests {
     use aether_core::PointType;
     use serde_json::json;
 
-    use super::{CanDataType, parse_point_mapping};
+    use super::{CanChannelParamsConfig, CanDataType, parse_point_mapping};
+
+    #[test]
+    fn channel_parameters_reject_retired_interface_key() {
+        let canonical: CanChannelParamsConfig = serde_json::from_value(json!({
+            "device": "vcan0"
+        }))
+        .expect("canonical CAN device key");
+        assert_eq!(canonical.device, "vcan0");
+        assert!(
+            serde_json::from_value::<CanChannelParamsConfig>(json!({"interface": "vcan0"}))
+                .is_err()
+        );
+        assert!(
+            serde_json::from_value::<CanChannelParamsConfig>(json!({
+                "device": "vcan0",
+                "interface": "vcan0"
+            }))
+            .is_err()
+        );
+    }
 
     #[test]
     fn mapping_codec_accepts_both_canonical_layout_forms() {
         let absolute = json!({
-            "can_id": "0x351",
+            "can_id": 0x351,
             "start_bit": 8,
             "bit_length": 16,
             "data_type": "int16",
@@ -559,6 +532,7 @@ mod mapping_tests {
     fn mapping_codec_fails_closed_for_invalid_ids_and_bit_layouts() {
         for mapping in [
             json!({"can_id":"351","start_bit":0,"bit_length":16}),
+            json!({"can_id":"0x351","start_bit":0,"bit_length":16}),
             json!({"can_id":"0x100000000","start_bit":0,"bit_length":16}),
             json!({"can_id":1,"start_bit":0,"byte_offset":0,"bit_length":16}),
             json!({"can_id":1,"start_bit":0,"bit_position":0,"bit_length":16}),

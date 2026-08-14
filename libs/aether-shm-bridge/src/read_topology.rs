@@ -8,6 +8,7 @@ use aether_ports::{PortError, PortErrorKind, PortResult};
 
 use crate::topology_commit::{
     TopologyPublicationCommit, acquire_authority_pair, acquire_topology_authority,
+    try_acquire_authority_pair, try_acquire_topology_authority,
     validate_topology_publication_locked,
 };
 use crate::{
@@ -124,6 +125,30 @@ impl ShmReadTopologyGeneration {
         self.with_validated_authority(|| ())
     }
 
+    /// Validates both canonical planes and their writer heartbeats as one
+    /// coordinated publication.
+    ///
+    /// The topology and plane authority leases remain held while both
+    /// heartbeat checks run, so a replacement cannot make a probe combine an
+    /// old point mapping with a new health mapping.
+    pub fn validate_freshness(&self) -> PortResult<()> {
+        self.with_validated_authority(|| {
+            self.point_source.validate_freshness()?;
+            self.channel_health.validate_freshness()
+        })?
+    }
+
+    /// Performs the coordinated freshness probe without waiting for an IO
+    /// topology replacement lease. A concurrent publication is reported as
+    /// retryably unavailable so readiness endpoints cannot pin a blocking
+    /// worker on an authority lock.
+    pub fn try_validate_freshness(&self) -> PortResult<()> {
+        self.try_with_validated_authority(|| {
+            self.point_source.validate_freshness()?;
+            self.channel_health.validate_freshness()
+        })?
+    }
+
     /// Runs one publication while both canonical planes are validation-locked.
     ///
     /// IO needs exclusive leases to invalidate and replace either generation,
@@ -132,6 +157,25 @@ impl ShmReadTopologyGeneration {
     pub fn with_validated_authority<T>(&self, publish: impl FnOnce() -> T) -> PortResult<T> {
         let _topology = acquire_topology_authority(&self.point_path)?;
         let (_first, _second) = acquire_authority_pair(&self.point_path, &self.health_path)?;
+        self.validate_pinned_publication(publish)
+    }
+
+    /// Runs a publication only when all physical authority leases can be
+    /// acquired immediately. This is intended for bounded diagnostic paths;
+    /// topology composition continues to use the blocking variant above.
+    pub fn try_with_validated_authority<T>(&self, publish: impl FnOnce() -> T) -> PortResult<T> {
+        let Some(_topology) = try_acquire_topology_authority(&self.point_path)? else {
+            return Err(authority_busy_error());
+        };
+        let Some((_first, _second)) =
+            try_acquire_authority_pair(&self.point_path, &self.health_path)?
+        else {
+            return Err(authority_busy_error());
+        };
+        self.validate_pinned_publication(publish)
+    }
+
+    fn validate_pinned_publication<T>(&self, publish: impl FnOnce() -> T) -> PortResult<T> {
         let observed = self.validate_locked_publication()?;
         let observed_epoch = observed.publication_epoch();
         let pinned_epoch = self.publication_epoch.load(Ordering::Acquire);
@@ -238,6 +282,13 @@ impl ShmReadTopologyGeneration {
     pub fn health_writer_generation(&self) -> u64 {
         self.health_writer_generation.load(Ordering::Acquire)
     }
+}
+
+fn authority_busy_error() -> PortError {
+    PortError::new(
+        PortErrorKind::Unavailable,
+        "SHM topology authority is busy with a publication",
+    )
 }
 
 fn validate_config_hash(label: &str, configured: u64, manifest: u64) -> PortResult<()> {

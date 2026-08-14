@@ -29,7 +29,7 @@ use async_trait::async_trait;
 use tokio::sync::Notify;
 use uuid::Uuid;
 
-const CONTRACT: &str = "aether.data-processing.forecast.v1";
+const CONTRACT: &str = "aether.data-processing.forecast";
 const OUTER_REQUEST_ID: &str = "request-01";
 
 fn task_identity() -> TaskIdentity {
@@ -462,7 +462,7 @@ impl DataProcessor for RecordingProcessor {
         }
         let processor_contract = if matches!(self.behavior, ProcessorBehavior::BadProcessorContract)
         {
-            "aether.data-processing.forecast.v2"
+            "aether.data-processing.forecast.invalid"
         } else {
             CONTRACT
         };

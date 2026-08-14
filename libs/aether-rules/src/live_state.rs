@@ -12,15 +12,15 @@ type TimestampedValue = (f64, u64);
 ///
 /// Production attaches the current automation topology sequence. Every read in
 /// that execution may validate the context, and every derived device action
-/// carries the same fence to the command dispatcher. Test and compatibility
-/// adapters remain explicitly unfenced.
+/// carries the same fence to the command dispatcher. The in-memory test
+/// adapter remains explicitly unfenced.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct RuleExecutionContext {
     command_topology_fence: Option<CommandTopologyFence>,
 }
 
 impl RuleExecutionContext {
-    /// Creates a compatibility context without a runtime topology fence.
+    /// Creates an in-memory test context without a runtime topology fence.
     #[must_use]
     pub const fn unfenced() -> Self {
         Self {
@@ -51,8 +51,8 @@ impl RuleExecutionContext {
 pub trait RuleLiveState: Send + Sync {
     /// Captures one context before the first read in a rule execution.
     ///
-    /// The default preserves deterministic test and compatibility adapters. A
-    /// production topology-aware adapter should return a fenced context.
+    /// The default supports the deterministic in-memory test adapter. A
+    /// production topology-aware adapter returns a fenced context.
     fn begin_execution(&self) -> RuleExecutionContext {
         RuleExecutionContext::unfenced()
     }
@@ -68,7 +68,7 @@ pub trait RuleLiveState: Send + Sync {
 
     /// Reads one point under a previously captured execution context.
     ///
-    /// The default delegates to the compatibility read. Topology-aware adapters
+    /// The default delegates to the direct read. Topology-aware adapters
     /// override this to reject a read after the captured generation changes.
     fn get_instance_for_execution(
         &self,

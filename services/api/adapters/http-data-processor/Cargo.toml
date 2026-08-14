@@ -13,9 +13,9 @@ keywords = ["iot", "edge", "http", "data-processing"]
 categories = ["web-programming::http-client", "asynchronous"]
 
 [dependencies]
-aether-data-processing = { version = "0.0.1", path = "../../../../crates/aether-data-processing" }
-aether-domain = { version = "0.0.1", path = "../../../../crates/aether-domain" }
-aether-ports = { version = "0.0.1", path = "../../../../crates/aether-ports" }
+aether-data-processing = { version = "0.0.2", path = "../../../../crates/aether-data-processing" }
+aether-domain = { version = "0.0.2", path = "../../../../crates/aether-domain" }
+aether-ports = { version = "0.0.2", path = "../../../../crates/aether-ports" }
 async-trait = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }

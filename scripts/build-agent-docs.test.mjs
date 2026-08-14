@@ -49,7 +49,7 @@ describe('Edge agent document metadata', () => {
     expect(classifyDocument('crates/aether-cloudlink/README.md').section).toBe('optional');
   });
 
-  it('builds a version-three record with orthogonal status fields', () => {
+  it('builds a record with orthogonal status fields', () => {
     const record = buildDocumentRecord({
       path: 'docs/guides/deployment.md',
       content: '# Deployment\n\nDeploy and verify the edge runtime.\n',
@@ -127,7 +127,6 @@ describe('Edge agent document metadata', () => {
 describe('Edge llms.txt generation', () => {
   it('renders every catalog entry exactly once with safety gates and Optional context', () => {
     const manifest = {
-      schema_version: 3,
       product: 'AetherEdge',
       documents: [
         buildDocumentRecord({
@@ -174,6 +173,11 @@ describe('Edge llms.txt generation', () => {
       await fs.readFile(path.join(repoRoot, 'ai', 'docs-manifest.schema.json'), 'utf8')
     );
     const index = await fs.readFile(path.join(repoRoot, 'llms.txt'), 'utf8');
+    const catalog = await fs.readFile(path.join(repoRoot, 'ai', 'catalog.yaml'), 'utf8');
+    const safetyPolicy = await fs.readFile(
+      path.join(repoRoot, 'ai', 'safety-policy.yaml'),
+      'utf8'
+    );
 
     expect(manifest.$schema).toBe(
       'https://raw.githubusercontent.com/EvanL1/AetherEdge/main/ai/docs-manifest.schema.json'
@@ -182,6 +186,11 @@ describe('Edge llms.txt generation', () => {
       'https://raw.githubusercontent.com/EvanL1/AetherEdge/main/ai/docs-manifest.schema.json'
     );
     expect(schema.required).toContain('$schema');
+    expect(Object.hasOwn(manifest, 'schema_version')).toBe(false);
+    expect(schema.required).not.toContain('schema_version');
+    expect(Object.hasOwn(schema.properties, 'schema_version')).toBe(false);
+    expect(catalog).not.toMatch(/^version:/mu);
+    expect(safetyPolicy).not.toMatch(/^version:/mu);
     expect(schema.$defs.document.required).toContain('canonical_url');
     expect(manifest.documents.every((document) => URL.canParse(document.canonical_url))).toBe(true);
     expect(await findManifestViolations(manifest, repoRoot)).toEqual([]);

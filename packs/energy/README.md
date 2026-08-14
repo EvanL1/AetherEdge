@@ -1,26 +1,20 @@
 # Energy pack
 
-The energy pack is the domain layer of the AetherEMS distribution. It is the
-migration destination for energy product models, mappings, control strategies,
-and operational knowledge; it is not a dependency of the Aether kernel.
+The energy pack is the domain layer of the AetherEMS distribution. It owns
+energy product models, mappings, control strategies, and operational knowledge;
+it is not a dependency of the Aether kernel.
 
-The v1 manifest is validated by the industry-neutral `aether-pack` boundary and
+The manifest is validated by the industry-neutral `aether-pack` boundary and
 contains only pack-root-relative asset directories. Product models under
 `models/`, operational knowledge under `knowledge/`, and the indexed
 `mappings/`, `rules/`, `evaluations/`, and `data-processing/tasks/`
 directories are Pack-owned assets.
-Each formal directory has a closed v1 index whose IDs exactly match
+Each formal directory has a closed index whose IDs exactly match
 `pack.yaml` and its actual regular files.
 The pack-owned configuration examples under `examples/config/` are deliberately
 disabled: installing or inspecting this pack must not contact a device or run a
 control rule. Commissioning must supply site-specific addresses and explicitly
 enable each selected instance, channel, and rule.
-
-The legacy energy-dashboard calculated-point preset is retained at
-[`examples/config/api/calculated_points.sql`](examples/config/api/calculated_points.sql)
-only as an AetherEMS distribution migration and commissioning asset. The Kernel
-does not compile or auto-import it; Pack installation and activation do not
-execute it, and the generic homepage reset always returns to zero points.
 
 Runtime activation is a single shared `global.yaml` entry consumed by both
 automation and MCP:
@@ -42,12 +36,6 @@ Without that validated identity/root pair, Energy models and
 `aether://packs/energy/knowledge/*` resources are absent, and the formal asset
 catalog exposes no `energy/<category>/<id>` entries.
 
-Energy product-name aliases and the pre-v5 instance-property conversion now
-live in `mappings/` with `removed_from_kernel: 0.5.0`. The generic CLI/schema
-does not know Energy product names and refuses to discard non-empty legacy
-domain properties; apply the Pack-owned migration before upgrading such a
-database.
-
 Run the fail-safe distribution proof from the repository root:
 
 ```bash
@@ -63,13 +51,13 @@ same IO feature selection used to build that Kernel, then build the data-only
 bundle:
 
 ```bash
-./scripts/build-installer.sh v0.5.0 arm64 \
+./scripts/build-installer.sh v0.0.2 arm64 \
   --io-features=can,gpio,http,modbus,mqtt \
   --manifest-only=build/energy-runtime/runtime-manifest.json
 ./scripts/build-pack-artifact.sh \
   packs/energy \
   build/energy-runtime/runtime-manifest.json \
-  release/aether-energy-arm64-0.5.0.bundle
+  release/aether-energy-arm64-0.0.2.bundle
 ```
 
 This local command is not evidence of a published or signed release. The
@@ -81,8 +69,8 @@ the Pack manifests.
 Load and PV forecasting are the first Aether Data Processing tasks in this
 pack. Their complete disabled-by-default declarations, synthetic binding, and
 contract fixtures live under [data-processing](data-processing/README.md).
-Their semantic inputs, request-driven processor boundary, and migration from
-the existing service are documented in
+Their semantic inputs, request-driven processor boundary, and commissioning
+requirements are documented in
 [Power Forecasting](knowledge/power-forecasting.md). Installing this
 pack never starts a model or contacts a remote processor by itself. The
 opt-in implementations are the bounded

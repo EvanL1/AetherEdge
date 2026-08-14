@@ -53,7 +53,8 @@ use crate::protocols::core::error::{GatewayError, Result};
 use crate::protocols::core::point::PointConfig;
 use crate::protocols::core::traits::{
     AdjustmentCommand, ConnectionState, ControlCommand, DataEvent, DataEventReceiver,
-    DataEventSender, Diagnostics, PointFailure, PollResult, WriteResult, data_event_channel,
+    DataEventSink, Diagnostics, PointFailure, PollResult, WriteResult,
+    data_event_channel_with_capacity,
 };
 use crate::protocols::runtime::ChannelRuntime;
 use aether_config::io::MAX_CHANNEL_TIMING_MS;
@@ -391,7 +392,7 @@ pub struct Iec104Channel {
     /// Last interrogation timestamp (Unix millis, 0 = never)
     last_interrogation_ms: AtomicU64,
     /// Event sender for the unified channel task.
-    event_tx: DataEventSender,
+    event_tx: DataEventSink,
     /// Sole event receiver, taken once by the unified channel task.
     event_rx: Option<DataEventReceiver>,
     poll_task: Option<tokio::task::JoinHandle<()>>,
@@ -404,7 +405,7 @@ impl Iec104Channel {
     pub fn new(config: Iec104ChannelConfig) -> Self {
         let client_config = config.to_client_config();
         let client = Iec104Client::new(client_config);
-        let (event_tx, event_rx) = data_event_channel();
+        let (event_tx, event_rx) = data_event_channel_with_capacity(config.points.len());
 
         // Build point ID -> index mapping for O(1) lookup
         let point_index: HashMap<u32, usize> = config
@@ -514,15 +515,13 @@ impl Iec104Channel {
         match event {
             Iec104Event::Connected => {
                 self.set_state(ConnectionState::Connected);
-                let _ = self
-                    .event_tx
-                    .try_send(DataEvent::ConnectionChanged(ConnectionState::Connected));
+                self.event_tx
+                    .publish(DataEvent::ConnectionChanged(ConnectionState::Connected));
             },
             Iec104Event::Disconnected => {
                 self.set_state(ConnectionState::Disconnected);
-                let _ = self
-                    .event_tx
-                    .try_send(DataEvent::ConnectionChanged(ConnectionState::Disconnected));
+                self.event_tx
+                    .publish(DataEvent::ConnectionChanged(ConnectionState::Disconnected));
             },
             Iec104Event::DataTransferStarted => {
                 // Data transfer is active
@@ -540,7 +539,7 @@ impl Iec104Channel {
                 }
                 if !data.is_empty() {
                     // Send event (service layer handles storage)
-                    let _ = self.event_tx.try_send(DataEvent::DataUpdate(data));
+                    self.event_tx.publish(DataEvent::DataUpdate(data));
 
                     // Update diagnostics (lock-free)
                     self.diagnostics.inc_read();
@@ -563,7 +562,7 @@ impl Iec104Channel {
             },
             Iec104Event::Error(msg) => {
                 self.record_error(msg.clone());
-                let _ = self.event_tx.try_send(DataEvent::Error(msg));
+                self.event_tx.publish(DataEvent::Error(msg));
             },
         }
     }
@@ -896,6 +895,7 @@ impl ChannelRuntime for Iec104Channel {
         // Stop poll task if running
         if let Some(task) = self.poll_task.take() {
             task.abort();
+            let _ = task.await;
         }
 
         // Stop data transfer first
@@ -971,6 +971,7 @@ impl ChannelRuntime for Iec104Channel {
         // Abort poll task if running
         if let Some(task) = self.poll_task.take() {
             task.abort();
+            let _ = task.await;
         }
         self.stop_data_transfer().await
     }
@@ -1088,9 +1089,13 @@ mod tests {
 
         let sent = channel
             .event_tx
-            .try_send(DataEvent::ConnectionChanged(ConnectionState::Connected));
+            .publish(DataEvent::ConnectionChanged(ConnectionState::Connected));
 
-        assert!(sent.is_ok());
+        assert!(matches!(
+            sent,
+            crate::protocols::core::traits::DataEventAdmission::Accepted
+                | crate::protocols::core::traits::DataEventAdmission::Coalesced
+        ));
         assert!(matches!(
             receiver.recv().await,
             Some(DataEvent::ConnectionChanged(ConnectionState::Connected))

@@ -85,7 +85,7 @@ async fn activation_requires_runtime_declaration_cloud_confirmation_and_distinct
             &observation_status,
         )
         .expect_err("base negotiation or one-sided enablement must not activate the extension");
-        assert_eq!(error.failure_code(), "UNSUPPORTED_VERSION");
+        assert_eq!(error.failure_code(), "EXTENSION_DISABLED");
     }
 
     let error = CloudLinkIntegrationExtension::enable_cloud_first(

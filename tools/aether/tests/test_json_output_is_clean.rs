@@ -64,14 +64,14 @@ fn shm_info_json_reports_the_committed_dual_plane() {
 fn json_output_has_no_log_lines_mixed_in() {
     let exe = env!("CARGO_BIN_EXE_aether");
     let output = Command::new(exe)
-        .args(["--verbose", "--json", "net", "mqtt", "status"])
+        .args(["--verbose", "--json", "channels", "list"])
         .env_remove("AETHER_API_URL")
         .output()
         .expect("failed to run aether binary");
 
     let stdout = String::from_utf8(output.stdout).expect("stdout was not valid UTF-8");
 
-    // Whatever happened to the request (uplink is not running in this test,
+    // Whatever happened to the request (IO is not running in this test,
     // so we expect a connection-refused failure), stdout must be nothing
     // but the JSON envelope. If a DEBUG/INFO log line leaked onto stdout,
     // this parse fails.

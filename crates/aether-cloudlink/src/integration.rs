@@ -13,8 +13,8 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::{
-    CLOUDLINK_INTEGRATION_EXTENSION, CLOUDLINK_PROTOCOL, CLOUDLINK_PROTOCOL_VERSION,
-    CloudLinkCodec, CloudLinkCodecError, MAX_CLOUDLINK_MESSAGE_BYTES,
+    CLOUDLINK_INTEGRATION_EXTENSION, CLOUDLINK_PROTOCOL, CloudLinkCodec, CloudLinkCodecError,
+    MAX_CLOUDLINK_MESSAGE_BYTES,
 };
 
 const MAX_BATCH_ID_BYTES: usize = 128;
@@ -256,9 +256,8 @@ fn maximum_complete_envelope_size(
     include_expiry: bool,
 ) -> Result<usize, CloudLinkCodecError> {
     let mut envelope = json!({
-        "schema": "aether.cloudlink.envelope.v1",
+        "schema": "aether.cloudlink.envelope",
         "protocol": CLOUDLINK_PROTOCOL,
-        "protocol_version": CLOUDLINK_PROTOCOL_VERSION,
         "message_kind": kind.as_str(),
         "gateway_id": "33333333-3333-4333-8333-333333333333",
         "session_id": "44444444-4444-4444-8444-444444444444",

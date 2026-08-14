@@ -9,7 +9,7 @@ use crate::core::config::{
     SIGNAL_POINTS_TABLE, TELEMETRY_POINTS_TABLE, install_channel_revision_guards,
 };
 use crate::core::config::{
-    AdjustmentPoint, ApiConfig, ChannelConfig, ControlPoint, ServiceConfig, SignalPoint,
+    AdjustmentPoint, ApiConfig, BaseServiceConfig, ChannelConfig, ControlPoint, SignalPoint,
     TelemetryPoint,
 };
 use crate::core::config::{DEFAULT_PORT, Point};
@@ -68,7 +68,7 @@ impl IoSqliteLoader {
     }
 
     /// Load process-level service and API configuration.
-    pub async fn load_service_config(&self) -> Result<(ServiceConfig, ApiConfig)> {
+    pub async fn load_service_config(&self) -> Result<(BaseServiceConfig, ApiConfig)> {
         // Load base service configuration
         let service_config =
             self.base_loader.load_config().await.map_err(|e| {
@@ -76,7 +76,7 @@ impl IoSqliteLoader {
             })?;
 
         // Convert to io config
-        let service = ServiceConfig {
+        let service = BaseServiceConfig {
             name: service_config.service_name.clone(),
             description: service_config
                 .extra_config
@@ -1104,9 +1104,7 @@ mod tests {
         sqlx::query(
             "UPDATE channels SET config = ?, revision = revision + 1 WHERE channel_id = 1001",
         )
-        .bind(
-            r#"{"description":null,"parameters":{"host":"192.168.1.100","port":502},"future":true}"#,
-        )
+        .bind(r#"{"description":null,"parameters":{"host":"192.168.1.100","port":502}}"#)
         .execute(&pool)
         .await
         .unwrap();
@@ -1118,12 +1116,27 @@ mod tests {
         sqlx::query(
             "UPDATE channels SET config = ?, revision = revision + 1 WHERE channel_id = 1001",
         )
-        .bind(r#"{"logging":"debug"}"#)
+        .bind(
+            r#"{"description":null,"parameters":{"host":"192.168.1.100","port":502},"future":true}"#,
+        )
         .execute(&pool)
         .await
         .unwrap();
         let error = loader
             .load_runtime_channel(1001, 3)
+            .await
+            .expect_err("unknown stored fields must fail closed");
+        assert!(error.to_string().contains("unknown field"), "{error:#}");
+
+        sqlx::query(
+            "UPDATE channels SET config = ?, revision = revision + 1 WHERE channel_id = 1001",
+        )
+        .bind(r#"{"logging":"debug"}"#)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let error = loader
+            .load_runtime_channel(1001, 4)
             .await
             .expect_err("invalid logging must not fall back to defaults");
         assert!(error.to_string().contains("logging policy is invalid"));

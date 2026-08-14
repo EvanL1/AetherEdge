@@ -224,11 +224,6 @@ pub async fn create_channel_handler(
         ));
     }
 
-    let compatibility = ChannelResponseCompatibility {
-        name: Some(request.name.clone()),
-        description: request.description.clone(),
-        protocol: Some(request.protocol.clone()),
-    };
     let parameters = parameters_from_json(request.parameters)?;
     let mut definition = ChannelDefinition::new(
         request.channel_id.map(ChannelId::new),
@@ -247,20 +242,18 @@ pub async fn create_channel_handler(
     let acceptance = boundary
         .mutate(&headers, ChannelMutation::create(definition))
         .await?;
-    Ok(Json(mutation_response(&acceptance, compatibility)))
+    Ok(Json(mutation_response(&acceptance)))
 }
 
-/// Partially update an existing channel definition using PATCH semantics on
-/// the historical PUT path. Omitted or null fields remain unchanged;
-/// supplied `parameters` keys merge into the authoritative map and omitted
-/// keys remain unchanged. Full replacement or clearing requires a future
-/// explicit mutation rather than overloading this compatibility route.
-/// The desired enabled state is changed only through `/enabled`.
+/// Partially update an existing channel definition.
 ///
-/// This retained PUT endpoint has PATCH semantics. Identity migration is forbidden;
-/// channel identity comes only from the path.
+/// PATCH semantics keep omitted or null fields unchanged; supplied `parameters`
+/// keys merge into the authoritative map. Full replacement or clearing requires
+/// an explicit mutation, and desired enabled state changes only through
+/// `/enabled`. Identity migration is forbidden; channel identity comes only
+/// from the path.
 #[utoipa::path(
-    put,
+    patch,
     path = "/api/channels/{id}",
     params(
         ("id" = u32, Path, description = "Stable channel identifier in 1..9999", minimum = 1, maximum = 9999),
@@ -270,7 +263,7 @@ pub async fn create_channel_handler(
     ),
     request_body(
         content = ChannelConfigUpdateRequest,
-        description = "PATCH semantics on the retained PUT path. Supplied parameter keys merge and omitted keys remain unchanged. Identity migration is forbidden.",
+        description = "Supplied parameter keys merge and omitted keys remain unchanged. Identity migration is forbidden.",
         example = json!({
             "name": "Packaging controller 2",
             "parameters": {"host": "192.0.2.11", "port": 502}
@@ -299,16 +292,11 @@ pub async fn update_channel_handler(
     let id = path_channel_id(&id)?;
     let request = json_body(payload)?;
 
-    let compatibility = ChannelResponseCompatibility {
-        name: request.name.clone(),
-        description: request.description.clone(),
-        protocol: request.protocol.clone(),
-    };
     let revision = required_expected_revision(&headers)?;
     let patch = patch_from_request(request)?;
     let mutation = ChannelMutation::update(ChannelId::new(id), revision, patch);
     let acceptance = boundary.mutate(&headers, mutation).await?;
-    Ok(Json(mutation_response(&acceptance, compatibility)))
+    Ok(Json(mutation_response(&acceptance)))
 }
 
 /// Enable or disable one channel's desired runtime lifecycle state.
@@ -356,10 +344,7 @@ pub async fn set_channel_enabled_handler(
         ChannelMutation::disable(channel_id, revision)
     };
     let acceptance = boundary.mutate(&headers, mutation).await?;
-    Ok(Json(mutation_response(
-        &acceptance,
-        ChannelResponseCompatibility::default(),
-    )))
+    Ok(Json(mutation_response(&acceptance)))
 }
 
 /// Delete one channel desired configuration and its rebuildable runtime.
@@ -399,10 +384,7 @@ pub async fn delete_channel_handler(
     let channel_id = ChannelId::new(id);
     let mutation = ChannelMutation::delete(channel_id, revision);
     let acceptance = boundary.mutate(&headers, mutation).await?;
-    Ok(Json(mutation_response(
-        &acceptance,
-        ChannelResponseCompatibility::default(),
-    )))
+    Ok(Json(mutation_response(&acceptance)))
 }
 
 fn optional_expected_revision(headers: &HeaderMap) -> Result<Option<ChannelRevision>, AppError> {
@@ -525,17 +507,7 @@ fn parameter_from_json(value: Value) -> Result<ChannelParameterValue, AppError> 
     }
 }
 
-#[derive(Default)]
-struct ChannelResponseCompatibility {
-    name: Option<String>,
-    description: Option<String>,
-    protocol: Option<String>,
-}
-
-fn mutation_response(
-    acceptance: &ChannelMutationAcceptance,
-    compatibility: ChannelResponseCompatibility,
-) -> ChannelMutationResponse {
+fn mutation_response(acceptance: &ChannelMutationAcceptance) -> ChannelMutationResponse {
     let operation = match acceptance.kind() {
         ChannelMutationKind::Create => ChannelMutationOperation::Create,
         ChannelMutationKind::Update => ChannelMutationOperation::Update,
@@ -576,14 +548,6 @@ fn mutation_response(
         },
     };
     let channel_id = acceptance.channel_id().get();
-    let desired_enabled = acceptance.desired_enabled();
-    let runtime_status = match runtime_projection {
-        ChannelRuntimeProjectionResult::Stopped => "stopped",
-        ChannelRuntimeProjectionResult::ActivationPending => "connecting",
-        ChannelRuntimeProjectionResult::Active => "running",
-        ChannelRuntimeProjectionResult::Degraded => "degraded",
-        ChannelRuntimeProjectionResult::Removed => "removed",
-    };
     let message = format!(
         "channel {} {} accepted; automatic retry is forbidden",
         channel_id,
@@ -593,18 +557,12 @@ fn mutation_response(
     ChannelMutationResponse {
         success: true,
         data: ChannelMutationResult {
-            id: channel_id,
             channel_id,
-            name: compatibility.name,
-            description: compatibility.description,
-            protocol: compatibility.protocol,
             request_id: acceptance.request_id().to_string(),
             operation,
             resulting_revision: acceptance.resulting_revision().get(),
-            enabled: desired_enabled,
-            desired_enabled,
+            desired_enabled: acceptance.desired_enabled(),
             runtime_projection,
-            runtime_status: runtime_status.to_string(),
             reconciliation_required: acceptance.reconciliation_required(),
             completion_audit,
             retryable: acceptance.is_retryable(),

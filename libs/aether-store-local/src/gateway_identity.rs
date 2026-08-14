@@ -22,7 +22,7 @@ use zeroize::Zeroizing;
 
 use crate::gateway_identity_fs::{ExclusiveIdentityLock, IdentityLayout, StoredIdentityFiles};
 
-const STATE_SCHEMA: &str = "aether.edge.gateway-enrollment-state.v1";
+const STATE_SCHEMA: &str = "aether.edge.gateway-enrollment-state";
 
 /// Ed25519 identity generator backed directly by the operating-system CSPRNG.
 #[derive(Debug, Clone, Copy, Default)]

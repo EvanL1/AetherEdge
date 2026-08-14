@@ -71,6 +71,29 @@ fn duplicate_pending_challenge_retries_the_exact_persisted_hello_after_restart()
 }
 
 #[test]
+fn retired_versioned_ledger_schema_is_rejected_without_rewriting_the_file() {
+    let directory = tempfile::tempdir().expect("temporary ledger directory");
+    let path = directory.path().join("challenge-ledger.json");
+    drop(FileCloudLinkChallengeLedger::open(&path, 8).expect("challenge ledger"));
+
+    let canonical = fs::read_to_string(&path).expect("canonical ledger");
+    let retired = canonical.replace(
+        "aether.edge.cloudlink-challenge-ledger",
+        "aether.edge.cloudlink-challenge-ledger.v1",
+    );
+    fs::write(&path, &retired).expect("retired ledger fixture");
+
+    assert_eq!(
+        FileCloudLinkChallengeLedger::open(&path, 8).expect_err("retired schema must fail closed"),
+        CloudLinkChallengeLedgerError::Corrupt
+    );
+    assert_eq!(
+        fs::read_to_string(&path).expect("unchanged fixture"),
+        retired
+    );
+}
+
+#[test]
 fn completed_or_conflicting_challenge_replay_is_rejected_without_mutation() {
     let directory = tempfile::tempdir().expect("temporary ledger directory");
     let path = directory.path().join("challenge-ledger.json");

@@ -33,8 +33,7 @@ fn write_pack(root: &Path) {
     fs::create_dir_all(root.join("knowledge")).expect("knowledge directory");
     fs::write(
         root.join("pack.yaml"),
-        r#"schema_version: 1
-id: demo-pack
+        r#"id: demo-pack
 name: Demo Pack
 version: 1.2.3
 status: stable
@@ -111,7 +110,7 @@ fn pack_only_bundle_contains_data_and_closed_metadata_but_no_kernel_payload() {
         &fs::read(bundle.join("pack-artifact.json")).expect("artifact metadata"),
     )
     .expect("metadata JSON");
-    assert_eq!(metadata["schema"], "aether.pack-artifact.v1");
+    assert_eq!(metadata["schema"], "aether.pack-artifact");
     assert_eq!(metadata["pack"]["id"], "demo-pack");
     assert_eq!(metadata["pack"]["version"], "1.2.3");
     assert_eq!(metadata["kernel"]["version"], env!("CARGO_PKG_VERSION"));

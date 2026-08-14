@@ -23,7 +23,7 @@ pub struct PointsQuery {
     name: Option<String>,
 }
 
-// ── GET /api/v1/homepage ──────────────────────────────────────────────────────
+// ── GET /api/homepage ─────────────────────────────────────────────────────────
 
 /// List homepage panel points (paginated).
 ///
@@ -32,7 +32,7 @@ pub struct PointsQuery {
 /// calculated or mapped values derived from commissioned instance measurements.
 /// Each point definition is stored in SQLite and can be filtered by the `name`
 /// keyword. A new Kernel installation starts with no homepage points.
-#[utoipa::path(get, path = "/api/v1/homepage", tag = "Homepage",
+#[utoipa::path(get, path = "/api/homepage", tag = "Homepage",
     security(("bearer_auth" = [])),
     params(PointsQuery),
     responses((status = 200, description = "Calculated point list", body = crate::models::GatewayDataResponse<crate::models::HomepagePageData>)))]
@@ -75,14 +75,14 @@ pub async fn list_points(
     }
 }
 
-// ── GET /api/v1/homepage/:id ──────────────────────────────────────────────────
+// ── GET /api/homepage/:id ─────────────────────────────────────────────────────
 
 /// Retrieve the full definition of a single homepage point.
 ///
 /// Includes the display name, formula/source, unit, image URL, and description.
 /// Used to pre-populate the "edit point" dialog. Returns 404 if the point ID
 /// does not exist.
-#[utoipa::path(get, path = "/api/v1/homepage/{id}", tag = "Homepage",
+#[utoipa::path(get, path = "/api/homepage/{id}", tag = "Homepage",
     security(("bearer_auth" = [])),
     params(("id" = i64, Path, description = "Point ID")),
     responses((status = 200, description = "Point definition", body = crate::models::GatewayDataResponse<CalculatedPoint>), (status = 404, description = "Not found")))]
@@ -116,14 +116,14 @@ pub async fn get_point(
     }
 }
 
-// ── PUT /api/v1/homepage/:id ──────────────────────────────────────────────────
+// ── PUT /api/homepage/:id ─────────────────────────────────────────────────────
 
 /// Update a single homepage point (partial update).
 ///
 /// All fields are optional; omitted fields retain their current values. Supports
 /// name, formula, unit, image URL, and description edits. Changes take effect
 /// immediately — the next frontend poll or WebSocket push uses the new definition.
-#[utoipa::path(put, path = "/api/v1/homepage/{id}", tag = "Homepage",
+#[utoipa::path(put, path = "/api/homepage/{id}", tag = "Homepage",
     security(("bearer_auth" = [])),
     params(("id" = i64, Path, description = "Point ID")),
     request_body = CalculatedPointUpdate,
@@ -191,7 +191,7 @@ pub async fn update_point(
     }
 }
 
-// ── POST /api/v1/homepage/reset ───────────────────────────────────────────────
+// ── POST /api/homepage/reset ──────────────────────────────────────────────────
 
 /// Clear homepage points to the safe empty state.
 ///
@@ -199,7 +199,7 @@ pub async fn update_point(
 /// does not restore built-in or domain-specific defaults. Optional distribution
 /// presets are separate commissioning assets and are never imported by reset.
 /// **Destructive operation** — deleted definitions cannot be recovered.
-#[utoipa::path(post, path = "/api/v1/homepage/reset", tag = "Homepage",
+#[utoipa::path(post, path = "/api/homepage/reset", tag = "Homepage",
     security(("bearer_auth" = [])),
     responses((status = 200, description = "Homepage points cleared to the safe empty state", body = crate::models::GatewayDataResponse<crate::models::HomepageResetData>)))]
 pub async fn reset_points(State(state): State<Arc<AppState>>) -> impl IntoResponse {

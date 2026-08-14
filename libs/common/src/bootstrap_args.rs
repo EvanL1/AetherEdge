@@ -72,11 +72,6 @@ impl ServiceArgs {
             return path;
         }
 
-        // Check DATABASE_DIR for all services (unified database)
-        if let Ok(dir) = std::env::var("DATABASE_DIR") {
-            return format!("{}/aether.db", dir);
-        }
-
         // Default unified database path
         "data/aether.db".to_string()
     }
@@ -137,15 +132,6 @@ mod tests {
 
     #[test]
     fn test_get_db_path() {
-        // Clean up any environment variables that might affect the test
-        // TODO: Audit that the environment access only happens in single-threaded code.
-        unsafe { std::env::remove_var("AETHER_DB_PATH") };
-        // TODO: Audit that the environment access only happens in single-threaded code.
-        unsafe { std::env::remove_var("DATABASE_DIR") };
-
-        let args = ServiceArgs::default();
-        assert_eq!(args.get_db_path("io"), "data/aether.db");
-
         let args = ServiceArgs {
             db_path: Some("/custom/path.db".to_string()),
             ..Default::default()

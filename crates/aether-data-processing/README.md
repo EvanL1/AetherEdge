@@ -1,11 +1,11 @@
 # aether-data-processing crate
 
-Strict, transport-neutral JSON codec for the Aether Data Processing v1
-processor boundary. It converts validated domain values to and from the
-versioned RFC 3339/JSON DTOs, encodes Aether-accepted `DerivedData`, and
+Strict, transport-neutral JSON codec for the Aether Data Processing processor
+boundary. It converts validated domain values to and from the fixed RFC
+3339/JSON DTOs, encodes Aether-accepted `DerivedData`, and
 computes RFC 8785 input digests.
 
-The v1 wire format uses UTC `Z` timestamps with no finer than millisecond
+The wire format uses UTC `Z` timestamps with no finer than millisecond
 precision, preserves optional external-forecast `SourceProvenance.issued_at`,
 and accepts only `interval_end` forecast timestamp semantics. Contract-invalid
 or unknown fields fail closed before a transport exposes domain values.
@@ -15,7 +15,7 @@ by Aether. The accepted envelope retains the processor contract, immutable
 artifact provenance, fallback metadata, warning codes, and Aether-computed
 frame quality.
 
-Artifact version/digest is identity, not chronology: v1 has no
+Artifact version/digest is identity, not chronology: the contract has no
 `trained_through` or `available_at`. The codec also cannot turn an event-time
 `as_of` into a bitemporal historian cut; those guarantees belong to future
 source and commissioning contracts.

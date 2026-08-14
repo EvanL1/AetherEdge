@@ -2,8 +2,30 @@
 
 use anyhow::Result;
 use reqwest::Client;
+use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
+
+#[derive(Serialize)]
+struct CreateInstanceRequest<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    instance_id: Option<u32>,
+    instance_name: &'a str,
+    product_name: &'a str,
+    properties: &'a HashMap<String, Value>,
+    expected_revision: u64,
+    confirmed: bool,
+}
+
+#[derive(Serialize)]
+struct UpdateInstanceRequest<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    instance_name: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    properties: Option<&'a HashMap<String, Value>>,
+    expected_revision: u64,
+    confirmed: bool,
+}
 
 pub struct ModelClient {
     client: Client,
@@ -90,10 +112,10 @@ impl ModelClient {
         }
     }
 
-    pub async fn get_instance(&self, name: &str) -> Result<Value> {
+    pub async fn get_instance(&self, instance_id: u32) -> Result<Value> {
         let request = self
             .client
-            .get(format!("{}/api/instances/{}", self.base_url, name));
+            .get(format!("{}/api/instances/{instance_id}", self.base_url));
         let response = self.apply_auth(request)?.send().await?;
 
         if response.status().is_success() {
@@ -127,73 +149,105 @@ impl ModelClient {
         }
     }
 
-    #[allow(clippy::disallowed_methods)] // json! macro internally uses unwrap (safe for known valid JSON)
     pub async fn create_instance(
         &self,
-        product: &str,
-        name: &str,
-        props: HashMap<String, String>,
+        instance_id: Option<u32>,
+        instance_name: &str,
+        product_name: &str,
+        properties: HashMap<String, Value>,
+        expected_revision: u64,
+        confirmed: bool,
     ) -> Result<()> {
-        // The gateway treats every non-GET method as a governed mutation; the
-        // CLI invocation itself is the operator's confirmation for this
-        // service-level unguarded operation.
+        Self::validate_instance_mutation(confirmed, expected_revision)?;
+        let body = CreateInstanceRequest {
+            instance_id,
+            instance_name,
+            product_name,
+            properties: &properties,
+            expected_revision,
+            confirmed,
+        };
         let request = self
             .client
             .post(format!("{}/api/instances", self.base_url))
+            .header("x-request-id", uuid::Uuid::new_v4().to_string())
             .header("x-aether-confirmed", "true")
-            .json(&serde_json::json!({
-                "product": product,
-                "name": name,
-                "properties": props
-            }));
+            .json(&body);
         let response = self.apply_auth(request)?.send().await?;
 
         if response.status().is_success() {
             Ok(())
         } else {
-            Err(anyhow::anyhow!(
-                "Failed to create instance: {}",
-                response.status()
-            ))
+            Err(crate::output::parse_error_body("Failed to create instance", response).await)
         }
     }
 
-    #[allow(clippy::disallowed_methods)] // json! macro internally uses unwrap (safe for known valid JSON)
-    pub async fn update_instance(&self, name: &str, props: HashMap<String, String>) -> Result<()> {
+    pub async fn update_instance(
+        &self,
+        instance_id: u32,
+        instance_name: Option<&str>,
+        properties: Option<HashMap<String, Value>>,
+        expected_revision: u64,
+        confirmed: bool,
+    ) -> Result<()> {
+        Self::validate_instance_mutation(confirmed, expected_revision)?;
+        if instance_name.is_none() && properties.is_none() {
+            anyhow::bail!("instance update requires --instance-name or at least one --props value");
+        }
+        let body = UpdateInstanceRequest {
+            instance_name,
+            properties: properties.as_ref(),
+            expected_revision,
+            confirmed,
+        };
         let request = self
             .client
-            .put(format!("{}/api/instances/{}", self.base_url, name))
+            .put(format!("{}/api/instances/{instance_id}", self.base_url))
+            .header("x-request-id", uuid::Uuid::new_v4().to_string())
             .header("x-aether-confirmed", "true")
-            .json(&serde_json::json!({
-                "properties": props
-            }));
+            .json(&body);
         let response = self.apply_auth(request)?.send().await?;
 
         if response.status().is_success() {
             Ok(())
         } else {
-            Err(anyhow::anyhow!(
-                "Failed to update instance: {}",
-                response.status()
-            ))
+            Err(crate::output::parse_error_body("Failed to update instance", response).await)
         }
     }
 
-    pub async fn delete_instance(&self, name: &str) -> Result<()> {
+    pub async fn delete_instance(
+        &self,
+        instance_id: u32,
+        expected_revision: u64,
+        confirmed: bool,
+    ) -> Result<()> {
+        Self::validate_instance_mutation(confirmed, expected_revision)?;
         let request = self
             .client
-            .delete(format!("{}/api/instances/{}", self.base_url, name))
+            .delete(format!("{}/api/instances/{instance_id}", self.base_url))
+            .query(&[
+                ("expected_revision", expected_revision.to_string()),
+                ("confirmed", confirmed.to_string()),
+            ])
+            .header("x-request-id", uuid::Uuid::new_v4().to_string())
             .header("x-aether-confirmed", "true");
         let response = self.apply_auth(request)?.send().await?;
 
         if response.status().is_success() {
             Ok(())
         } else {
-            Err(anyhow::anyhow!(
-                "Failed to delete instance: {}",
-                response.status()
-            ))
+            Err(crate::output::parse_error_body("Failed to delete instance", response).await)
         }
+    }
+
+    fn validate_instance_mutation(confirmed: bool, expected_revision: u64) -> Result<()> {
+        if !confirmed {
+            anyhow::bail!("instance mutation requires explicit confirmation (--confirmed)");
+        }
+        if expected_revision == 0 {
+            anyhow::bail!("--expected-revision must be at least 1");
+        }
+        Ok(())
     }
 
     /// automation's `ActionRequest` takes a numeric point ID encoded as a string.
@@ -248,8 +302,10 @@ impl ModelClient {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::ModelClient;
-    use wiremock::matchers::{body_json, header, method, path};
+    use wiremock::matchers::{body_json, header, header_exists, method, path, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[tokio::test]
@@ -294,25 +350,44 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn instance_writes_send_the_gateway_confirmation_header() {
+    async fn instance_writes_use_canonical_ids_bodies_queries_and_governance_headers() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/api/instances"))
             .and(header("x-aether-confirmed", "true"))
+            .and(header_exists("x-request-id"))
+            .and(body_json(serde_json::json!({
+                "instance_id": 7,
+                "instance_name": "pump-1",
+                "product_name": "pump",
+                "properties": {"capacity": 100, "enabled": true},
+                "expected_revision": 3,
+                "confirmed": true
+            })))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
             .expect(1)
             .mount(&server)
             .await;
         Mock::given(method("PUT"))
-            .and(path("/api/instances/pump-1"))
+            .and(path("/api/instances/7"))
             .and(header("x-aether-confirmed", "true"))
+            .and(header_exists("x-request-id"))
+            .and(body_json(serde_json::json!({
+                "instance_name": "pump-renamed",
+                "properties": {"capacity": 120},
+                "expected_revision": 4,
+                "confirmed": true
+            })))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
             .expect(1)
             .mount(&server)
             .await;
         Mock::given(method("DELETE"))
-            .and(path("/api/instances/pump-1"))
+            .and(path("/api/instances/7"))
+            .and(query_param("expected_revision", "5"))
+            .and(query_param("confirmed", "true"))
             .and(header("x-aether-confirmed", "true"))
+            .and(header_exists("x-request-id"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
             .expect(1)
             .mount(&server)
@@ -324,14 +399,98 @@ mod tests {
             access_token: None,
         };
         client
-            .create_instance("pump", "pump-1", std::collections::HashMap::new())
+            .create_instance(
+                Some(7),
+                "pump-1",
+                "pump",
+                std::collections::HashMap::from([
+                    ("capacity".to_string(), serde_json::json!(100)),
+                    ("enabled".to_string(), serde_json::json!(true)),
+                ]),
+                3,
+                true,
+            )
             .await
             .unwrap();
         client
-            .update_instance("pump-1", std::collections::HashMap::new())
+            .update_instance(
+                7,
+                Some("pump-renamed"),
+                Some(std::collections::HashMap::from([(
+                    "capacity".to_string(),
+                    serde_json::json!(120),
+                )])),
+                4,
+                true,
+            )
             .await
             .unwrap();
-        client.delete_instance("pump-1").await.unwrap();
+        client.delete_instance(7, 5, true).await.unwrap();
+
+        for request in server.received_requests().await.unwrap() {
+            let request_id = request
+                .headers
+                .get("x-request-id")
+                .expect("mutation request ID")
+                .to_str()
+                .expect("request ID text");
+            let parsed = uuid::Uuid::parse_str(request_id).expect("UUID request ID");
+            assert_eq!(parsed.to_string(), request_id);
+        }
+    }
+
+    #[tokio::test]
+    async fn instance_mutations_fail_before_http_without_governance_inputs() {
+        let server = MockServer::start().await;
+        let client = ModelClient {
+            client: reqwest::Client::new(),
+            base_url: server.uri(),
+            access_token: None,
+        };
+
+        assert!(
+            client
+                .create_instance(None, "pump-1", "pump", HashMap::new(), 1, false)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("explicit confirmation")
+        );
+        assert!(
+            client
+                .update_instance(7, Some("pump-2"), None, 0, true)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("at least 1")
+        );
+        assert!(
+            client
+                .delete_instance(7, 1, false)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("explicit confirmation")
+        );
+        assert!(server.received_requests().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn get_instance_uses_the_numeric_identity_path() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/instances/7"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = ModelClient {
+            client: reqwest::Client::new(),
+            base_url: server.uri(),
+            access_token: None,
+        };
+        client.get_instance(7).await.unwrap();
     }
 
     #[test]
@@ -432,7 +591,10 @@ mod tests {
             .and(wiremock::matchers::query_param("type", "measurement"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "success": true,
-                "data": {"101": {"value": 650.5, "timestamp_ms": 42}}
+                "data": {
+                    "measurements": {"101": {"value": 650.5, "timestamp_ms": 42}},
+                    "actions": {}
+                }
             })))
             .expect(1)
             .mount(&server)
@@ -447,6 +609,7 @@ mod tests {
             .get_instance_data(3, Some("measurement"))
             .await
             .unwrap();
-        assert_eq!(data["data"]["101"]["value"], 650.5);
+        assert_eq!(data["data"]["measurements"]["101"]["value"], 650.5);
+        assert_eq!(data["data"]["actions"], serde_json::json!({}));
     }
 }

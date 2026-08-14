@@ -26,8 +26,8 @@ use crate::protocols::core::metadata::{
 };
 use crate::protocols::core::point::TransformConfig;
 use crate::protocols::core::traits::{
-    ConnectionState, DataEvent, DataEventReceiver, DataEventSender, Diagnostics, PollResult,
-    data_event_channel,
+    ConnectionState, DataEvent, DataEventReceiver, DataEventSink, Diagnostics, PollResult,
+    data_event_channel_with_capacity,
 };
 use crate::protocols::runtime::ChannelRuntime;
 
@@ -188,7 +188,7 @@ pub struct Gb32960Channel {
     params: Gb32960ParamsConfig,
     points: Arc<Vec<Gb32960PointConfig>>,
     listener: Option<TcpListener>,
-    event_tx: DataEventSender,
+    event_tx: DataEventSink,
     event_rx: Option<DataEventReceiver>,
     state: Arc<AtomicU8>,
     diagnostics: Arc<AtomicDiagnostics>,
@@ -204,7 +204,7 @@ impl Gb32960Channel {
         points: Vec<Gb32960PointConfig>,
     ) -> Result<Self> {
         params.validate()?;
-        let (event_tx, event_rx) = data_event_channel();
+        let (event_tx, event_rx) = data_event_channel_with_capacity(points.len());
         Ok(Self {
             channel_id,
             params,
@@ -222,7 +222,7 @@ impl Gb32960Channel {
 
     fn set_state(&self, state: ConnectionState) {
         self.state.store(state.into(), Ordering::SeqCst);
-        let _ = self.event_tx.try_send(DataEvent::ConnectionChanged(state));
+        self.event_tx.publish(DataEvent::ConnectionChanged(state));
     }
 
     /// Cancels the accept loop, waits for it to exit, and releases the socket.
@@ -264,7 +264,7 @@ impl Gb32960Channel {
                 .await
                 {
                     diagnostics.record_error(error.to_string());
-                    let _ = event_tx.try_send(DataEvent::Error(error.to_string()));
+                    event_tx.publish(DataEvent::Error(error.to_string()));
                 }
             }
         })
@@ -405,7 +405,7 @@ async fn handle_connection(
     mut stream: TcpStream,
     allowed_vins: &[String],
     points: &[Gb32960PointConfig],
-    event_tx: &DataEventSender,
+    event_tx: &DataEventSink,
     diagnostics: &AtomicDiagnostics,
     cancellation: &CancellationToken,
     deadlines: ReadDeadlines,
@@ -457,7 +457,7 @@ async fn handle_connection(
                 let batch = project_points(points, &values, diagnostics);
                 if !batch.is_empty() {
                     diagnostics.add_read(batch.len() as u64);
-                    let _ = event_tx.try_send(DataEvent::DataUpdate(batch));
+                    event_tx.publish(DataEvent::DataUpdate(batch));
                 }
             }
             let acknowledgement = encode_ack(&frame)?;
@@ -1081,7 +1081,8 @@ mod tests {
             offset: 0.0,
             reverse: false,
         }];
-        let (event_tx, mut event_rx) = data_event_channel();
+        let (event_tx, mut event_rx) =
+            crate::protocols::core::traits::data_event_channel_with_capacity(points.len());
         let diagnostics = Arc::new(AtomicDiagnostics::new());
         let cancellation = CancellationToken::new();
         let server_cancellation = cancellation.clone();

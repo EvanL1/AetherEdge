@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 
-const LEDGER_SCHEMA: &str = "aether.edge.cloudlink-challenge-ledger.v1";
+const LEDGER_SCHEMA: &str = "aether.edge.cloudlink-challenge-ledger";
 const MAX_CAPACITY: usize = 256;
 const MAX_TRANSCRIPT_BYTES: usize = 64 * 1024;
 const MAX_LEDGER_BYTES: u64 = 32 * 1024 * 1024;

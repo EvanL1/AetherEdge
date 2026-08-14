@@ -5,7 +5,7 @@ use axum::{
     Json, Router,
     body::{Body, to_bytes},
     extract::{DefaultBodyLimit, Path, State},
-    http::{HeaderMap, Method, Request, Response, StatusCode, header},
+    http::{HeaderMap, HeaderValue, Method, Request, Response, StatusCode, header},
     response::IntoResponse,
     routing::any,
 };
@@ -17,6 +17,7 @@ use crate::config::GatewayConfig;
 use crate::state::AppState;
 
 const MAX_GATEWAY_BODY_BYTES: usize = 16 * 1024 * 1024;
+const REQUEST_ID_HEADER: &str = "x-request-id";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ServiceName {
@@ -66,7 +67,7 @@ impl ServiceName {
         match self {
             Self::Io | Self::Automation => path.to_owned(),
             Self::History => format!("hisApi/{path}"),
-            Self::Uplink => format!("netApi/{path}"),
+            Self::Uplink => path.to_owned(),
             Self::Alarm => format!("alarmApi/{path}"),
         }
     }
@@ -128,7 +129,10 @@ async fn proxy_service(
     path: String,
     mut request: Request<Body>,
 ) -> Response<Body> {
-    if validate_relative_path(&path).is_err() || is_internal_admin_path(service, &path) {
+    if validate_relative_path(&path).is_err()
+        || is_service_local_only_path(&path)
+        || !is_supported_gateway_path(service, &path, request.method())
+    {
         return gateway_error(
             StatusCode::BAD_REQUEST,
             "INVALID_SERVICE_PATH",
@@ -147,26 +151,77 @@ async fn proxy_service(
     {
         return error.into_response();
     }
-    if is_governed_mutation(service, &path, request.method())
-        && !request.headers().contains_key("x-request-id")
-    {
-        let request_id = Uuid::new_v4().to_string();
-        if let Ok(value) = request_id.parse() {
-            request.headers_mut().insert("x-request-id", value);
-        }
-    }
+    let request_id = if is_governed_mutation(service, &path, request.method()) {
+        let request_id = match canonical_request_id(request.headers()) {
+            Ok(Some(request_id)) => request_id,
+            Ok(None) if requires_caller_request_id(service, &path, request.method()) => {
+                return gateway_error(
+                    StatusCode::BAD_REQUEST,
+                    "MISSING_REQUEST_ID",
+                    "this device command requires a caller-supplied canonical x-request-id",
+                );
+            },
+            Ok(None) => match HeaderValue::from_str(&Uuid::new_v4().to_string()) {
+                Ok(request_id) => request_id,
+                Err(_) => {
+                    return gateway_error(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "REQUEST_ID_GENERATION_FAILED",
+                        "the application gateway could not create a request ID",
+                    );
+                },
+            },
+            Err(()) => {
+                return gateway_error(
+                    StatusCode::BAD_REQUEST,
+                    "INVALID_REQUEST_ID",
+                    "x-request-id must contain exactly one canonical UUID",
+                );
+            },
+        };
+        request
+            .headers_mut()
+            .insert(REQUEST_ID_HEADER, request_id.clone());
+        Some(request_id)
+    } else {
+        None
+    };
     forward_to_upstream(
         &state.service_client,
         service.base_url(&state.config),
         &service.downstream_path(&path),
         request,
+        request_id,
     )
     .await
 }
 
-fn is_internal_admin_path(service: ServiceName, path: &str) -> bool {
-    matches!(service, ServiceName::Io | ServiceName::Automation)
-        && (path == "api/admin" || path.starts_with("api/admin/"))
+fn canonical_request_id(headers: &HeaderMap) -> Result<Option<HeaderValue>, ()> {
+    let mut values = headers.get_all(REQUEST_ID_HEADER).iter();
+    let Some(value) = values.next() else {
+        return Ok(None);
+    };
+    if values.next().is_some() {
+        return Err(());
+    }
+    let text = value.to_str().map_err(|_| ())?;
+    let parsed = Uuid::parse_str(text).map_err(|_| ())?;
+    if parsed.to_string() != text {
+        return Err(());
+    }
+    Ok(Some(value.clone()))
+}
+
+fn is_service_local_only_path(path: &str) -> bool {
+    path == "api/admin"
+        || path.starts_with("api/admin/")
+        || path == "api/internal"
+        || path.starts_with("api/internal/")
+}
+
+fn is_supported_gateway_path(service: ServiceName, path: &str, method: &Method) -> bool {
+    service != ServiceName::Uplink
+        || (path == "health" && matches!(*method, Method::GET | Method::HEAD))
 }
 
 fn is_governed_mutation(service: ServiceName, path: &str, method: &Method) -> bool {
@@ -175,6 +230,18 @@ fn is_governed_mutation(service: ServiceName, path: &str, method: &Method) -> bo
     }
     // History batch-query is a read expressed as POST because its filter can be large.
     !(service == ServiceName::History && path == "data/batch-query" && *method == Method::POST)
+}
+
+/// Device-point writes use the request UUID as the durable IO `CommandId`.
+/// The gateway must not invent that identity: if the complete HTTP response is
+/// lost, only a caller-owned ID lets the caller safely query or retry the same
+/// physical command instead of accidentally issuing a new one.
+fn requires_caller_request_id(service: ServiceName, path: &str, method: &Method) -> bool {
+    if service != ServiceName::Automation || *method != Method::POST {
+        return false;
+    }
+    let segments = path.split('/').collect::<Vec<_>>();
+    matches!(segments.as_slice(), ["api", "instances", instance_id, "action"] if !instance_id.is_empty())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -255,15 +322,17 @@ pub(crate) async fn forward_to_upstream(
     base_url: &str,
     relative_path: &str,
     request: Request<Body>,
+    request_id: Option<HeaderValue>,
 ) -> Response<Body> {
     if !matches!(
         *request.method(),
         Method::GET | Method::POST | Method::PUT | Method::PATCH | Method::DELETE | Method::HEAD
     ) {
-        return gateway_error(
+        return gateway_error_with_request_id(
             StatusCode::METHOD_NOT_ALLOWED,
             "METHOD_NOT_ALLOWED",
             "the method is not supported by the application gateway",
+            request_id.as_ref(),
         );
     }
 
@@ -274,10 +343,11 @@ pub(crate) async fn forward_to_upstream(
     )) {
         Ok(url) if matches!(url.scheme(), "http" | "https") => url,
         _ => {
-            return gateway_error(
+            return gateway_error_with_request_id(
                 StatusCode::BAD_GATEWAY,
                 "UPSTREAM_CONFIGURATION_INVALID",
                 "the internal application service is unavailable",
+                request_id.as_ref(),
             );
         },
     };
@@ -287,10 +357,11 @@ pub(crate) async fn forward_to_upstream(
     let body = match to_bytes(body, MAX_GATEWAY_BODY_BYTES).await {
         Ok(body) => body,
         Err(_) => {
-            return gateway_error(
+            return gateway_error_with_request_id(
                 StatusCode::PAYLOAD_TOO_LARGE,
                 "PAYLOAD_TOO_LARGE",
                 "the application request body exceeds the gateway limit",
+                request_id.as_ref(),
             );
         },
     };
@@ -304,29 +375,53 @@ pub(crate) async fn forward_to_upstream(
     let upstream = match downstream.body(body).send().await {
         Ok(response) => response,
         Err(_) => {
-            return gateway_error(
+            return gateway_error_with_request_id(
                 StatusCode::BAD_GATEWAY,
                 "UPSTREAM_UNAVAILABLE",
                 "the internal application service is unavailable",
+                request_id.as_ref(),
             );
         },
     };
 
     let status = upstream.status();
     let response_headers = upstream.headers().clone();
+    if let Some(expected) = request_id.as_ref() {
+        let mut actual_values = response_headers.get_all(REQUEST_ID_HEADER).iter();
+        if let Some(actual) = actual_values.next()
+            && (actual != expected || actual_values.next().is_some())
+        {
+            tracing::warn!(
+                expected_request_id = ?expected,
+                actual_request_id = ?actual,
+                "downstream application service returned an inconsistent request ID"
+            );
+            return gateway_error_with_request_id(
+                StatusCode::BAD_GATEWAY,
+                "UPSTREAM_REQUEST_ID_MISMATCH",
+                "the internal application service returned an inconsistent request ID",
+                request_id.as_ref(),
+            );
+        }
+    }
     let body = Body::from_stream(upstream.bytes_stream());
     let mut response = Response::builder().status(status);
     if let Some(headers) = response.headers_mut() {
         copy_response_headers(&response_headers, headers);
     }
-    match response.body(body) {
+    let mut response = match response.body(body) {
         Ok(response) => response,
-        Err(_) => gateway_error(
+        Err(_) => gateway_error_with_request_id(
             StatusCode::INTERNAL_SERVER_ERROR,
             "GATEWAY_RESPONSE_FAILED",
             "the application gateway could not construct a response",
+            request_id.as_ref(),
         ),
+    };
+    if let Some(request_id) = request_id {
+        response.headers_mut().insert(REQUEST_ID_HEADER, request_id);
     }
+    response
 }
 
 fn request_header_allowlist() -> [header::HeaderName; 9] {
@@ -366,6 +461,21 @@ fn gateway_error(status: StatusCode, code: &'static str, message: &'static str) 
         .into_response()
 }
 
+fn gateway_error_with_request_id(
+    status: StatusCode,
+    code: &'static str,
+    message: &'static str,
+    request_id: Option<&HeaderValue>,
+) -> Response<Body> {
+    let mut response = gateway_error(status, code, message);
+    if let Some(request_id) = request_id {
+        response
+            .headers_mut()
+            .insert(REQUEST_ID_HEADER, request_id.clone());
+    }
+    response
+}
+
 #[cfg(test)]
 mod tests {
     use axum::{
@@ -379,8 +489,9 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        GatewayAuthorizationError, ServiceName, authorize_service_request, forward_to_upstream,
-        is_governed_mutation, is_internal_admin_path, validate_relative_path,
+        GatewayAuthorizationError, ServiceName, authorize_service_request, canonical_request_id,
+        forward_to_upstream, is_governed_mutation, is_service_local_only_path,
+        is_supported_gateway_path, requires_caller_request_id, validate_relative_path,
     };
     use crate::auth::Claims;
 
@@ -427,10 +538,7 @@ mod tests {
             ServiceName::History.downstream_path("data/query"),
             "hisApi/data/query"
         );
-        assert_eq!(
-            ServiceName::Uplink.downstream_path("mqtt/status"),
-            "netApi/mqtt/status"
-        );
+        assert_eq!(ServiceName::Uplink.downstream_path("health"), "health");
         assert_eq!(
             ServiceName::Alarm.downstream_path("rules"),
             "alarmApi/rules"
@@ -440,15 +548,19 @@ mod tests {
         assert!(validate_relative_path("api/channels/../secrets").is_err());
         assert!(validate_relative_path("//attacker.invalid/path").is_err());
         assert!(validate_relative_path("api/%2e%2e/secrets").is_err());
-        assert!(is_internal_admin_path(
-            ServiceName::Io,
-            "api/admin/logs/view"
+        assert!(is_service_local_only_path("api/admin/logs/view"));
+        assert!(is_service_local_only_path("api/internal/alarm-events"));
+        assert!(!is_service_local_only_path("data/query"));
+        assert!(is_supported_gateway_path(
+            ServiceName::Uplink,
+            "health",
+            &Method::GET
         ));
-        assert!(is_internal_admin_path(
-            ServiceName::Automation,
-            "api/admin/logs/level"
+        assert!(!is_supported_gateway_path(
+            ServiceName::Uplink,
+            "mqtt/status",
+            &Method::GET
         ));
-        assert!(!is_internal_admin_path(ServiceName::History, "data/query"));
     }
 
     #[test]
@@ -460,15 +572,15 @@ mod tests {
             &Method::POST
         ));
         assert!(is_governed_mutation(
-            ServiceName::Uplink,
-            "mqtt/config",
+            ServiceName::Alarm,
+            "rules",
             &Method::POST
         ));
 
         let viewer = authorize_service_request(
             &claims("Viewer"),
-            ServiceName::Uplink,
-            "mqtt/config",
+            ServiceName::Alarm,
+            "rules",
             &Method::POST,
             &headers,
         )
@@ -477,8 +589,8 @@ mod tests {
 
         let engineer = authorize_service_request(
             &claims("Engineer"),
-            ServiceName::Uplink,
-            "mqtt/config",
+            ServiceName::Alarm,
+            "rules",
             &Method::POST,
             &headers,
         )
@@ -489,8 +601,8 @@ mod tests {
         confirmed.insert("x-aether-confirmed", "true".parse().expect("valid header"));
         authorize_service_request(
             &claims("Admin"),
-            ServiceName::Uplink,
-            "mqtt/config",
+            ServiceName::Alarm,
+            "rules",
             &Method::POST,
             &confirmed,
         )
@@ -503,6 +615,64 @@ mod tests {
             &headers,
         )
         .expect("read-only batch query must pass");
+    }
+
+    #[test]
+    fn governed_request_ids_must_be_single_canonical_uuids() {
+        let canonical = "0190aee6-2139-7a87-8448-806f1b843201";
+        assert!(
+            canonical_request_id(&HeaderMap::new())
+                .expect("missing request ID is generated by the caller")
+                .is_none()
+        );
+
+        let mut headers = HeaderMap::new();
+        headers.insert("x-request-id", canonical.parse().expect("valid header"));
+        assert_eq!(
+            canonical_request_id(&headers)
+                .expect("canonical request ID")
+                .and_then(|value| value.to_str().ok().map(str::to_owned)),
+            Some(canonical.to_owned())
+        );
+
+        for invalid in [
+            "not-a-uuid",
+            "0190AEE6-2139-7A87-8448-806F1B843201",
+            "{0190aee6-2139-7a87-8448-806f1b843201}",
+        ] {
+            let mut headers = HeaderMap::new();
+            headers.insert("x-request-id", invalid.parse().expect("valid header bytes"));
+            assert!(canonical_request_id(&headers).is_err(), "value {invalid}");
+        }
+
+        let mut repeated = HeaderMap::new();
+        repeated.append("x-request-id", canonical.parse().expect("valid header"));
+        repeated.append("x-request-id", canonical.parse().expect("valid header"));
+        assert!(canonical_request_id(&repeated).is_err());
+    }
+
+    #[test]
+    fn physical_device_action_requires_a_caller_owned_request_id() {
+        assert!(requires_caller_request_id(
+            ServiceName::Automation,
+            "api/instances/7/action",
+            &Method::POST,
+        ));
+        assert!(!requires_caller_request_id(
+            ServiceName::Automation,
+            "api/instances/7",
+            &Method::PUT,
+        ));
+        assert!(!requires_caller_request_id(
+            ServiceName::Automation,
+            "api/rules/7/execute",
+            &Method::POST,
+        ));
+        assert!(!requires_caller_request_id(
+            ServiceName::Io,
+            "api/instances/7/action",
+            &Method::POST,
+        ));
     }
 
     fn scoped_claims(role: &str, scope: Vec<&str>) -> Claims {
@@ -596,7 +766,7 @@ mod tests {
 
         let request = Request::builder()
             .method(Method::POST)
-            .uri("/api/v1/io/api/channels/7?include=points")
+            .uri("/api/io/api/channels/7?include=points")
             .header("authorization", "Bearer signed-user-token")
             .header("content-type", "application/json")
             .header("x-aether-confirmed", "true")
@@ -610,6 +780,7 @@ mod tests {
             &format!("http://{address}"),
             "api/channels/7",
             request,
+            None,
         )
         .await;
 
@@ -630,9 +801,122 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn transport_failure_is_a_sanitized_bad_gateway_response() {
+    async fn governed_response_always_returns_the_forwarded_request_id() {
+        async fn echo_without_response_header(
+            OriginalUri(uri): OriginalUri,
+            headers: HeaderMap,
+        ) -> impl IntoResponse {
+            let status = if uri.path().ends_with("/failure") {
+                StatusCode::UNPROCESSABLE_ENTITY
+            } else {
+                StatusCode::ACCEPTED
+            };
+            (
+                status,
+                axum::Json(json!({
+                    "request_id": headers
+                        .get("x-request-id")
+                        .and_then(|value| value.to_str().ok()),
+                })),
+            )
+        }
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind isolated downstream server");
+        let address = listener.local_addr().expect("downstream server address");
+        tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new().route("/{result}", any(echo_without_response_header)),
+            )
+            .await
+            .expect("serve isolated downstream server");
+        });
+
+        let request_id = "0190aee6-2139-7a87-8448-806f1b843201";
+        for (path, expected_status) in [
+            ("success", StatusCode::ACCEPTED),
+            ("failure", StatusCode::UNPROCESSABLE_ENTITY),
+        ] {
+            let request = Request::builder()
+                .method(Method::POST)
+                .uri(format!("/api/io/{path}"))
+                .header("x-request-id", request_id)
+                .body(Body::empty())
+                .expect("valid gateway request");
+            let response = forward_to_upstream(
+                &reqwest::Client::new(),
+                &format!("http://{address}"),
+                path,
+                request,
+                Some(request_id.parse().expect("valid request ID header")),
+            )
+            .await;
+
+            assert_eq!(response.status(), expected_status);
+            assert_eq!(response.headers()["x-request-id"], request_id);
+            let body = to_bytes(response.into_body(), 16 * 1024)
+                .await
+                .expect("read downstream response");
+            let payload: serde_json::Value =
+                serde_json::from_slice(&body).expect("decode downstream response");
+            assert_eq!(payload["request_id"], request_id);
+        }
+    }
+
+    #[tokio::test]
+    async fn mismatched_downstream_request_id_fails_closed() {
+        async fn mismatched() -> impl IntoResponse {
+            (
+                StatusCode::ACCEPTED,
+                [("x-request-id", "0190aee6-2139-7a87-8448-806f1b843202")],
+                axum::Json(json!({ "accepted": true })),
+            )
+        }
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind isolated downstream server");
+        let address = listener.local_addr().expect("downstream server address");
+        tokio::spawn(async move {
+            axum::serve(listener, Router::new().route("/command", any(mismatched)))
+                .await
+                .expect("serve isolated downstream server");
+        });
+
+        let request_id = "0190aee6-2139-7a87-8448-806f1b843201";
         let request = Request::builder()
-            .uri("/api/v1/io/health")
+            .method(Method::POST)
+            .uri("/api/io/command")
+            .header("x-request-id", request_id)
+            .body(Body::empty())
+            .expect("valid gateway request");
+        let response = forward_to_upstream(
+            &reqwest::Client::new(),
+            &format!("http://{address}"),
+            "command",
+            request,
+            Some(request_id.parse().expect("valid request ID header")),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+        assert_eq!(response.headers()["x-request-id"], request_id);
+        let body = to_bytes(response.into_body(), 16 * 1024)
+            .await
+            .expect("read gateway response");
+        let payload: serde_json::Value =
+            serde_json::from_slice(&body).expect("decode gateway error");
+        assert_eq!(payload["error"]["code"], "UPSTREAM_REQUEST_ID_MISMATCH");
+    }
+
+    #[tokio::test]
+    async fn transport_failure_is_a_sanitized_bad_gateway_response() {
+        let request_id = "0190aee6-2139-7a87-8448-806f1b843201";
+        let request = Request::builder()
+            .uri("/api/io/health")
+            .header("x-request-id", request_id)
             .body(Body::empty())
             .expect("valid gateway request");
         let response = forward_to_upstream(
@@ -640,10 +924,12 @@ mod tests {
             "http://127.0.0.1:1",
             "health",
             request,
+            Some(request_id.parse().expect("valid request ID header")),
         )
         .await;
 
         assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+        assert_eq!(response.headers()["x-request-id"], request_id);
         let body = to_bytes(response.into_body(), 16 * 1024)
             .await
             .expect("read gateway error");

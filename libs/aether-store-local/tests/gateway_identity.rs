@@ -476,7 +476,7 @@ async fn strict_state_decoder_rejects_unknown_fields_schema_and_noncanonical_key
             },
             "unknown-schema" => {
                 document["schema"] = serde_json::Value::String(
-                    "aether.edge.gateway-enrollment-state.v2".to_string(),
+                    "aether.edge.gateway-enrollment-state.invalid".to_string(),
                 );
             },
             "bad-fingerprint" => {

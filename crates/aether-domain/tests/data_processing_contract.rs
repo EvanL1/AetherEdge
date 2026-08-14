@@ -43,7 +43,7 @@ fn per_feature_history_policies_must_exactly_cover_the_task_history_schema() {
     );
     DataProcessingTask::forecast(
         task_identity(),
-        "aether.data-processing.forecast.v1",
+        "aether.data-processing.forecast",
         vec![load_definition(), ambient.clone()],
         specification,
     )
@@ -62,7 +62,7 @@ fn per_feature_history_policies_must_exactly_cover_the_task_history_schema() {
     assert_eq!(
         DataProcessingTask::forecast(
             task_identity(),
-            "aether.data-processing.forecast.v1",
+            "aether.data-processing.forecast",
             vec![load_definition(), ambient],
             incomplete,
         ),
@@ -89,7 +89,7 @@ fn per_feature_history_policies_must_exactly_cover_the_task_history_schema() {
     assert_eq!(
         DataProcessingTask::forecast(
             task_identity(),
-            "aether.data-processing.forecast.v1",
+            "aether.data-processing.forecast",
             vec![
                 load_definition(),
                 FeatureDefinition::numeric("ambient", FeatureRole::History, "Cel")
@@ -235,7 +235,7 @@ fn produced_result() -> ProcessingResult {
         ProcessorProvenance::new(
             "load-forecasting-edge",
             "2.1.0",
-            "aether.data-processing.forecast.v1",
+            "aether.data-processing.forecast",
         )
         .expect("processor provenance is valid"),
         Some(
@@ -286,7 +286,7 @@ fn identities_and_tasks_reject_empty_ids_zero_revisions_and_duplicate_features()
     let feature = load_definition();
     let duplicate = DataProcessingTask::forecast(
         task_identity(),
-        "aether.data-processing.forecast.v1",
+        "aether.data-processing.forecast",
         vec![feature.clone(), feature],
         forecast_task_spec(),
     );
@@ -294,17 +294,14 @@ fn identities_and_tasks_reject_empty_ids_zero_revisions_and_duplicate_features()
 
     let task = DataProcessingTask::forecast(
         task_identity(),
-        "aether.data-processing.forecast.v1",
+        "aether.data-processing.forecast",
         vec![load_definition()],
         forecast_task_spec(),
     )
     .expect("task is valid");
     assert_eq!(task.identity(), &task_identity());
     assert_eq!(task.kind(), TaskKind::Forecast);
-    assert_eq!(
-        task.processor_contract(),
-        "aether.data-processing.forecast.v1"
-    );
+    assert_eq!(task.processor_contract(), "aether.data-processing.forecast");
     assert_eq!(task.features().len(), 1);
     assert_eq!(task.forecast_spec(), Some(&forecast_task_spec()));
     assert!(!task.remote_egress_allowed());
@@ -337,7 +334,7 @@ fn identities_and_tasks_reject_empty_ids_zero_revisions_and_duplicate_features()
         .expect("future feature is valid");
     let future_target_leakage = DataProcessingTask::forecast(
         task_identity(),
-        "aether.data-processing.forecast.v1",
+        "aether.data-processing.forecast",
         vec![future_load, load_definition()],
         forecast_task_spec(),
     );
@@ -497,7 +494,7 @@ fn provenance_source_kinds_are_closed_by_segment_and_issue_time_semantics() {
     );
 
     for physical_or_secret_bearing_reference in [
-        "https://weather.example/v1",
+        "https://weather.example/forecast",
         "/var/lib/aether/history.db",
         "postgres://history",
         "instance:1:telemetry:7",
@@ -661,7 +658,7 @@ fn application_and_processor_requests_keep_their_boundaries_explicit() {
         processing_frame(),
         TimestampMs::new(3_100),
         TimestampMs::new(10_000),
-        "aether.data-processing.forecast.v1",
+        "aether.data-processing.forecast",
         Some(
             ArtifactSelector::new("model", "site-load", Some("v3"))
                 .expect("artifact selector is valid")
@@ -680,7 +677,7 @@ fn application_and_processor_requests_keep_their_boundaries_explicit() {
     assert_eq!(processor_request.deadline(), TimestampMs::new(10_000));
     assert_eq!(
         processor_request.processor_contract(),
-        "aether.data-processing.forecast.v1"
+        "aether.data-processing.forecast"
     );
     assert_eq!(
         processor_request
@@ -706,7 +703,7 @@ fn application_and_processor_requests_keep_their_boundaries_explicit() {
             processing_frame(),
             TimestampMs::new(3_100),
             TimestampMs::new(3_100),
-            "aether.data-processing.forecast.v1",
+            "aether.data-processing.forecast",
             None,
             "sha256:input",
             forecast_options(),
@@ -749,7 +746,7 @@ fn processing_results_reject_illegal_status_combinations() {
         ProcessorProvenance::new(
             "load-forecasting-edge",
             "2.1.0",
-            "aether.data-processing.forecast.v1",
+            "aether.data-processing.forecast",
         )
         .expect("processor provenance is valid"),
         None,
@@ -777,7 +774,7 @@ fn processing_results_reject_illegal_status_combinations() {
         ProcessorProvenance::new(
             "load-forecasting-edge",
             "2.1.0",
-            "aether.data-processing.forecast.v1",
+            "aether.data-processing.forecast",
         )
         .expect("processor provenance is valid"),
         None,
@@ -802,7 +799,7 @@ fn processing_results_reject_illegal_status_combinations() {
         ProcessorProvenance::new(
             "load-forecasting-edge",
             "2.1.0",
-            "aether.data-processing.forecast.v1",
+            "aether.data-processing.forecast",
         )
         .expect("processor provenance is valid"),
         None,
@@ -853,7 +850,7 @@ fn derived_data_accepts_only_usable_unexpired_results() {
         ProcessorProvenance::new(
             "load-forecasting-edge",
             "2.1.0",
-            "aether.data-processing.forecast.v1",
+            "aether.data-processing.forecast",
         )
         .expect("processor provenance is valid"),
         None,

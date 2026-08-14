@@ -80,7 +80,7 @@ fn dashboard_router(
 ) -> Router {
     Router::new()
         .route("/", get(index))
-        .route("/api/v1/observation", get(observation_api))
+        .route("/api/observation", get(observation_api))
         .fallback(not_found)
         .with_state(Arc::new(DashboardState {
             observation,
@@ -241,7 +241,7 @@ const DASHBOARD_HTML: &str = r#"<!doctype html>
     <article class="card quality-card"><div class="card-head"><h2>Live point preview</h2><span class="path" id="point-count">0 points</span></div><div id="points" class="empty">Typed point preview requires the runtime database.</div></article>
     <article class="card findings-card"><div class="card-head"><h2>Diagnostic findings</h2><span class="path" id="finding-count">0</span></div><div id="findings" class="empty">No findings. The committed topology is coherent and current.</div></article>
   </section>
-  <footer><span id="observed">Waiting for first observation…</span><span>Local read-only endpoint: <code>/api/v1/observation</code></span></footer>
+  <footer><span id="observed">Waiting for first observation…</span><span>Local read-only endpoint: <code>/api/observation</code></span></footer>
 </main>
 <script>
 const byId = id => document.getElementById(id);
@@ -285,7 +285,7 @@ function render(data) {
   text('observed', `Observed ${new Date(data.observed_at_ms).toLocaleString()}`);
 }
 async function refresh() {
-  try { const response = await fetch('/api/v1/observation', { cache: 'no-store' }); if (!response.ok) throw new Error(`HTTP ${response.status}`); render(await response.json()); }
+  try { const response = await fetch('/api/observation', { cache: 'no-store' }); if (!response.ok) throw new Error(`HTTP ${response.status}`); render(await response.json()); }
   catch (error) { const status = byId('status'); status.textContent = 'observer offline'; status.className = 'status unhealthy'; text('observed', error.message); }
 }
 refresh(); setInterval(refresh, 1000);
@@ -327,7 +327,7 @@ mod tests {
             .expect("dashboard body");
         let html = std::str::from_utf8(&body).expect("UTF-8 dashboard");
         assert!(html.contains("SHM Observatory"));
-        assert!(html.contains("/api/v1/observation"));
+        assert!(html.contains("/api/observation"));
         assert!(!html.contains("https://"));
     }
 
@@ -338,7 +338,7 @@ mod tests {
         let response = dashboard_router(receiver, None)
             .oneshot(
                 Request::builder()
-                    .uri("/api/v1/observation")
+                    .uri("/api/observation")
                     .body(Body::empty())
                     .expect("request"),
             )
@@ -352,6 +352,23 @@ mod tests {
         let json: serde_json::Value = serde_json::from_slice(&body).expect("observation JSON");
         assert_eq!(json["status"], "unhealthy");
         assert_eq!(json["findings"][0]["code"], "point_plane_unavailable");
+    }
+
+    #[tokio::test]
+    async fn versioned_observation_path_is_not_mounted() {
+        let directory = tempfile::tempdir().expect("dashboard fixture");
+        let (_sender, receiver) = watch::channel(ShmObserver::new(directory.path()).inspect());
+        let response = dashboard_router(receiver, None)
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/observation")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("observation response");
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]

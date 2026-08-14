@@ -48,6 +48,4 @@ pub use aether_config::io::{
 };
 
 // Re-export common configuration types
-pub use common::{ApiConfig, BaseServiceConfig, FourRemote, LoggingConfig};
-
-pub type ServiceConfig = BaseServiceConfig;
+pub use common::{ApiConfig, BaseServiceConfig, LoggingConfig, PointType};

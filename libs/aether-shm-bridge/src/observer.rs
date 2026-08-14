@@ -99,8 +99,6 @@ pub struct ShmSlotObservation {
 pub struct ShmPlaneObservation {
     /// Canonical path opened by the observer.
     pub path: PathBuf,
-    /// Live mmap ABI version.
-    pub version: u32,
     /// Exact physical slot count.
     pub slot_count: usize,
     /// Exact mapped file size.
@@ -381,7 +379,6 @@ impl ShmObserver {
             .then(|| scan_slots(label, reader, health_plane, findings));
         ShmPlaneObservation {
             path: path.to_path_buf(),
-            version: header.version,
             slot_count: reader.slot_count(),
             file_size,
             layout_hash: header.layout_hash,
@@ -465,7 +462,6 @@ fn scan_slots(
 
 fn same_plane_identity(first: HeaderSnapshot, second: HeaderSnapshot) -> bool {
     first.magic == second.magic
-        && first.version == second.version
         && first.slot_count == second.slot_count
         && first.layout_hash == second.layout_hash
         && first.writer_generation == second.writer_generation

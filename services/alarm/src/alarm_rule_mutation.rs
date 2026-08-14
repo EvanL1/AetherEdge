@@ -13,7 +13,7 @@ use sqlx::{Sqlite, SqlitePool, Transaction};
 
 use crate::db;
 use crate::models::{Alert, AlertRule};
-use crate::notification::{AlarmCountSnapshot, AlarmNotification, AlarmNotifier};
+use crate::notification::{AlarmCountSnapshot, AlarmNotifier};
 
 /// SQLite persistence adapter whose successful receipt also guarantees that
 /// disable/delete alert reconciliation committed atomically with the rule.
@@ -124,28 +124,12 @@ impl SqliteAlarmRuleMutator {
         let resolved = if enabled {
             Vec::new()
         } else {
-            resolve_alerts(&mut transaction, id).await?
+            resolve_alerts(&mut transaction, id, "rule disabled").await?
         };
         transaction.commit().await.map_err(storage_error)?;
 
         if !resolved.is_empty() {
-            let updated = AlertRule {
-                id,
-                service_type: target.service_type,
-                channel_id: target.channel_id,
-                data_type: target.data_type,
-                point_id: target.point_id,
-                rule_name: name,
-                warning_level,
-                operator,
-                value: threshold,
-                enabled,
-                description,
-                created_at: existing.created_at,
-                updated_at: Utc::now().timestamp(),
-            };
-            self.broadcast_resolved(&updated, &resolved, "rule disabled")
-                .await;
+            self.broadcast_resolved_counts().await;
         }
 
         Ok(AlarmRuleMutationReceipt::new(
@@ -161,7 +145,7 @@ impl SqliteAlarmRuleMutator {
     ) -> PortResult<AlarmRuleMutationReceipt> {
         let id = sqlite_rule_id(rule_id)?;
         let mut transaction = self.pool.begin().await.map_err(storage_error)?;
-        let mut rule = find_rule(&mut transaction, id).await?;
+        find_rule(&mut transaction, id).await?;
         sqlx::query("UPDATE alert_rule SET enabled = ?, updated_at = ? WHERE id = ?")
             .bind(enabled)
             .bind(Utc::now().timestamp())
@@ -172,14 +156,12 @@ impl SqliteAlarmRuleMutator {
         let resolved = if enabled {
             Vec::new()
         } else {
-            resolve_alerts(&mut transaction, id).await?
+            resolve_alerts(&mut transaction, id, "rule disabled").await?
         };
         transaction.commit().await.map_err(storage_error)?;
 
-        rule.enabled = enabled;
         if !resolved.is_empty() {
-            self.broadcast_resolved(&rule, &resolved, "rule disabled")
-                .await;
+            self.broadcast_resolved_counts().await;
         }
         let kind = if enabled {
             AlarmRuleMutationKind::Enable
@@ -192,8 +174,8 @@ impl SqliteAlarmRuleMutator {
     async fn delete(&self, rule_id: AlarmRuleId) -> PortResult<AlarmRuleMutationReceipt> {
         let id = sqlite_rule_id(rule_id)?;
         let mut transaction = self.pool.begin().await.map_err(storage_error)?;
-        let rule = find_rule(&mut transaction, id).await?;
-        let resolved = resolve_alerts(&mut transaction, id).await?;
+        find_rule(&mut transaction, id).await?;
+        let resolved = resolve_alerts(&mut transaction, id, "rule deleted").await?;
         sqlx::query("DELETE FROM alert_rule WHERE id = ?")
             .bind(id)
             .execute(&mut *transaction)
@@ -202,8 +184,7 @@ impl SqliteAlarmRuleMutator {
         transaction.commit().await.map_err(storage_error)?;
 
         if !resolved.is_empty() {
-            self.broadcast_resolved(&rule, &resolved, "rule deleted")
-                .await;
+            self.broadcast_resolved_counts().await;
         }
         Ok(AlarmRuleMutationReceipt::new(
             rule_id,
@@ -211,12 +192,10 @@ impl SqliteAlarmRuleMutator {
         ))
     }
 
-    async fn broadcast_resolved(&self, rule: &AlertRule, alerts: &[Alert], reason: &str) {
-        for alert in alerts {
-            self.notifier
-                .publish_alarm(AlarmNotification::recovered(alert.id, rule, None, reason))
-                .await;
-        }
+    async fn broadcast_resolved_counts(&self) {
+        // Counts are a reconstructable snapshot and are deliberately not part
+        // of the durable transition outbox. The periodic broadcaster repairs a
+        // missed best-effort update after a process crash.
         if let Ok(counts) = db::get_active_alarm_counts(&self.pool).await {
             self.notifier
                 .publish_counts(AlarmCountSnapshot::from(&counts))
@@ -251,13 +230,14 @@ impl AlertResolver for SqliteAlarmRuleMutator {
             .map_err(storage_error)?
             .ok_or_else(|| PortError::new(PortErrorKind::NotFound, "active alert not found"))?;
         let resolved_at_seconds = Utc::now().timestamp();
-        sqlx::query(
+        let event_id = sqlx::query_scalar::<_, i64>(
             "INSERT INTO alert_event
                 (rule_id, rule_snapshot, service_type, channel_id, data_type, point_id,
                  rule_name, warning_level, operator, threshold_value,
                  trigger_value, recovery_value, event_type,
                  triggered_at, recovered_at, duration)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'recovery', ?, ?, ?)",
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'recovery', ?, ?, ?)
+             RETURNING id",
         )
         .bind(alert.rule_id)
         .bind(&alert.rule_snapshot)
@@ -274,34 +254,25 @@ impl AlertResolver for SqliteAlarmRuleMutator {
         .bind(alert.triggered_at)
         .bind(resolved_at_seconds)
         .bind(resolved_at_seconds - alert.triggered_at)
-        .execute(&mut *transaction)
+        .fetch_one(&mut *transaction)
         .await
         .map_err(storage_error)?;
+        let notification = crate::notification::AlarmNotification::recovered_at(
+            event_id,
+            &alert,
+            Some(alert.current_value),
+            "manually resolved",
+            resolved_at_seconds,
+        );
+        crate::notification_outbox::enqueue_alarm(&mut transaction, &notification)
+            .await
+            .map_err(|error| {
+                PortError::new(
+                    PortErrorKind::Unavailable,
+                    format!("local alarm notification storage unavailable: {error}"),
+                )
+            })?;
         transaction.commit().await.map_err(storage_error)?;
-
-        let rule = AlertRule {
-            id: alert.rule_id,
-            service_type: alert.service_type.clone(),
-            channel_id: alert.channel_id,
-            data_type: alert.data_type.clone(),
-            point_id: alert.point_id,
-            rule_name: alert.rule_name.clone(),
-            warning_level: alert.warning_level,
-            operator: alert.operator.clone(),
-            value: alert.threshold_value,
-            enabled: true,
-            description: None,
-            created_at: alert.triggered_at,
-            updated_at: resolved_at_seconds,
-        };
-        self.notifier
-            .publish_alarm(AlarmNotification::recovered(
-                alert.id,
-                &rule,
-                Some(alert.current_value),
-                "manually resolved",
-            ))
-            .await;
         if let Ok(counts) = db::get_active_alarm_counts(&self.pool).await {
             self.notifier
                 .publish_counts(AlarmCountSnapshot::from(&counts))
@@ -438,21 +409,26 @@ async fn reject_duplicate_target(
 async fn resolve_alerts(
     transaction: &mut Transaction<'_, Sqlite>,
     rule_id: i64,
+    reason: &str,
 ) -> PortResult<Vec<Alert>> {
-    let alerts = sqlx::query_as::<_, Alert>("SELECT * FROM alert WHERE rule_id = ?")
+    // Claim every active row before writing history. This is the same ownership
+    // primitive used by automatic and manual recovery, so concurrent paths can
+    // never turn one active alert into multiple recovery events.
+    let alerts = sqlx::query_as::<_, Alert>("DELETE FROM alert WHERE rule_id = ? RETURNING *")
         .bind(rule_id)
         .fetch_all(&mut **transaction)
         .await
         .map_err(storage_error)?;
     let now = Utc::now().timestamp();
     for alert in &alerts {
-        sqlx::query(
+        let event_id = sqlx::query_scalar::<_, i64>(
             "INSERT INTO alert_event
                 (rule_id, rule_snapshot, service_type, channel_id, data_type, point_id,
                  rule_name, warning_level, operator, threshold_value,
                  trigger_value, recovery_value, event_type,
                  triggered_at, recovered_at, duration)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'recovery', ?, ?, ?)",
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'recovery', ?, ?, ?)
+             RETURNING id",
         )
         .bind(alert.rule_id)
         .bind(&alert.rule_snapshot)
@@ -468,14 +444,20 @@ async fn resolve_alerts(
         .bind(alert.triggered_at)
         .bind(now)
         .bind(now - alert.triggered_at)
-        .execute(&mut **transaction)
+        .fetch_one(&mut **transaction)
         .await
         .map_err(storage_error)?;
-        sqlx::query("DELETE FROM alert WHERE id = ?")
-            .bind(alert.id)
-            .execute(&mut **transaction)
+        let notification = crate::notification::AlarmNotification::recovered_at(
+            event_id, alert, None, reason, now,
+        );
+        crate::notification_outbox::enqueue_alarm(transaction, &notification)
             .await
-            .map_err(storage_error)?;
+            .map_err(|error| {
+                PortError::new(
+                    PortErrorKind::Unavailable,
+                    format!("local alarm notification storage unavailable: {error}"),
+                )
+            })?;
     }
     Ok(alerts)
 }
@@ -517,15 +499,36 @@ fn storage_error(error: sqlx::Error) -> PortError {
 #[cfg(test)]
 mod tests {
     use aether_domain::{
-        AlarmComparator, AlarmRuleDefinition, AlarmRuleId, AlarmRuleTarget, AlarmSeverity,
+        AlarmComparator, AlarmRuleDefinition, AlarmRuleId, AlarmRuleTarget, AlarmSeverity, AlertId,
         ChannelId, PointId,
     };
     use aether_ports::{
-        AlarmRuleMutation, AlarmRuleMutationKind, AlarmRuleMutator, AlarmRulePatch, PortErrorKind,
+        AlarmRuleMutation, AlarmRuleMutationKind, AlarmRuleMutator, AlarmRulePatch, AlertResolver,
+        PortErrorKind,
     };
 
     use super::SqliteAlarmRuleMutator;
-    use crate::{broadcast::HttpAlarmNotifier, db, notification::AlarmNotifier};
+    use crate::{
+        db,
+        notification::{
+            AlarmCountSnapshot, AlarmNotification, AlarmNotificationDestination, AlarmNotifier,
+        },
+    };
+
+    struct NoopAlarmNotifier;
+
+    #[async_trait::async_trait]
+    impl AlarmNotifier for NoopAlarmNotifier {
+        async fn deliver_alarm(
+            &self,
+            _destination: AlarmNotificationDestination,
+            _notification: &AlarmNotification,
+        ) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn publish_counts(&self, _counts: AlarmCountSnapshot) {}
+    }
 
     async fn adapter() -> (SqliteAlarmRuleMutator, sqlx::SqlitePool) {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
@@ -538,12 +541,7 @@ mod tests {
             .await
             .expect("enable production foreign-key behavior");
         db::create_tables(&pool).await.expect("alarm schema");
-        let notifier: std::sync::Arc<dyn AlarmNotifier> =
-            std::sync::Arc::new(HttpAlarmNotifier::new(
-                reqwest::Client::new(),
-                "http://127.0.0.1:9".to_string(),
-                "http://127.0.0.1:9".to_string(),
-            ));
+        let notifier: std::sync::Arc<dyn AlarmNotifier> = std::sync::Arc::new(NoopAlarmNotifier);
         (SqliteAlarmRuleMutator::new(pool.clone(), notifier), pool)
     }
 
@@ -669,7 +667,14 @@ mod tests {
         .fetch_one(&pool)
         .await
         .expect("recovery count");
-        assert_eq!((active, recoveries), (0, 1));
+        let recovery_destinations: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM alarm_notification_outbox
+             WHERE event_id LIKE 'alarm-recovery-%'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("recovery notification destinations");
+        assert_eq!((active, recoveries, recovery_destinations), (0, 1, 2));
 
         adapter
             .mutate(AlarmRuleMutation::delete(receipt.rule_id()))
@@ -688,5 +693,116 @@ mod tests {
                 .await
                 .expect("historical foreign keys");
         assert_eq!((retained, foreign_keys), (1, 0));
+    }
+
+    #[tokio::test]
+    async fn update_disable_and_delete_enqueue_recovery_in_their_state_transaction() {
+        for mutation_kind in ["update", "delete"] {
+            let (adapter, pool) = adapter().await;
+            let receipt = adapter
+                .mutate(AlarmRuleMutation::create(definition("temperature", 3)))
+                .await
+                .expect("create rule");
+            let rule_id = i64::try_from(receipt.rule_id().get()).expect("SQLite rule id");
+            let rule = db::get_rule_by_id(&pool, rule_id)
+                .await
+                .expect("read rule")
+                .expect("stored rule");
+            db::insert_alert(&pool, &rule, 95.0)
+                .await
+                .expect("insert active alert")
+                .expect("enabled rule accepts alert");
+
+            match mutation_kind {
+                "update" => {
+                    let patch =
+                        AlarmRulePatch::new(None, None, None, None, None, Some(false), None)
+                            .expect("disable patch");
+                    adapter
+                        .mutate(AlarmRuleMutation::update(receipt.rule_id(), patch))
+                        .await
+                        .expect("disable through update");
+                },
+                "delete" => {
+                    adapter
+                        .mutate(AlarmRuleMutation::delete(receipt.rule_id()))
+                        .await
+                        .expect("delete active rule");
+                },
+                other => panic!("unexpected test mutation kind: {other}"),
+            }
+
+            let active: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM alert WHERE rule_id = ?")
+                .bind(rule_id)
+                .fetch_one(&pool)
+                .await
+                .expect("active alert count");
+            let recovery_destinations: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM alarm_notification_outbox
+                 WHERE event_id LIKE 'alarm-recovery-%'",
+            )
+            .fetch_one(&pool)
+            .await
+            .expect("recovery notification destinations");
+            assert_eq!((active, recovery_destinations), (0, 2), "{mutation_kind}");
+        }
+    }
+
+    #[tokio::test]
+    async fn automatic_and_manual_recovery_have_exactly_one_winner() {
+        let (adapter, pool) = adapter().await;
+        let receipt = adapter
+            .mutate(AlarmRuleMutation::create(definition("temperature", 3)))
+            .await
+            .expect("create rule");
+        let rule_id = i64::try_from(receipt.rule_id().get()).expect("SQLite rule id");
+        let rule = db::get_rule_by_id(&pool, rule_id)
+            .await
+            .expect("read rule")
+            .expect("stored rule");
+        let alert_id = db::insert_alert(&pool, &rule, 95.0)
+            .await
+            .expect("insert alert")
+            .expect("enabled rule accepts alert");
+        let alert = db::get_alert_by_id(&pool, alert_id)
+            .await
+            .expect("read alert")
+            .expect("active alert");
+        let domain_alert_id = AlertId::new(u64::try_from(alert_id).expect("positive alert id"));
+
+        let (automatic, manual) = tokio::join!(
+            db::resolve_alert(&pool, &alert, 70.0),
+            AlertResolver::resolve(&adapter, domain_alert_id),
+        );
+        let automatic_won = automatic.expect("automatic recovery attempt").is_some();
+        let manual_won = manual.is_ok();
+        assert_ne!(
+            automatic_won, manual_won,
+            "one and only one recovery path must claim the active row"
+        );
+        if let Err(error) = manual {
+            assert_eq!(error.kind(), PortErrorKind::NotFound);
+        }
+
+        let active: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM alert WHERE rule_id = ?")
+            .bind(rule_id)
+            .fetch_one(&pool)
+            .await
+            .expect("active count");
+        let recoveries: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM alert_event WHERE rule_id = ? AND event_type = 'recovery'",
+        )
+        .bind(rule_id)
+        .fetch_one(&pool)
+        .await
+        .expect("recovery count");
+        let recovery_destinations: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM alarm_notification_outbox
+             WHERE event_id LIKE 'alarm-recovery-%'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("recovery notification destinations");
+        assert_eq!((active, recoveries, recovery_destinations), (0, 1, 2));
     }
 }

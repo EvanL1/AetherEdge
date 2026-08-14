@@ -84,7 +84,7 @@ fn real_contract_fixture_projects_exactly_thirteen_language_neutral_fields() {
     assert_eq!(
         serde_json::from_slice::<Value>(&bytes).expect("projection JSON"),
         json!({
-            "schema": "aether.cloudlink.uplink-signing.v1alpha1",
+            "schema": "aether.cloudlink.uplink-signing",
             "gateway_id": "33333333-3333-4333-8333-333333333333",
             "credential_generation": "3",
             "session_id": "44444444-4444-4444-8444-444444444444",
@@ -96,7 +96,7 @@ fn real_contract_fixture_projects_exactly_thirteen_language_neutral_fields() {
             "stream_epoch": "1",
             "position": "1",
             "batch_id": "job-55555555-receipt-1",
-            "business_digest": "sha256:f42bb6dfcd28ca27a7c1079569ffcd0f6144f741461cd362c3c679f471af80a7"
+            "business_digest": "sha256:47d007c3a4eb9d7af10dce2db5888fea40b9dc63f3c7a73f8fac5bfac689914a"
         })
     );
 }
@@ -186,9 +186,8 @@ fn trusted_connector_has_no_payload_signature_and_acks_remain_unsigned() {
 
     let record = telemetry_record();
     let authenticated_durable_ack = json!({
-        "schema": "aether.cloudlink.durable-ack.v1",
+        "schema": "aether.cloudlink.durable-ack",
         "protocol": "aether.cloudlink",
-        "protocol_version": "1.0",
         "message_kind": "durable-ack",
         "gateway_id": session().gateway_id(),
         "session_id": session().session_id(),

@@ -18,7 +18,7 @@ use uuid::Uuid;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
-const CLAIM_PATH: &str = "/api/v1/fleet/enrollment-claims:claim";
+const CLAIM_PATH: &str = "/api/fleet/enrollment-claims:claim";
 const TENANT_ID: &str = "11111111-1111-4111-8111-111111111111";
 const PROJECT_ID: &str = "22222222-2222-4222-8222-222222222222";
 const GATEWAY_ID: &str = "33333333-3333-4333-8333-333333333333";
@@ -223,7 +223,7 @@ fn inspect_durable_pending_identity(identity_directory: &Path) -> Result<(), Str
 
 fn claimed_response(revision: u64) -> Value {
     json!({
-        "schema": "aether.cloud.gateway-enrollment-claimed.v1",
+        "schema": "aether.cloud.gateway-enrollment-claimed",
         "gatewayId": GATEWAY_ID,
         "state": "claimed",
         "revision": revision,
@@ -284,7 +284,7 @@ async fn real_aether_process_persists_pending_then_sends_exact_claim_and_reports
     assert_eq!(
         body,
         json!({
-            "schema": "aether.cloud.gateway-enrollment-claim.v1",
+            "schema": "aether.cloud.gateway-enrollment-claim",
             "tenantId": TENANT_ID,
             "projectId": PROJECT_ID,
             "gatewayId": GATEWAY_ID,

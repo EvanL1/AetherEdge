@@ -7,18 +7,18 @@
 //!      (`{"success": true, "data": ...}` / `{"success": false, "error": ...}`).
 //!    - `print_value` — a read command's payload: the `{success, data}` envelope
 //!      in `--json` mode, else pretty-printed JSON. The shared read-arm helper
-//!      across `net.rs`, `alarms.rs`, `channels.rs`, and the Task 10 modules.
+//!      across `alarms.rs`, `channels.rs`, and the other command modules.
 //!    - `print_action` / `action_message` — the same envelope logic specialized
 //!      for an action-only command (update/delete/enable/…): in `--json` mode
 //!      `print_action` forwards the server's response through `print_success`,
 //!      and in human mode it prints the server's `message` (via `action_message`)
 //!      or a caller-supplied fallback. Called from the command handlers
-//!      (`net.rs`, `alarms.rs`, and the Task 8–10 modules).
+//!      (`alarms.rs`, `channels.rs`, and the other command modules).
 //!
 //! 2. `parse_error_body` — turns a non-2xx HTTP response from a backend service
 //!    into an `anyhow::Error` that carries the server's own message. Unlike the
 //!    print helpers this runs on error paths regardless of `--json`, and is
-//!    called from the HTTP clients (`net.rs`, `alarms.rs`, `channels.rs`,
+//!    called from the HTTP clients (`alarms.rs`, `channels.rs`,
 //!    `models/client.rs`, …), not just from `main.rs`.
 
 use serde::Serialize;
@@ -73,12 +73,11 @@ pub fn action_message<'a>(data: &'a serde_json::Value, fallback: &'a str) -> &'a
 
 /// Print a read command's JSON payload: the `{success, data}` envelope in
 /// `--json` mode, else pretty-printed JSON. This is the de-facto shape of every
-/// read arm across the command modules (net/alarms/channels/models).
+/// read arm across the command modules (alarms/channels/models).
 ///
 /// Serializing a `serde_json::Value` cannot actually fail, so the human branch
 /// swallows the theoretical error rather than propagating it — matching the
-/// swallowing style of `print_success`/`print_error` (and the former private
-/// `net::print_value`, not the `?`-propagating inline copies it replaces).
+/// swallowing style of `print_success`/`print_error`.
 pub fn print_value(data: &serde_json::Value, json: bool) {
     if json {
         print_success(data);
@@ -89,10 +88,10 @@ pub fn print_value(data: &serde_json::Value, json: bool) {
 
 /// Turn a non-2xx response into an `anyhow::Error` that carries the server's own message.
 ///
-/// AetherEdge services return two different JSON error shapes:
+/// AetherEdge services return two JSON error shapes:
 ///   typed  — io (`AppError`), automation (`AutomationError`):
 ///            `{"success":false,"error":{"code":..,"message":..,"suggestion":..}}`
-///   inline — alarm, uplink:
+///   inline — alarm and history:
 ///            `{"success":false,"message":..,"data":null}`
 ///
 /// Not every error body is JSON: axum's `Json<T>` extractor rejects a wrong-shape
@@ -124,7 +123,7 @@ pub async fn parse_error_body(context: &str, resp: reqwest::Response) -> anyhow:
         // all (the `(None, _)` arm drops the suggestion). This is safe only because
         // `common::api_types::ErrorInfo.message` is a mandatory Rust `String`, so any
         // `error` object always carries a string `message`; the inline-shape services
-        // (alarm/uplink) never emit an `error` key or a `suggestion`. So the lossy
+        // (alarm/history) never emit an `error` key or a `suggestion`. So the lossy
         // case is unreachable through the four real services.
         return match (message, suggestion) {
             (Some(m), Some(s)) => {
@@ -157,26 +156,26 @@ mod tests {
 
     #[test]
     fn action_message_prefers_server_message() {
-        // uplink's cert-delete returns HTTP 200 with different messages for a real
-        // delete vs a no-op. The no-op message must reach the human, not "deleted".
+        // A successful mutation can carry a more precise message than the CLI's
+        // generic fallback. Preserve that endpoint-owned detail.
         let no_op = serde_json::json!({
             "success": true,
-            "message": "File does not exist, nothing to delete",
+            "message": "Rule already disabled",
             "data": null,
         });
         assert_eq!(
-            action_message(&no_op, "Certificate ca_cert deleted"),
-            "File does not exist, nothing to delete"
+            action_message(&no_op, "Rule disabled"),
+            "Rule already disabled"
         );
 
         let deleted = serde_json::json!({
             "success": true,
-            "message": "Deleted successfully",
-            "data": { "deleted": "AmazonRootCA1.pem" },
+            "message": "Rule disabled successfully",
+            "data": { "rule_id": 7 },
         });
         assert_eq!(
-            action_message(&deleted, "Certificate ca_cert deleted"),
-            "Deleted successfully"
+            action_message(&deleted, "Rule disabled"),
+            "Rule disabled successfully"
         );
     }
 
@@ -278,11 +277,11 @@ mod tests {
         ))
         .await;
 
-        let msg = parse_error_body("Failed to update uplink config", resp)
+        let msg = parse_error_body("Failed to create alarm rule", resp)
             .await
             .to_string();
 
-        assert!(msg.contains("Failed to update uplink config"), "{msg}");
+        assert!(msg.contains("Failed to create alarm rule"), "{msg}");
         assert!(msg.contains("422"), "{msg}");
         assert!(msg.contains("missing field `broker_port`"), "{msg}");
     }
@@ -291,11 +290,11 @@ mod tests {
     async fn empty_non_json_body_falls_back_to_status_code() {
         let (_server, resp) = serve(ResponseTemplate::new(503).set_body_string("")).await;
 
-        let msg = parse_error_body("Failed to reach uplink", resp)
+        let msg = parse_error_body("Failed to reach alarm service", resp)
             .await
             .to_string();
 
-        assert!(msg.contains("Failed to reach uplink"), "{msg}");
+        assert!(msg.contains("Failed to reach alarm service"), "{msg}");
         assert!(msg.contains("503"), "{msg}");
         // Nothing but context + status; no trailing " — " separator for a body.
         assert!(!msg.contains('—'), "{msg}");
@@ -319,7 +318,7 @@ mod tests {
 
         let (_server, resp) = serve(ResponseTemplate::new(422).set_body_string(body.clone())).await;
 
-        let msg = parse_error_body("Failed to parse uplink response", resp)
+        let msg = parse_error_body("Failed to parse alarm response", resp)
             .await
             .to_string();
 

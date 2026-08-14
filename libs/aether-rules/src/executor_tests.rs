@@ -122,7 +122,7 @@ fn soc_strategy_json() -> serde_json::Value {
                 "data": {
                     "type": "function-switch",
                     "config": {
-                        "variables": [{ "name": "X1", "type": "single", "instance": 5, "pointType": "measurement", "point": 3 }],
+                        "variables": [{ "name": "X1", "type": "single", "instance": 5, "pointType": "measurement", "point_id": 3 }],
                         "rule": [
                             { "name": "out001", "type": "default", "rule": [{ "type": "variable", "variables": "X1", "operator": "<=", "value": 5 }] },
                             { "name": "out002", "type": "default", "rule": [{ "type": "variable", "variables": "X1", "operator": ">=", "value": 49 }] },
@@ -133,15 +133,15 @@ fn soc_strategy_json() -> serde_json::Value {
                 }
             },
             { "id": "changeValue1", "type": "custom", "data": { "type": "action-changeValue", "config": {
-                "variables": [{ "name": "Y1", "type": "single", "instance": 6, "pointType": "action", "point": 5 }],
+                "variables": [{ "name": "Y1", "type": "single", "instance": 6, "pointType": "action", "point_id": 5 }],
                 "rule": [{ "Variables": "Y1", "value": 999 }], "wires": { "default": ["end"] }
             }}},
             { "id": "changeValue2", "type": "custom", "data": { "type": "action-changeValue", "config": {
-                "variables": [{ "name": "Y2", "type": "single", "instance": 7, "pointType": "action", "point": 2 }],
+                "variables": [{ "name": "Y2", "type": "single", "instance": 7, "pointType": "action", "point_id": 2 }],
                 "rule": [{ "Variables": "Y2", "value": 1 }], "wires": { "default": ["end"] }
             }}},
             { "id": "changeValue3", "type": "custom", "data": { "type": "action-changeValue", "config": {
-                "variables": [{ "name": "Y3", "type": "single", "instance": 6, "pointType": "action", "point": 5 }],
+                "variables": [{ "name": "Y3", "type": "single", "instance": 6, "pointType": "action", "point_id": 5 }],
                 "rule": [{ "Variables": "Y3", "value": 78 }], "wires": { "default": ["end"] }
             }}},
             { "id": "end", "type": "end" }

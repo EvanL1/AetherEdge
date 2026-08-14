@@ -44,8 +44,8 @@ use crate::protocols::core::data::DataBatch;
 use crate::protocols::core::diagnostics::AtomicDiagnostics;
 use crate::protocols::core::error::{GatewayError, Result};
 use crate::protocols::core::traits::{
-    ConnectionState, DataEvent, DataEventReceiver, DataEventSender, Diagnostics, PollResult,
-    data_event_channel,
+    ConnectionState, DataEvent, DataEventReceiver, DataEventSink, Diagnostics, PollResult,
+    data_event_channel_with_capacity,
 };
 
 /// MQTT subscription configuration
@@ -207,7 +207,7 @@ pub(crate) struct MqttChannel {
     /// Connection state
     state: Arc<AtomicU8>,
     /// Event sender for the unified channel task.
-    event_tx: DataEventSender,
+    event_tx: DataEventSink,
     /// Sole event receiver, taken once by the unified channel task.
     event_rx: Option<DataEventReceiver>,
     /// Diagnostics
@@ -218,7 +218,6 @@ impl MqttChannel {
     /// Create a new MQTT channel from one complete runtime snapshot.
     pub(crate) fn new(config: MqttParamsConfig, runtime: &RuntimeChannelConfig) -> Result<Self> {
         config.validate()?;
-        let (event_tx, event_rx) = data_event_channel();
         let mapper =
             Arc::new(JsonMapper::from_runtime_config(runtime)?.with_config(&config.json_mapping)?);
         if !mapper.is_empty() && config.subscriptions.is_empty() {
@@ -232,6 +231,7 @@ impl MqttChannel {
             mapping_count = mapper.len(),
             "Compiled MQTT JSON mappings"
         );
+        let (event_tx, event_rx) = data_event_channel_with_capacity(mapper.len());
 
         Ok(Self {
             config,
@@ -250,7 +250,7 @@ impl MqttChannel {
     /// Set connection state and queue an event.
     fn set_state(&self, state: ConnectionState) {
         self.state.store(state as u8, Ordering::SeqCst);
-        let _ = self.event_tx.try_send(DataEvent::ConnectionChanged(state));
+        self.event_tx.publish(DataEvent::ConnectionChanged(state));
     }
 
     /// Create MQTT options
@@ -304,7 +304,7 @@ impl MqttChannel {
         mut event_loop: EventLoop,
         channel_id: u32,
         state: Arc<AtomicU8>,
-        event_tx: DataEventSender,
+        event_tx: DataEventSink,
         mapper: Arc<JsonMapper>,
         diagnostics: Arc<AtomicDiagnostics>,
     ) {
@@ -322,7 +322,7 @@ impl MqttChannel {
                             if !batch.is_empty() {
                                 let count = batch.len();
                                 diagnostics.add_read(count as u64);
-                                let _ = event_tx.try_send(DataEvent::DataUpdate(batch));
+                                event_tx.publish(DataEvent::DataUpdate(batch));
                                 debug!(
                                     channel_id,
                                     topic = %topic,
@@ -344,19 +344,17 @@ impl MqttChannel {
                 },
                 Ok(Event::Incoming(Packet::ConnAck(_))) => {
                     state.store(ConnectionState::Connected as u8, Ordering::SeqCst);
-                    let _ =
-                        event_tx.try_send(DataEvent::ConnectionChanged(ConnectionState::Connected));
+                    event_tx.publish(DataEvent::ConnectionChanged(ConnectionState::Connected));
                     info!(channel_id, "MQTT connected");
                 },
                 Ok(Event::Incoming(Packet::Disconnect)) => {
                     state.store(ConnectionState::Disconnected as u8, Ordering::SeqCst);
-                    let _ = event_tx
-                        .try_send(DataEvent::ConnectionChanged(ConnectionState::Disconnected));
+                    event_tx.publish(DataEvent::ConnectionChanged(ConnectionState::Disconnected));
                     info!(channel_id, "MQTT disconnected");
                     break;
                 },
                 Ok(Event::Incoming(Packet::PingResp)) => {
-                    let _ = event_tx.try_send(DataEvent::Heartbeat);
+                    event_tx.publish(DataEvent::Heartbeat);
                 },
                 Ok(_) => {
                     // Ignore other events
@@ -364,8 +362,8 @@ impl MqttChannel {
                 Err(e) => {
                     error!(channel_id, error = %e, "MQTT connection error");
                     state.store(ConnectionState::Error as u8, Ordering::SeqCst);
-                    let _ = event_tx.try_send(DataEvent::ConnectionChanged(ConnectionState::Error));
-                    let _ = event_tx.try_send(DataEvent::Error(e.to_string()));
+                    event_tx.publish(DataEvent::ConnectionChanged(ConnectionState::Error));
+                    event_tx.publish(DataEvent::Error(e.to_string()));
                     diagnostics.record_error(e.to_string());
                     break;
                 },
@@ -396,6 +394,7 @@ impl ChannelRuntime for MqttChannel {
         }
         if let Some(handle) = self.event_loop_handle.take() {
             handle.abort();
+            let _ = handle.await;
         }
         if let Some(client) = self.client.take() {
             let _ = client.disconnect().await;
@@ -429,6 +428,7 @@ impl ChannelRuntime for MqttChannel {
         // Abort event loop
         if let Some(handle) = self.event_loop_handle.take() {
             handle.abort();
+            let _ = handle.await;
         }
         *self.event_loop.get_mut() = None;
 
@@ -463,6 +463,7 @@ impl ChannelRuntime for MqttChannel {
         }
         if let Some(handle) = self.event_loop_handle.take() {
             handle.abort();
+            let _ = handle.await;
         }
         let event_loop = self
             .event_loop
@@ -485,6 +486,7 @@ impl ChannelRuntime for MqttChannel {
     async fn stop_events(&mut self) -> Result<()> {
         if let Some(handle) = self.event_loop_handle.take() {
             handle.abort();
+            let _ = handle.await;
         }
         Ok(())
     }

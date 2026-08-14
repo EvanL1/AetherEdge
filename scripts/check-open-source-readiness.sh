@@ -70,7 +70,7 @@ generate_validation_credential() {
 }
 
 readonly COMPOSE_VALIDATION_JWT_SECRET="$(generate_validation_credential)"
-readonly COMPOSE_VALIDATION_UPLINK_TOKEN="$(generate_validation_credential)"
+readonly COMPOSE_VALIDATION_ALARM_TOKEN="$(generate_validation_credential)"
 
 failures=0
 
@@ -83,7 +83,7 @@ if [[ -e LICENSE ]]; then
     fail "root LICENSE must not combine multiple standard licenses; keep LICENSE-MIT and LICENSE-APACHE separate"
 fi
 
-if [[ "$COMPOSE_VALIDATION_JWT_SECRET" == "$COMPOSE_VALIDATION_UPLINK_TOKEN" ]]; then
+if [[ "$COMPOSE_VALIDATION_JWT_SECRET" == "$COMPOSE_VALIDATION_ALARM_TOKEN" ]]; then
     fail "generated Compose validation credentials must be distinct"
 fi
 
@@ -242,7 +242,7 @@ fi
 
 readonly CI_SETUP_ACTION='.github/actions/setup-rust-env/action.yml'
 if ! rg -Fq 'echo "JWT_SECRET_KEY=$jwt_secret" >> "$GITHUB_ENV"' "$CI_SETUP_ACTION" \
-    || ! rg -Fq 'echo "AETHER_UPLINK_CONTROL_TOKEN=$uplink_token" >> "$GITHUB_ENV"' \
+    || ! rg -Fq 'echo "AETHER_ALARM_BROADCAST_TOKEN=$alarm_token" >> "$GITHUB_ENV"' \
         "$CI_SETUP_ACTION"; then
     fail "$CI_SETUP_ACTION must generate ephemeral CI credentials"
 fi
@@ -256,15 +256,20 @@ done < <(rg -l 'docker compose' .github/workflows --glob '*.yml' --glob '*.yaml'
 if ! command -v docker >/dev/null 2>&1 || ! docker compose version >/dev/null 2>&1; then
     fail "docker with Compose support is required to validate docker-compose.yml"
 else
-    if AETHER_UPLINK_CONTROL_TOKEN="$COMPOSE_VALIDATION_UPLINK_TOKEN" \
+    if AETHER_ALARM_BROADCAST_TOKEN="$COMPOSE_VALIDATION_ALARM_TOKEN" \
         JWT_SECRET_KEY='' docker compose -f docker-compose.yml config >/dev/null 2>&1; then
         fail "docker-compose.yml must reject an empty JWT_SECRET_KEY"
+    fi
+    if JWT_SECRET_KEY="$COMPOSE_VALIDATION_JWT_SECRET" \
+        AETHER_ALARM_BROADCAST_TOKEN='' \
+        docker compose -f docker-compose.yml config >/dev/null 2>&1; then
+        fail "docker-compose.yml must reject an empty alarm broadcast credential"
     fi
 
     default_services=""
     if ! default_services=$(
         JWT_SECRET_KEY="$COMPOSE_VALIDATION_JWT_SECRET" \
-            AETHER_UPLINK_CONTROL_TOKEN="$COMPOSE_VALIDATION_UPLINK_TOKEN" \
+            AETHER_ALARM_BROADCAST_TOKEN="$COMPOSE_VALIDATION_ALARM_TOKEN" \
             docker compose -f docker-compose.yml config --services
     ); then
         fail "default docker-compose.yml failed with a valid JWT test key"
@@ -282,7 +287,7 @@ else
     postgres_services=""
     if ! postgres_services=$(
         JWT_SECRET_KEY="$COMPOSE_VALIDATION_JWT_SECRET" \
-            AETHER_UPLINK_CONTROL_TOKEN="$COMPOSE_VALIDATION_UPLINK_TOKEN" \
+            AETHER_ALARM_BROADCAST_TOKEN="$COMPOSE_VALIDATION_ALARM_TOKEN" \
             docker compose -f docker-compose.yml --profile postgres-storage config --services
     ); then
         fail "the optional PostgreSQL history profile is invalid"

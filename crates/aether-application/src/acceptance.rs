@@ -110,8 +110,8 @@ impl AcceptedOutcome<CommandReceipt> {
 
     /// Returns when the local command transport accepted the command.
     #[must_use]
-    pub const fn completed_at(&self) -> TimestampMs {
-        self.receipt.completed_at()
+    pub const fn accepted_at(&self) -> TimestampMs {
+        self.receipt.accepted_at()
     }
 }
 

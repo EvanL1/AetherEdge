@@ -1071,7 +1071,7 @@ fn persisted_channel_payload_has_one_codec() {
         fs::read_to_string(root.join("tools/aether/src/core/syncer.rs")).expect("CLI syncer");
     let syncer = inspect_named_method(&syncer_source, "insert_channels");
     assert!(
-        syncer.from_value
+        syncer.from_channel
             && syncer.encode
             && !syncer.direct_json_parse
             && !syncer.direct_payload_field_access,
@@ -1361,27 +1361,67 @@ fn automation_rule_runtime_and_dead_surface_keep_single_ownership() {
             && !instance_queries.contains("parse_ids_param")
             && instance_queries.contains("InstanceSearchResponseDto")
             && instance_queries.contains("InstanceListResponseDto")
-            && instance_queries.contains("InstancePickerResponseDto")
             && instance_queries.contains("serde(deny_unknown_fields)")
             && !instance_queries.contains("instance_manager.pool")
             && manager.contains("find_instances")
             && manager.contains("QueryBuilder::<sqlx::Sqlite>"),
         "instance search must remain typed, bounded, and backed by one batch ID query"
     );
-    let uplink_mqtt =
-        fs::read_to_string(root.join("services/uplink/src/mqtt.rs")).expect("uplink MQTT adapter");
-    let automation_client =
-        fs::read_to_string(root.join("services/uplink/src/automation_client.rs"))
-            .expect("uplink Automation client");
+    let uplink_main =
+        fs::read_to_string(root.join("services/uplink/src/main.rs")).expect("uplink composition");
+    let cloudlink_runtime =
+        fs::read_to_string(root.join("services/uplink/src/cloudlink_runtime.rs"))
+            .expect("CloudLink runtime");
+    let uplink_routes =
+        fs::read_to_string(root.join("services/uplink/src/routes.rs")).expect("Uplink routes");
+    let cloudlink_mqtt_transport =
+        fs::read_to_string(root.join("services/uplink/adapters/cloudlink-mqtt/src/transport.rs"))
+            .expect("CloudLink MQTT transport");
     assert!(
-        automation_client.contains("decode_instance_list")
-            && automation_client.contains("MAX_INSTANCE_RESPONSE_BYTES")
-            && automation_client.contains("read_bounded_response")
-            && !uplink_mqtt.contains("reqwest::")
-            && !uplink_mqtt.contains("AutomationInstanceListResponse")
-            && !uplink_mqtt.contains("AutomationActionBody"),
-        "uplink must keep bounded Automation HTTP decoding behind its typed loopback client"
+        uplink_main.contains("mod cloudlink_runtime;")
+            && uplink_main.contains("FileCloudLinkSpool::open_with_limits")
+            && uplink_main.contains("delivery_wake")
+            && cloudlink_runtime.contains("MqttCloudLinkTransport::new")
+            && cloudlink_runtime.contains("CloudLinkTransportRoute::AlarmUp")
+            && cloudlink_runtime.contains("CloudLinkReceiptRetention::DiscardAfterAck")
+            && cloudlink_runtime.contains("admit_data_loss")
+            && cloudlink_runtime.contains("fresh_batch_token")
+            && uplink_routes.contains("CloudLinkReceiptRetention::RetainForIdempotency")
+            && cloudlink_mqtt_transport.contains("try_publish")
+            && cloudlink_mqtt_transport.contains("try_send(ManagerCommand::Baseline")
+            && cloudlink_mqtt_transport.contains("events.try_send(event)")
+            && !cloudlink_runtime.contains("reqwest::"),
+        "uplink must compose exactly one transport/session/spool lifecycle through CloudLink"
     );
+    for retired in [
+        "services/uplink/src/mqtt.rs",
+        "services/uplink/src/mqtt_commands.rs",
+        "services/uplink/src/mqtt_delivery.rs",
+        "services/uplink/src/forwarder.rs",
+        "services/uplink/src/loopback_http.rs",
+        "services/uplink/src/alarm_client.rs",
+        "services/uplink/src/api.rs",
+        "services/uplink/src/api/dto.rs",
+        "services/uplink/src/config_model.rs",
+        "services/uplink/src/db_config.rs",
+        "services/uplink/src/models.rs",
+        "services/uplink/src/system_monitor.rs",
+        "services/uplink/src/automation_client.rs",
+        "services/uplink/src/device.rs",
+        "services/uplink/src/telemetry.rs",
+        "services/uplink/src/trace_context.rs",
+        "services/uplink/src/uplink.rs",
+        "crates/aether-ports/src/uplink.rs",
+        "crates/aether-application/src/outbox_forwarder.rs",
+    ] {
+        assert!(
+            !root
+                .join(retired)
+                .try_exists()
+                .expect("retired Uplink path"),
+            "retired generic Uplink module must stay deleted: {retired}"
+        );
+    }
     for internal_source in [
         "services/automation/src/instance_data.rs",
         "services/automation/src/instance_configuration.rs",
@@ -1712,12 +1752,10 @@ fn service_internal_models_do_not_depend_on_http_dtos() {
         "services/alarm/src/db.rs",
         "services/alarm/src/monitor.rs",
         "services/alarm/src/notification.rs",
-        "services/uplink/src/config_model.rs",
-        "services/uplink/src/db_config.rs",
+        "services/uplink/src/config.rs",
         "services/uplink/src/state.rs",
-        "services/uplink/src/system_monitor.rs",
-        "services/uplink/src/models.rs",
-        "services/uplink/src/mqtt.rs",
+        "services/uplink/src/cloudlink_runtime.rs",
+        "services/uplink/src/live_values.rs",
         "services/api/src/read_models.rs",
         "services/api/src/db.rs",
         "services/api/src/auth.rs",
@@ -1743,21 +1781,6 @@ fn service_internal_models_do_not_depend_on_http_dtos() {
                 "{relative} must not depend on HTTP DTO surface {forbidden}"
             );
         }
-    }
-
-    let uplink_mqtt =
-        fs::read_to_string(root.join("services/uplink/src/mqtt.rs")).expect("uplink MQTT source");
-    for forbidden in [
-        "reqwest::",
-        ".http_client",
-        "AutomationInstanceListResponse",
-        "AutomationActionBody",
-        "AlarmReplayRequest",
-    ] {
-        assert!(
-            !uplink_mqtt.contains(forbidden),
-            "MQTT session ownership must not include loopback HTTP surface {forbidden}"
-        );
     }
 
     let io_error =
@@ -2025,6 +2048,7 @@ fn inspect_macro_strings(tokens: TokenStream, mut inspect: impl FnMut(String)) {
 struct StoredCodecMethodUsage {
     decode: bool,
     from_value: bool,
+    from_channel: bool,
     encode: bool,
     direct_json_parse: bool,
     direct_payload_field_access: bool,
@@ -2045,6 +2069,9 @@ impl<'ast> Visit<'ast> for StoredCodecMethodUsage {
                 },
                 [.., owner, method] if owner == "StoredChannelConfig" && method == "from_value" => {
                     self.from_value = true;
+                },
+                [.., owner, method] if owner == "StoredChannelConfig" && method == "from" => {
+                    self.from_channel = true;
                 },
                 [.., owner, method]
                     if owner == "serde_json"

@@ -1,7 +1,7 @@
 # AetherEdge
 
 AetherEdge is the open-source, industry-neutral Linux edge runtime, Kernel, CLI,
-and Rust SDK formerly published from the AetherIot repository name.
+and Rust SDK in the AetherIoT product family.
 
 ## Implemented today
 
@@ -18,25 +18,23 @@ and Rust SDK formerly published from the AetherIot repository name.
 
 ## Experimental today
 
-- Broker-neutral CloudLink MQTT v1 sessions, telemetry, replay, and application
+- Broker-neutral CloudLink MQTT sessions, telemetry, replay, and application
   acknowledgement spooling.
 - Digest-pinned AetherContracts `v0.1.0-alpha.3` consumption and public fixture
   execution.
 
 Experimental CloudLink evidence does not establish production authentication,
-signed acknowledgement, or end-to-end crash durability. Legacy MQTT remains
-the compatibility default.
+signed acknowledgement, or end-to-end crash durability.
 
-## Stable compatibility names
+## Stable product identifiers
 
-The repository display name changes to AetherEdge. Existing crate names,
-binary names, the `aether` CLI, `aether-edge-sdk`, configuration keys, service
-identities, installer names, and protocol identifiers do not change in this
-migration.
+The canonical repository and product name is AetherEdge. Crate names, binary
+names, the `aether` CLI, `aether-edge-sdk`, configuration keys, service
+identities, installer names, and protocol identifiers remain the current
+stable software identifiers.
 
 Start by choosing the matching [user journey](../overview/user-journeys.md),
 then follow [Getting Started](../guides/getting-started.md) for a safe-empty
 runtime, [Connect Devices](../guides/connect-devices.md) to commission a
 channel, or the [Agent Quickstart](https://docs.aetheriot.ai/agent-quickstart/)
-for a read-only assistant workflow. Existing deployments can use the
-[migration guide](../migration/aetheriot-to-aetheredge.md).
+for a read-only assistant workflow.

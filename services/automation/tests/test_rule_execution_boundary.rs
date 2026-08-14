@@ -128,7 +128,7 @@ async fn application_router_with_audit(
         Arc::new(SqliteRuleMutator::new(pool.clone(), runtime));
     let mutation_application = Arc::new(RuleMutationApplication::new(mutator, audit, SafetyPolicy));
     let authenticator =
-        Arc::new(ControlAuthenticator::new(JWT_SECRET, None).expect("valid test JWT secret"));
+        Arc::new(ControlAuthenticator::new(JWT_SECRET).expect("valid test JWT secret"));
     let state = Arc::new(RuleEngineState::new(
         Arc::new(RuleQueries::new(pool, scheduler)),
         application,

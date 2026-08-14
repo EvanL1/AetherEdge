@@ -49,7 +49,6 @@ sqlx = { workspace = true }
 # cron removed - not currently used
 arc-swap = "1.7"  # ArcSwapOption for runtime-swappable SHM writer
 tower = { workspace = true }
-subtle = "2.6"
 
 [dev-dependencies]
 # criterion removed - no benchmarks

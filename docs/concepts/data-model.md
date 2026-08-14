@@ -144,7 +144,7 @@ raw-value fields set to a quiet IEEE-754 NaN (the hardcoded bit pattern
 the sentinel with a finite double. This removes the historical ambiguity where
 a zero-initialized slot was indistinguishable from a genuine reading of 0.0.
 
-SHM v5 stores acquisition quality in the same 32-byte `PointSlot`. The layout
+SHM stores acquisition quality in the same 32-byte `PointSlot`. The layout
 is value, timestamp, raw value, seqlock sequence, and quality code; there is no
 dirty flag. `ShmAcquisitionStateWriter` maps the canonical domain
 `PointQuality` into that field, and read adapters reject unknown codes rather
@@ -195,5 +195,5 @@ not a failure flag.
 - [System Architecture](architecture.md) — services and how they communicate
 - [Shared Memory](shared-memory.md) — the SHM plane in depth: slots, seqlock, writer ownership
 - [Data Flow](data-flow.md) — the uplink and downlink paths end to end
-- [Product Models](../domain/product-models.md) — the product library and its domain meaning
+- [Product Models](../../packs/energy/knowledge/product-models.md) — the product library and its domain meaning
 - [Safe Operations](../guides/safe-operations.md) — why control writes are gated and how failures propagate

@@ -144,6 +144,10 @@ impl Fixture {
     }
 
     fn router(&self) -> axum::Router {
+        self.router_with_query_manager(Arc::clone(&self.manager))
+    }
+
+    fn router_with_query_manager(&self, query_manager: Arc<InstanceManager>) -> axum::Router {
         let physical_sink = Arc::new(aether_shm_bridge::ShmDeviceCommandSink::new());
         let dispatcher: Arc<dyn CommandDispatcher> = Arc::new(AutomationCommandDispatcher::new(
             Arc::clone(&self.manager),
@@ -151,7 +155,7 @@ impl Fixture {
         ));
         let state = Arc::new(AppState::new(
             Arc::new(aether_automation::config::AutomationConfig::default()),
-            Arc::clone(&self.manager),
+            query_manager,
             Arc::new(ControlApplication::new(
                 dispatcher,
                 Arc::clone(&self.audit),
@@ -176,7 +180,7 @@ impl Fixture {
                 SafetyPolicy,
             )),
             Arc::clone(&self.application),
-            Arc::new(ControlAuthenticator::new(JWT_SECRET, None).expect("authenticator")),
+            Arc::new(ControlAuthenticator::new(JWT_SECRET).expect("authenticator")),
             physical_sink,
             self.pool.clone(),
         ));
@@ -193,12 +197,10 @@ impl Fixture {
                     .post(aether_automation::api::instance_management_handlers::create_instance),
             )
             .route(
-                "/api/instances/list",
-                get(aether_automation::api::instance_query_handlers::list_instances_slim),
-            )
-            .route(
                 "/api/instances/{id}",
-                get(aether_automation::api::instance_query_handlers::get_instance),
+                get(aether_automation::api::instance_query_handlers::get_instance)
+                    .put(aether_automation::api::instance_management_handlers::update_instance)
+                    .delete(aether_automation::api::instance_management_handlers::delete_instance),
             )
             .route(
                 "/api/instances/{id}/data",
@@ -304,10 +306,8 @@ async fn instance_lists_are_typed_and_pagination_fails_closed() {
     assert_eq!(body.pointer("/data/list/0/instance_id"), Some(&json!(2)));
     assert_eq!(body.pointer("/data/list/0/points"), None);
 
-    let (status, body) = get_json(&router, "/api/instances/list").await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body.pointer("/data/list/0/id"), Some(&json!(1)));
-    assert_eq!(body.pointer("/data/list/0/name"), Some(&json!("one")));
+    let (status, _) = get_json(&router, "/api/instances/list").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
 
     for uri in [
         "/api/instances?page=0",
@@ -349,7 +349,8 @@ async fn instance_detail_and_live_data_are_typed_and_strict() {
 
     let (status, measurements) = get_json(&router, "/api/instances/1/data?type=measurement").await;
     assert_eq!(status, StatusCode::OK, "{measurements}");
-    assert_eq!(measurements.pointer("/data"), Some(&json!({})));
+    assert_eq!(measurements.pointer("/data/measurements"), Some(&json!({})));
+    assert_eq!(measurements.pointer("/data/actions"), Some(&json!({})));
 
     for uri in [
         "/api/instances/1/data?type=property",
@@ -752,6 +753,20 @@ async fn http_create_requires_identity_confirmation_and_explicit_revision() {
         body
     };
 
+    let (retired_body, _) = http_create(
+        &router,
+        json!({
+            "product": "Fixture",
+            "name": "retired-shape",
+            "properties": {"serial": "legacy"},
+            "expected_revision": 1,
+            "confirmed": true
+        }),
+        Some(&access_token()),
+    )
+    .await;
+    assert_eq!(retired_body, StatusCode::UNPROCESSABLE_ENTITY);
+
     let (missing_revision, _) = http_create(&router, body(true, None), Some(&access_token())).await;
     assert_eq!(missing_revision, StatusCode::UNPROCESSABLE_ENTITY);
     let (unauthenticated, _) = http_create(&router, body(true, Some(1)), None).await;
@@ -788,6 +803,72 @@ async fn http_create_requires_identity_confirmation_and_explicit_revision() {
     assert_eq!(instance_count(&fixture.pool).await, 1);
 }
 
+#[tokio::test]
+async fn http_update_has_one_success_shape_and_rejects_name_paths() {
+    let fixture = Fixture::new().await;
+    fixture
+        .create("create", 7, "before", None, 1)
+        .await
+        .unwrap();
+    let router = fixture.router();
+    let body = json!({
+        "instance_name": "after",
+        "properties": {"serial": "updated"},
+        "expected_revision": 2,
+        "confirmed": true
+    });
+
+    let (retired_name_path, _) = http_update(&router, "/api/instances/before", body.clone()).await;
+    assert_eq!(retired_name_path, StatusCode::BAD_REQUEST);
+
+    let (status, response) = http_update(&router, "/api/instances/7", body).await;
+    assert_eq!(status, StatusCode::OK, "{response}");
+    assert_eq!(response["data"]["instance"]["instance_id"], 7);
+    assert_eq!(response["data"]["instance"]["instance_name"], "after");
+    assert_eq!(
+        response["data"]["instance"]["properties"]["serial"],
+        "updated"
+    );
+    assert_eq!(response["data"]["governance"]["resulting_revision"], 3);
+    assert!(response["data"].get("instance_id").is_none());
+    assert!(response["data"].get("message").is_none());
+}
+
+#[tokio::test]
+async fn http_update_projection_failure_is_an_error_not_a_second_success_body() {
+    let fixture = Fixture::new().await;
+    fixture
+        .create("create", 7, "before", None, 1)
+        .await
+        .unwrap();
+    let empty_query_fixture = Fixture::new().await;
+    let router = fixture.router_with_query_manager(Arc::clone(&empty_query_fixture.manager));
+
+    let (status, response) = http_update(
+        &router,
+        "/api/instances/7",
+        json!({
+            "instance_name": "committed",
+            "expected_revision": 2,
+            "confirmed": true
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{response}");
+    assert_ne!(response.get("success"), Some(&json!(true)));
+    assert_eq!(
+        fixture
+            .manager
+            .get_instance(7)
+            .await
+            .unwrap()
+            .core
+            .instance_name,
+        "committed"
+    );
+}
+
 async fn http_create(
     router: &axum::Router,
     body: serde_json::Value,
@@ -804,6 +885,31 @@ async fn http_create(
         .clone()
         .oneshot(
             request
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let body = serde_json::from_slice(&bytes).unwrap_or_else(|_| json!({}));
+    (status, body)
+}
+
+async fn http_update(
+    router: &axum::Router,
+    uri: &str,
+    body: serde_json::Value,
+) -> (StatusCode, serde_json::Value) {
+    let response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri(uri)
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {}", access_token()))
+                .header("x-request-id", "018f0000-0000-7000-8000-000000000007")
                 .body(Body::from(serde_json::to_vec(&body).unwrap()))
                 .unwrap(),
         )

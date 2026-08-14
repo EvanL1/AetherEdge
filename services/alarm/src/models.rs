@@ -124,28 +124,18 @@ pub struct PageRequest {
 }
 
 impl PageRequest {
-    pub fn resolve(page: Option<i64>, page_size: Option<i64>, skip: i64, limit: i64) -> Self {
+    pub fn resolve(page: Option<i64>, page_size: Option<i64>) -> Self {
         const MAX_PAGE_SIZE: i64 = 200;
-        let page_size = page_size.unwrap_or(limit).clamp(1, MAX_PAGE_SIZE);
-        match page {
-            Some(page) => {
-                let page = page.max(1);
-                Self {
-                    limit: page_size,
-                    offset: (page - 1) * page_size,
-                    page,
-                    page_size,
-                }
-            },
-            None => {
-                let offset = skip.max(0);
-                Self {
-                    limit: page_size,
-                    offset,
-                    page: offset / page_size + 1,
-                    page_size,
-                }
-            },
+        const DEFAULT_PAGE_SIZE: i64 = 20;
+        let page_size = page_size
+            .unwrap_or(DEFAULT_PAGE_SIZE)
+            .clamp(1, MAX_PAGE_SIZE);
+        let page = page.unwrap_or(1).max(1);
+        Self {
+            limit: page_size,
+            offset: (page - 1) * page_size,
+            page,
+            page_size,
         }
     }
 }

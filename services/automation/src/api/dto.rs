@@ -4,7 +4,7 @@
 
 #![allow(clippy::disallowed_methods)] // json! macro used in multiple functions
 
-use common::FourRemote;
+use common::PointType;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use utoipa::ToSchema;
@@ -44,7 +44,7 @@ pub struct MeasurementRoutingUpsertRequest {
     #[schema(example = 1)]
     pub channel_id: i32,
     #[schema(value_type = String, example = "T")]
-    pub four_remote: FourRemote,
+    pub four_remote: PointType,
     #[schema(example = 101)]
     pub channel_point_id: u32,
     #[serde(default = "default_enabled")]
@@ -325,6 +325,7 @@ pub struct UpsertPropertyRequest {
 
 /// Query/body fence for destructive instance-configuration mutations.
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct InstanceMutationConfirmation {
     /// Current `instances` aggregate revision required for compare-and-set.
     #[schema(example = 7)]
@@ -343,6 +344,7 @@ fn default_enabled() -> bool {
 
 /// Request to create a new instance from a product template
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CreateInstanceDto {
     #[schema(example = 1)]
     pub instance_id: Option<u32>, // Optional - auto-generated if not provided
@@ -369,6 +371,7 @@ pub struct CreateInstanceDto {
 /// Supports updating instance_name and/or properties.
 /// At least one field must be provided.
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct UpdateInstanceDto {
     /// New instance name (optional, must be unique if provided)
     #[schema(example = "pump_renamed")]
@@ -389,10 +392,9 @@ pub struct UpdateInstanceDto {
 
 /// Request to execute an action on an instance
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ActionRequest {
     /// Numeric action point ID encoded as a string (for example, "1").
-    /// Also accepts "id" and "action_id" for backward compatibility
-    #[serde(alias = "id", alias = "action_id")]
     #[schema(example = "1")]
     pub point_id: String,
     #[schema(example = 4500.0)]
@@ -658,19 +660,6 @@ pub struct InstanceListResponseDto {
     pub list: Vec<InstanceSummaryDto>,
 }
 
-/// Minimal identity for instance pickers.
-#[derive(Debug, Serialize, ToSchema)]
-pub struct InstancePickerItemDto {
-    pub id: u32,
-    pub name: String,
-}
-
-/// Minimal unpaginated instance-picker list.
-#[derive(Debug, Serialize, ToSchema)]
-pub struct InstancePickerResponseDto {
-    pub list: Vec<InstancePickerItemDto>,
-}
-
 /// Detail response for one commissioned instance.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct InstanceDetailResponseDto {
@@ -684,19 +673,11 @@ pub struct InstanceLiveSampleDto {
     pub timestamp_ms: u64,
 }
 
-/// Complete live-data view when no plane filter is supplied.
+/// Fixed two-plane live-data response. A filtered-out plane is an empty map.
 #[derive(Debug, Serialize, ToSchema)]
-pub struct InstanceLiveDataDto {
+pub struct InstanceDataResponseDto {
     pub measurements: std::collections::BTreeMap<String, InstanceLiveSampleDto>,
     pub actions: std::collections::BTreeMap<String, InstanceLiveSampleDto>,
-}
-
-/// Live-data response: one filtered value map or the complete two-plane view.
-#[derive(Debug, Serialize, ToSchema)]
-#[serde(untagged)]
-pub enum InstanceDataResponseDto {
-    Values(std::collections::BTreeMap<String, InstanceLiveSampleDto>),
-    Complete(InstanceLiveDataDto),
 }
 
 fn live_values(
@@ -718,17 +699,9 @@ fn live_values(
 
 impl From<crate::instance_query::InstanceLiveDataView> for InstanceDataResponseDto {
     fn from(view: crate::instance_query::InstanceLiveDataView) -> Self {
-        match view {
-            crate::instance_query::InstanceLiveDataView::Values(values) => {
-                Self::Values(live_values(values))
-            },
-            crate::instance_query::InstanceLiveDataView::Complete {
-                measurements,
-                actions,
-            } => Self::Complete(InstanceLiveDataDto {
-                measurements: live_values(measurements),
-                actions: live_values(actions),
-            }),
+        Self {
+            measurements: live_values(view.measurements),
+            actions: live_values(view.actions),
         }
     }
 }

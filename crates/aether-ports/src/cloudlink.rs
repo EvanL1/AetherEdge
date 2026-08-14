@@ -1,12 +1,13 @@
 //! Durable CloudLink stream and transport capabilities.
 //!
 //! These ports are deliberately distinct from [`crate::DurableOutbox`]. A
-//! generic uplink may define successful publication as its acknowledgement
+//! transport outbox may define successful publication as its acknowledgement
 //! boundary. CloudLink records remain durable until a matching application
 //! receipt proves that the cloud committed the business fact.
 
 use std::error::Error;
 use std::fmt;
+use std::sync::Arc;
 
 use aether_domain::TimestampMs;
 use async_trait::async_trait;
@@ -22,6 +23,8 @@ pub enum CloudLinkMessageKind {
     RuntimeManifestReport,
     /// A bounded batch of acquisition-owned point facts.
     TelemetryBatch,
+    /// One durable alarm-state transition emitted by the local alarm owner.
+    AlarmEvent,
     /// One complete provider-neutral delegated-integration topology replacement.
     IntegrationTopologySnapshot,
     /// One provider-neutral delegated-integration observation batch.
@@ -37,6 +40,7 @@ impl CloudLinkMessageKind {
         match self {
             Self::RuntimeManifestReport => "runtime-manifest-report",
             Self::TelemetryBatch => "telemetry-batch",
+            Self::AlarmEvent => "alarm-event",
             Self::IntegrationTopologySnapshot => "integration-topology-snapshot",
             Self::IntegrationObservationBatch => "integration-observation-batch",
             Self::DataLoss => "data-loss",
@@ -124,7 +128,7 @@ impl CloudLinkSessionBinding {
     }
 }
 
-/// Versioned business content ready to receive a durable stream position.
+/// Canonical business content ready to receive a durable stream position.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CloudLinkEnqueue {
     message_kind: CloudLinkMessageKind,
@@ -133,6 +137,76 @@ pub struct CloudLinkEnqueue {
     payload: Vec<u8>,
     created_at: TimestampMs,
     expires_at: Option<TimestampMs>,
+}
+
+/// Result of lossless durable admission.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CloudLinkAdmission {
+    identity: CloudLinkRecordIdentity,
+    pending_record: Option<CloudLinkRecord>,
+    duplicate: bool,
+    acknowledged: bool,
+}
+
+/// Post-ACK identity-retention policy for one lossless admission.
+///
+/// Both policies prohibit pending-record eviction. Only facts whose upstream
+/// retry contract requires deduplication after a lost HTTP response retain a
+/// protected business receipt after Cloud acknowledgement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CloudLinkReceiptRetention {
+    /// Remove the pending record after ACK without consuming receipt capacity.
+    DiscardAfterAck,
+    /// Preserve the business identity and digest for exact retry recognition.
+    RetainForIdempotency,
+}
+
+impl CloudLinkAdmission {
+    /// Creates an admission for a new or already-pending record.
+    #[must_use]
+    pub fn pending(record: CloudLinkRecord, duplicate: bool) -> Self {
+        Self {
+            identity: record.identity().clone(),
+            pending_record: Some(record),
+            duplicate,
+            acknowledged: false,
+        }
+    }
+
+    /// Creates an exact duplicate admission for a previously acknowledged fact.
+    #[must_use]
+    pub fn acknowledged(identity: CloudLinkRecordIdentity) -> Self {
+        Self {
+            identity,
+            pending_record: None,
+            duplicate: true,
+            acknowledged: true,
+        }
+    }
+
+    /// Returns the stable stream identity originally assigned to the fact.
+    #[must_use]
+    pub const fn identity(&self) -> &CloudLinkRecordIdentity {
+        &self.identity
+    }
+
+    /// Returns the retained record when it still requires Cloud delivery.
+    #[must_use]
+    pub const fn pending_record(&self) -> Option<&CloudLinkRecord> {
+        self.pending_record.as_ref()
+    }
+
+    /// Reports whether the exact business event was already pending.
+    #[must_use]
+    pub const fn duplicate(&self) -> bool {
+        self.duplicate
+    }
+
+    /// Reports that Cloud has already durably acknowledged this exact fact.
+    #[must_use]
+    pub const fn acknowledged_duplicate(&self) -> bool {
+        self.acknowledged
+    }
 }
 
 impl CloudLinkEnqueue {
@@ -174,7 +248,7 @@ impl CloudLinkEnqueue {
         &self.digest
     }
 
-    /// Returns canonical versioned business payload bytes.
+    /// Returns canonical business payload bytes.
     #[must_use]
     pub fn payload(&self) -> &[u8] {
         &self.payload
@@ -200,9 +274,12 @@ pub struct CloudLinkRecord {
     message_kind: CloudLinkMessageKind,
     batch_id: String,
     digest: String,
-    payload: Vec<u8>,
+    #[serde(with = "shared_payload")]
+    payload: Arc<[u8]>,
     created_at_ms: u64,
     expires_at_ms: Option<u64>,
+    lossless_admission: bool,
+    retain_acknowledged_receipt: bool,
     state: CloudLinkDeliveryState,
     offered_session: Option<CloudLinkSessionBinding>,
 }
@@ -214,14 +291,44 @@ impl CloudLinkRecord {
     /// adapters. Production callers normally use [`CloudLinkSpool::enqueue`].
     #[must_use]
     pub fn from_enqueue(identity: CloudLinkRecordIdentity, input: CloudLinkEnqueue) -> Self {
+        Self::from_enqueue_with_policy(identity, input, false, false)
+    }
+
+    /// Builds a queued lossless record whose acknowledged business identity
+    /// must remain protected after the pending payload is removed.
+    ///
+    /// This constructor is reserved for implementations of
+    /// [`CloudLinkSpool::admit_lossless`].
+    #[must_use]
+    pub fn from_lossless_enqueue(
+        identity: CloudLinkRecordIdentity,
+        input: CloudLinkEnqueue,
+        receipt_retention: CloudLinkReceiptRetention,
+    ) -> Self {
+        Self::from_enqueue_with_policy(
+            identity,
+            input,
+            true,
+            receipt_retention == CloudLinkReceiptRetention::RetainForIdempotency,
+        )
+    }
+
+    fn from_enqueue_with_policy(
+        identity: CloudLinkRecordIdentity,
+        input: CloudLinkEnqueue,
+        lossless_admission: bool,
+        retain_acknowledged_receipt: bool,
+    ) -> Self {
         Self {
             identity,
             message_kind: input.message_kind,
             batch_id: input.batch_id,
             digest: input.digest,
-            payload: input.payload,
+            payload: input.payload.into(),
             created_at_ms: input.created_at.get(),
             expires_at_ms: input.expires_at.map(TimestampMs::get),
+            lossless_admission,
+            retain_acknowledged_receipt,
             state: CloudLinkDeliveryState::Queued,
             offered_session: None,
         }
@@ -251,7 +358,7 @@ impl CloudLinkRecord {
         &self.digest
     }
 
-    /// Returns canonical versioned business payload bytes.
+    /// Returns canonical business payload bytes.
     #[must_use]
     pub fn payload(&self) -> &[u8] {
         &self.payload
@@ -270,6 +377,18 @@ impl CloudLinkRecord {
             Some(value) => Some(TimestampMs::new(value)),
             None => None,
         }
+    }
+
+    /// Reports whether a durable business-identity receipt must survive ACK.
+    #[must_use]
+    pub const fn retains_acknowledged_receipt(&self) -> bool {
+        self.retain_acknowledged_receipt
+    }
+
+    /// Reports whether this pending record is protected from capacity eviction.
+    #[must_use]
+    pub const fn is_lossless_admission(&self) -> bool {
+        self.lossless_admission
     }
 
     /// Returns the local delivery state.
@@ -294,6 +413,58 @@ impl CloudLinkRecord {
     pub fn set_transport_published(&mut self, session: CloudLinkSessionBinding) {
         self.state = CloudLinkDeliveryState::TransportPublished;
         self.offered_session = Some(session);
+    }
+}
+
+mod shared_payload {
+    use std::sync::Arc;
+
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub(super) fn serialize<SerializerT>(
+        payload: &Arc<[u8]>,
+        serializer: SerializerT,
+    ) -> Result<SerializerT::Ok, SerializerT::Error>
+    where
+        SerializerT: Serializer,
+    {
+        payload.as_ref().serialize(serializer)
+    }
+
+    pub(super) fn deserialize<'de, DeserializerT>(
+        deserializer: DeserializerT,
+    ) -> Result<Arc<[u8]>, DeserializerT::Error>
+    where
+        DeserializerT: Deserializer<'de>,
+    {
+        Vec::<u8>::deserialize(deserializer).map(Arc::from)
+    }
+}
+
+#[cfg(test)]
+mod cloudlink_record_tests {
+    use super::*;
+
+    #[test]
+    fn delivery_state_clones_share_the_immutable_payload_allocation() {
+        let original = CloudLinkRecord::from_enqueue(
+            CloudLinkRecordIdentity::new("business", 1, 1),
+            CloudLinkEnqueue::new(
+                CloudLinkMessageKind::TelemetryBatch,
+                "batch-1",
+                format!("sha256:{}", "a".repeat(64)),
+                vec![7_u8; 256 * 1024],
+                TimestampMs::new(1),
+                None,
+            ),
+        );
+        let original_payload = original.payload.as_ptr();
+        let mut delivery_update = original.clone();
+        delivery_update.set_offered(CloudLinkSessionBinding::new("session-1", 1));
+
+        assert_eq!(delivery_update.payload.as_ptr(), original_payload);
+        assert_eq!(original.state(), CloudLinkDeliveryState::Queued);
+        assert_eq!(delivery_update.state(), CloudLinkDeliveryState::Offered);
     }
 }
 
@@ -512,6 +683,18 @@ pub struct CloudLinkSpoolStatus {
     earliest_retained_position: u64,
     last_acknowledged_position: u64,
     pending_records: usize,
+    ordinary_pending_records: usize,
+    system_pending_records: usize,
+    record_capacity: usize,
+    acknowledged_receipts: usize,
+    pending_receipt_reservations: usize,
+    acknowledged_receipt_capacity: usize,
+    current_live_bytes: u64,
+    max_live_bytes: u64,
+    ordinary_max_live_bytes: u64,
+    journal_bytes: u64,
+    max_journal_bytes: u64,
+    quota_rejections: u64,
     last_ack: Option<CloudLinkDurableAck>,
     data_loss: Option<CloudLinkDataLossEvidence>,
 }
@@ -527,6 +710,18 @@ impl CloudLinkSpoolStatus {
         earliest_retained_position: u64,
         last_acknowledged_position: u64,
         pending_records: usize,
+        ordinary_pending_records: usize,
+        system_pending_records: usize,
+        record_capacity: usize,
+        acknowledged_receipts: usize,
+        pending_receipt_reservations: usize,
+        acknowledged_receipt_capacity: usize,
+        current_live_bytes: u64,
+        max_live_bytes: u64,
+        ordinary_max_live_bytes: u64,
+        journal_bytes: u64,
+        max_journal_bytes: u64,
+        quota_rejections: u64,
         last_ack: Option<CloudLinkDurableAck>,
         data_loss: Option<CloudLinkDataLossEvidence>,
     ) -> Self {
@@ -537,6 +732,18 @@ impl CloudLinkSpoolStatus {
             earliest_retained_position,
             last_acknowledged_position,
             pending_records,
+            ordinary_pending_records,
+            system_pending_records,
+            record_capacity,
+            acknowledged_receipts,
+            pending_receipt_reservations,
+            acknowledged_receipt_capacity,
+            current_live_bytes,
+            max_live_bytes,
+            ordinary_max_live_bytes,
+            journal_bytes,
+            max_journal_bytes,
+            quota_rejections,
             last_ack,
             data_loss,
         }
@@ -578,6 +785,80 @@ impl CloudLinkSpoolStatus {
         self.pending_records
     }
 
+    /// Returns pending records which consume the configured ordinary count bound.
+    #[must_use]
+    pub const fn ordinary_pending_records(&self) -> usize {
+        self.ordinary_pending_records
+    }
+
+    /// Returns pending records occupying the dedicated data-loss system slot.
+    #[must_use]
+    pub const fn system_pending_records(&self) -> usize {
+        self.system_pending_records
+    }
+
+    /// Returns the configured maximum number of pending records.
+    #[must_use]
+    pub const fn record_capacity(&self) -> usize {
+        self.record_capacity
+    }
+
+    /// Returns the number of protected acknowledged business identities.
+    #[must_use]
+    pub const fn acknowledged_receipts(&self) -> usize {
+        self.acknowledged_receipts
+    }
+
+    /// Returns the number of pending lossless records with reserved receipt slots.
+    #[must_use]
+    pub const fn pending_receipt_reservations(&self) -> usize {
+        self.pending_receipt_reservations
+    }
+
+    /// Returns the configured protected-receipt bound.
+    #[must_use]
+    pub const fn acknowledged_receipt_capacity(&self) -> usize {
+        self.acknowledged_receipt_capacity
+    }
+
+    /// Returns compacted bytes reserved by all pending records and retained receipts.
+    /// Pending records include the largest legal persisted delivery-state projection.
+    #[must_use]
+    pub const fn current_live_bytes(&self) -> u64 {
+        self.current_live_bytes
+    }
+
+    /// Returns the configured live-state byte ceiling.
+    #[must_use]
+    pub const fn max_live_bytes(&self) -> u64 {
+        self.max_live_bytes
+    }
+
+    /// Returns the byte ceiling available to ordinary admissions after the
+    /// dedicated data-loss report reserve is held back.
+    #[must_use]
+    pub const fn ordinary_max_live_bytes(&self) -> u64 {
+        self.ordinary_max_live_bytes
+    }
+
+    /// Returns current physical journal bytes, or zero for a non-file adapter.
+    #[must_use]
+    pub const fn journal_bytes(&self) -> u64 {
+        self.journal_bytes
+    }
+
+    /// Returns the configured physical journal ceiling, or zero when not applicable.
+    #[must_use]
+    pub const fn max_journal_bytes(&self) -> u64 {
+        self.max_journal_bytes
+    }
+
+    /// Returns admission attempts rejected by a record, receipt, live-byte, or journal bound.
+    #[must_use]
+    pub const fn quota_rejections(&self) -> u64 {
+        self.quota_rejections
+    }
+
     /// Returns the last durable receipt retained for idempotent restart decisions.
     #[must_use]
     pub const fn last_ack(&self) -> Option<&CloudLinkDurableAck> {
@@ -596,6 +877,8 @@ impl CloudLinkSpoolStatus {
 pub enum CloudLinkSpoolErrorReason {
     /// Configuration or record content is invalid.
     InvalidData,
+    /// Lossless admission cannot evict an existing unacknowledged record.
+    CapacityExceeded,
     /// An ACK or delivery event belongs to an old session.
     StaleSession,
     /// A stream identifier or epoch does not match this spool.
@@ -656,6 +939,31 @@ pub trait CloudLinkSpool: Send + Sync + 'static {
         input: CloudLinkEnqueue,
     ) -> Result<CloudLinkRecord, CloudLinkSpoolError>;
 
+    /// Persists an event without ever evicting another unacknowledged record.
+    ///
+    /// With [`CloudLinkReceiptRetention::RetainForIdempotency`], exact retries
+    /// return the original identity and set `duplicate`, including retries after
+    /// a durable Cloud ACK. `DiscardAfterAck` preserves lossless pending
+    /// admission without consuming the post-ACK identity ledger. Conflicting
+    /// reuse of a retained batch identity fails closed.
+    async fn admit_lossless(
+        &self,
+        input: CloudLinkEnqueue,
+        receipt_retention: CloudLinkReceiptRetention,
+    ) -> Result<CloudLinkAdmission, CloudLinkSpoolError>;
+
+    /// Persists the report for the current data-loss evidence through a reserved
+    /// system slot, so a full ordinary record window cannot deadlock reporting.
+    ///
+    /// Implementations durably bind the report identity to the supplied evidence.
+    /// A cumulative ACK clears the evidence only when that exact range is still
+    /// current; an evidence range extended after admission remains reportable.
+    async fn admit_data_loss(
+        &self,
+        input: CloudLinkEnqueue,
+        evidence: &CloudLinkDataLossEvidence,
+    ) -> Result<CloudLinkAdmission, CloudLinkSpoolError>;
+
     /// Returns records beginning at one server-authoritative requested position.
     async fn replay_from(
         &self,
@@ -703,6 +1011,8 @@ pub enum CloudLinkTransportRoute {
     ManifestUp,
     /// Edge-to-cloud point telemetry.
     TelemetryUp,
+    /// Edge-to-cloud durable alarm transitions.
+    AlarmUp,
     /// Edge-to-cloud complete delegated-integration topology.
     IntegrationTopologyUp,
     /// Edge-to-cloud delegated-integration observations.

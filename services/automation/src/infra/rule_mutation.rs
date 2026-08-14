@@ -95,6 +95,9 @@ impl AutomationRuleMutator for SqliteRuleMutator {
                 flow_json,
                 trigger_config,
             } => {
+                let database_id = database_rule_id(rule_id)?;
+                let (stored_enabled, stored_trigger) =
+                    load_rule_activation_state(&mut transaction, database_id, rule_id).await?;
                 let mut updates = Vec::new();
                 if name.is_some() {
                     updates.push("name = ?");
@@ -136,15 +139,29 @@ impl AutomationRuleMutator for SqliteRuleMutator {
                 }
                 let trigger_config = trigger_config
                     .map(|trigger| {
-                        serde_json::from_str::<TriggerConfig>(&trigger).map_err(|error| {
-                            PortError::new(
-                                PortErrorKind::InvalidData,
-                                format!("invalid trigger configuration: {error}"),
-                            )
+                        let parsed =
+                            serde_json::from_str::<TriggerConfig>(&trigger).map_err(|error| {
+                                PortError::new(
+                                    PortErrorKind::InvalidData,
+                                    format!("invalid trigger configuration: {error}"),
+                                )
+                            })?;
+                        parsed.validate().map_err(|error| {
+                            PortError::new(PortErrorKind::InvalidData, error.to_string())
                         })?;
                         Ok(trigger)
                     })
                     .transpose()?;
+
+                let final_enabled = match enabled {
+                    Some(enabled) => enabled,
+                    None => decode_stored_enabled(stored_enabled)?,
+                };
+                if final_enabled {
+                    validate_activation_trigger(
+                        trigger_config.as_deref().or(stored_trigger.as_deref()),
+                    )?;
+                }
 
                 if updates.is_empty() {
                     return Err(PortError::new(
@@ -153,7 +170,6 @@ impl AutomationRuleMutator for SqliteRuleMutator {
                     ));
                 }
 
-                let database_id = database_rule_id(rule_id)?;
                 let sql = format!(
                     "UPDATE rules SET {}, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                     updates.join(", ")
@@ -195,11 +211,17 @@ impl AutomationRuleMutator for SqliteRuleMutator {
                 Some(rule_id)
             },
             RuleMutation::SetEnabled { rule_id, enabled } => {
+                let database_id = database_rule_id(rule_id)?;
+                if enabled {
+                    let (_, stored_trigger) =
+                        load_rule_activation_state(&mut transaction, database_id, rule_id).await?;
+                    validate_activation_trigger(stored_trigger.as_deref())?;
+                }
                 let result = sqlx::query(
                     "UPDATE rules SET enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                 )
                 .bind(enabled)
-                .bind(database_rule_id(rule_id)?)
+                .bind(database_id)
                 .execute(&mut *transaction)
                 .await
                 .map_err(database_error)?;
@@ -251,6 +273,58 @@ impl AutomationRuleMutator for SqliteRuleMutator {
             },
         }
     }
+}
+
+async fn load_rule_activation_state(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    database_id: i64,
+    rule_id: RuleId,
+) -> PortResult<(i64, Option<String>)> {
+    sqlx::query_as::<_, (i64, Option<String>)>(
+        "SELECT enabled, trigger_config FROM rules WHERE id = ?",
+    )
+    .bind(database_id)
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(database_error)?
+    .ok_or_else(|| {
+        PortError::new(
+            PortErrorKind::NotFound,
+            format!("rule {} does not exist", rule_id.get()),
+        )
+    })
+}
+
+fn decode_stored_enabled(enabled: i64) -> PortResult<bool> {
+    match enabled {
+        0 => Ok(false),
+        1 => Ok(true),
+        other => Err(PortError::new(
+            PortErrorKind::InvalidData,
+            format!("stored rule enabled flag must be 0 or 1, got {other}"),
+        )),
+    }
+}
+
+fn validate_activation_trigger(trigger: Option<&str>) -> PortResult<()> {
+    let Some(trigger) = trigger else {
+        return Err(PortError::new(
+            PortErrorKind::InvalidData,
+            "cannot enable rule without trigger_config",
+        ));
+    };
+    let trigger = serde_json::from_str::<TriggerConfig>(trigger).map_err(|error| {
+        PortError::new(
+            PortErrorKind::InvalidData,
+            format!("cannot enable rule with invalid trigger configuration: {error}"),
+        )
+    })?;
+    trigger.validate().map_err(|error| {
+        PortError::new(
+            PortErrorKind::InvalidData,
+            format!("cannot enable rule with invalid trigger configuration: {error}"),
+        )
+    })
 }
 
 fn database_rule_id(rule_id: RuleId) -> PortResult<i64> {

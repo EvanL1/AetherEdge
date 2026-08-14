@@ -1,5 +1,4 @@
-version: 1
-suite: aether.data-processing.v1
+suite: aether.data-processing
 execution: cargo_test_evidence
 description: >-
   Machine-readable AI-facing scenarios for the landed Data Processing

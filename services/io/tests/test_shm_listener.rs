@@ -1,351 +1,239 @@
-//! Integration tests for ShmCommandListener (M2C receive-and-dispatch loop)
-//!
-//! These tests exercise the full ShmNotifier → ShmCommandListener roundtrip via UDS,
-//! covering the dispatch loop that previously had zero test coverage.
+//! Integration tests for the single durable M2C command listener.
 
-#![allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
+#![allow(clippy::disallowed_methods)] // Test code may use expect/panic.
 
-use std::collections::HashMap;
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use aether_core::PointType;
+use aether_domain::{
+    ChannelCommandAddress, ChannelId, CommandId, PhysicalDeviceCommand, PointId, PointKind,
+    TimestampMs,
+};
 use aether_io::core::channels::ShmCommandListener;
+use aether_io::core::channels::command_ledger::CommandLedger;
 use aether_io::core::channels::types::ChannelCommand;
-use aether_shm_bridge::DeviceCommandFrame;
-use tokio::io::AsyncWriteExt;
-use tokio::sync::mpsc;
+use aether_shm_bridge::{CommandAckStatus, CommandHello, DeviceCommandAck, DeviceCommandFrame};
+use sqlx::sqlite::SqlitePoolOptions;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::UnixStream;
+use tokio::sync::{mpsc, watch};
 use tokio::time::timeout;
 
-/// Helper: create a temporary UDS socket path using tempdir
-fn temp_uds_path() -> (tempfile::TempDir, String) {
-    // Unix-domain socket paths are short on macOS; keep this below sun_path.
-    let dir = tempfile::Builder::new()
-        .prefix("aether-")
-        .tempdir_in("/tmp")
-        .expect("tempdir failed");
-    let path = dir.path().join("test-m2c.sock");
-    let path_str = path.to_string_lossy().to_string();
-    (dir, path_str)
+struct RunningListener {
+    shutdown: watch::Sender<bool>,
+    task: tokio::task::JoinHandle<std::io::Result<()>>,
+    listener: Arc<ShmCommandListener>,
 }
 
-/// Helper: start the ShmCommandListener in a background task.
-///
-/// Returns the shutdown sender so the caller can stop the listener.
-/// The listener is given a custom UDS path via `Some(path)`.
-fn start_listener(
-    uds_path: &str,
-    senders: HashMap<u32, mpsc::Sender<ChannelCommand>>,
-) -> (
-    tokio::sync::watch::Sender<bool>,
-    tokio::task::JoinHandle<std::io::Result<()>>,
-) {
-    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-    let listener = ShmCommandListener::new(Some(uds_path), shutdown_rx);
-    for (channel_id, tx) in senders {
-        listener.register_channel(channel_id, tx);
+impl RunningListener {
+    async fn stop(self) {
+        let _ = self.shutdown.send(true);
+        self.task
+            .await
+            .expect("join command listener")
+            .expect("stop command listener");
     }
-    let handle = tokio::spawn(async move { listener.run().await });
-    (shutdown_tx, handle)
 }
 
-/// Helper: write a raw ShmNotification to a UDS socket at `path`.
-///
-/// Connects once, sends the bytes, then drops the connection.
-async fn send_notification(path: &str, notif: DeviceCommandFrame) {
-    let mut stream = tokio::net::UnixStream::connect(path)
+async fn start_listener(
+    uds_path: &str,
+    channel_id: u32,
+) -> (RunningListener, UnixStream, mpsc::Receiver<ChannelCommand>) {
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
         .await
-        .expect("UDS connect failed");
+        .expect("open command ledger");
+    let ledger = Arc::new(
+        CommandLedger::initialize(pool)
+            .await
+            .expect("initialize command ledger"),
+    );
+    let (shutdown, shutdown_rx) = watch::channel(false);
+    let listener = Arc::new(ShmCommandListener::new(Some(uds_path), shutdown_rx, ledger));
+    let (sender, receiver) = mpsc::channel(8);
+    listener.register_channel(channel_id, sender);
+    let task_listener = Arc::clone(&listener);
+    let task = tokio::spawn(async move { task_listener.run().await });
+
+    let mut stream = loop {
+        match UnixStream::connect(uds_path).await {
+            Ok(stream) => break stream,
+            Err(_) => tokio::time::sleep(Duration::from_millis(5)).await,
+        }
+    };
+    let mut hello_bytes = [0_u8; CommandHello::SIZE];
     stream
-        .write_all(&notif.to_bytes())
+        .read_exact(&mut hello_bytes)
         .await
-        .expect("UDS write failed");
-    // Flush and drop so the listener sees EOF
-    stream.flush().await.ok();
+        .expect("read command readiness");
+    CommandHello::from_bytes(&hello_bytes).expect("parse command readiness");
+
+    (
+        RunningListener {
+            shutdown,
+            task,
+            listener,
+        },
+        stream,
+        receiver,
+    )
 }
 
 fn command_frame(
+    command_id: u128,
     channel_id: u32,
-    point_type: PointType,
     point_id: u32,
+    kind: PointKind,
     value: f64,
-    timestamp_ms: u64,
+    issued_at_ms: u64,
     expires_at_ms: u64,
-    producer_id: u64,
-    sequence: u64,
 ) -> DeviceCommandFrame {
-    let mut bytes = [0_u8; DeviceCommandFrame::SIZE];
-    bytes[0..4].copy_from_slice(&channel_id.to_ne_bytes());
-    bytes[4..8].copy_from_slice(&point_id.to_ne_bytes());
-    bytes[8] = point_type as u8;
-    bytes[16..24].copy_from_slice(&value.to_bits().to_ne_bytes());
-    bytes[24..32].copy_from_slice(&timestamp_ms.to_ne_bytes());
-    bytes[32..40].copy_from_slice(&expires_at_ms.to_ne_bytes());
-    bytes[40..48].copy_from_slice(&producer_id.to_ne_bytes());
-    bytes[48..56].copy_from_slice(&sequence.to_ne_bytes());
-    DeviceCommandFrame::from_bytes(&bytes)
+    let address =
+        ChannelCommandAddress::new(ChannelId::new(channel_id), kind, PointId::new(point_id))
+            .expect("command address");
+    let command = PhysicalDeviceCommand::new(
+        CommandId::new(command_id),
+        address,
+        value,
+        TimestampMs::new(issued_at_ms),
+        TimestampMs::new(expires_at_ms),
+    )
+    .expect("physical command");
+    DeviceCommandFrame::new(command).expect("command frame")
 }
 
-/// Helper: wait for the listener socket to become ready (poll up to 200 ms).
-async fn wait_for_listener(path: &str) {
-    for _ in 0..20 {
-        if tokio::net::UnixStream::connect(path).await.is_ok() {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    panic!("ShmCommandListener did not become ready on {}", path);
-}
-
-// ============================================================================
-// Test cases
-// ============================================================================
-
-/// Send a Control notification via UDS; verify ChannelCommand::Control is dispatched.
-#[tokio::test]
-async fn test_listener_receives_control_command() {
-    let (_dir, uds_path) = temp_uds_path();
-
-    let (tx, mut rx) = mpsc::channel::<ChannelCommand>(8);
-    let mut senders = HashMap::new();
-    senders.insert(1001u32, tx);
-
-    let (shutdown_tx, _handle) = start_listener(&uds_path, senders);
-    wait_for_listener(&uds_path).await;
-
-    let notif = command_frame(
-        1001,                  // channel_id
-        PointType::Control,    // point_type
-        42,                    // point_id
-        123.45,                // value
-        1_000_000,             // timestamp_ms
-        u64::MAX,              // expires_at_ms
-        0xDEAD_BEEF_1234_5678, // producer_id
-        1,                     // seq
-    );
-    send_notification(&uds_path, notif).await;
-
-    let cmd = timeout(Duration::from_millis(500), rx.recv())
+async fn exchange(stream: &mut UnixStream, frame: DeviceCommandFrame) -> DeviceCommandAck {
+    stream
+        .write_all(&frame.to_bytes())
         .await
-        .expect("timed out waiting for command")
-        .expect("channel closed before receiving command");
+        .expect("write command frame");
+    let mut ack_bytes = [0_u8; DeviceCommandAck::SIZE];
+    stream
+        .read_exact(&mut ack_bytes)
+        .await
+        .expect("read command acknowledgement");
+    DeviceCommandAck::from_bytes(&ack_bytes).expect("parse command acknowledgement")
+}
 
-    match cmd {
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .min(u64::MAX as u128) as u64
+}
+
+fn temp_uds_path() -> (tempfile::TempDir, String) {
+    let directory = tempfile::Builder::new()
+        .prefix("aether-command-")
+        .tempdir_in("/tmp")
+        .expect("command socket directory");
+    let path = directory.path().join("m2c.sock");
+    (directory, path.to_string_lossy().into_owned())
+}
+
+#[tokio::test]
+async fn command_is_acknowledged_and_dispatched_with_its_durable_identity() {
+    let (_directory, path) = temp_uds_path();
+    let (running, mut stream, mut receiver) = start_listener(&path, 1001).await;
+    let issued_at_ms = now_ms();
+    let frame = command_frame(
+        0x1234,
+        1001,
+        42,
+        PointKind::Command,
+        123.45,
+        issued_at_ms,
+        issued_at_ms + 5_000,
+    );
+
+    let ack = exchange(&mut stream, frame).await;
+    assert_eq!(ack.status(), CommandAckStatus::Accepted);
+    let command = timeout(Duration::from_secs(1), receiver.recv())
+        .await
+        .expect("command dispatch timeout")
+        .expect("command queue closed");
+    assert_eq!(command.durable_command_id(), Some(CommandId::new(0x1234)));
+    assert!(matches!(
+        command,
         ChannelCommand::Control {
-            point_id, value, ..
-        } => {
-            assert_eq!(point_id, 42);
-            assert!((value - 123.45).abs() < 1e-9, "value mismatch: {}", value);
-        },
-        other => panic!("Expected Control, got {:?}", other),
-    }
+            point_id: 42,
+            value,
+            ..
+        } if (value - 123.45).abs() < f64::EPSILON
+    ));
+    assert_eq!(running.listener.stats().frames_total, 1);
+    assert!(running.listener.stats().last_frame_at_ms.is_some());
 
-    let _ = shutdown_tx.send(true);
+    drop(stream);
+    running.stop().await;
 }
 
-/// Send an Adjustment notification via UDS; verify ChannelCommand::Adjustment is dispatched.
 #[tokio::test]
-async fn test_listener_receives_adjustment_command() {
-    let (_dir, uds_path) = temp_uds_path();
-
-    let (tx, mut rx) = mpsc::channel::<ChannelCommand>(8);
-    let mut senders = HashMap::new();
-    senders.insert(2001u32, tx);
-
-    let (shutdown_tx, _handle) = start_listener(&uds_path, senders);
-    wait_for_listener(&uds_path).await;
-
-    let notif = command_frame(
-        2001,
-        PointType::Adjustment,
+async fn same_id_is_idempotent_and_different_payload_conflicts() {
+    let (_directory, path) = temp_uds_path();
+    let (running, mut stream, mut receiver) = start_listener(&path, 7).await;
+    let issued_at_ms = now_ms();
+    let frame = command_frame(
+        0x5678,
         7,
-        -99.5,
-        2_000_000,
-        u64::MAX,
-        0xCAFE_BABE_0000_0001,
         1,
-    );
-    send_notification(&uds_path, notif).await;
-
-    let cmd = timeout(Duration::from_millis(500), rx.recv())
-        .await
-        .expect("timed out waiting for adjustment command")
-        .expect("channel closed before receiving command");
-
-    match cmd {
-        ChannelCommand::Adjustment {
-            point_id, value, ..
-        } => {
-            assert_eq!(point_id, 7);
-            assert!((value - (-99.5)).abs() < 1e-9, "value mismatch: {}", value);
-        },
-        other => panic!("Expected Adjustment, got {:?}", other),
-    }
-
-    let _ = shutdown_tx.send(true);
-}
-
-/// Send a notification for an unregistered channel_id.
-/// The listener should drop it gracefully without panicking.
-/// No command should arrive on any registered channel.
-#[tokio::test]
-async fn test_listener_ignores_unknown_channel() {
-    let (_dir, uds_path) = temp_uds_path();
-
-    // Register channel 1001 but send to channel 9999 (unregistered)
-    let (tx, mut rx) = mpsc::channel::<ChannelCommand>(8);
-    let mut senders = HashMap::new();
-    senders.insert(1001u32, tx);
-
-    let (shutdown_tx, _handle) = start_listener(&uds_path, senders);
-    wait_for_listener(&uds_path).await;
-
-    let notif = command_frame(9999, PointType::Control, 1, 1.0, 0, u64::MAX, 42, 1);
-    send_notification(&uds_path, notif).await;
-
-    // Give the listener some time to process the notification
-    tokio::time::sleep(Duration::from_millis(100)).await;
-
-    // Nothing should arrive on the registered sender
-    let result = timeout(Duration::from_millis(50), rx.recv()).await;
-    assert!(
-        result.is_err(),
-        "Expected timeout (no command for ch1001), but got a message"
-    );
-
-    let _ = shutdown_tx.send(true);
-}
-
-/// Send the same (producer_id, seq) twice for the same point.
-/// The listener's dedup logic must dispatch only the first; the second is dropped.
-#[tokio::test]
-async fn test_listener_dedup_same_sequence() {
-    let (_dir, uds_path) = temp_uds_path();
-
-    let (tx, mut rx) = mpsc::channel::<ChannelCommand>(8);
-    let mut senders = HashMap::new();
-    senders.insert(1001u32, tx);
-
-    let (shutdown_tx, _handle) = start_listener(&uds_path, senders);
-    wait_for_listener(&uds_path).await;
-
-    // Same producer_id + seq — second one is a duplicate and must be dropped
-    let producer_id = 0x1111_2222_3333_4444u64;
-    let seq = 5u64;
-
-    let notif_first = command_frame(
-        1001,
-        PointType::Control,
-        10,
+        PointKind::Command,
         1.0,
-        0,
-        u64::MAX,
-        producer_id,
-        seq,
+        issued_at_ms,
+        issued_at_ms + 5_000,
     );
-    let notif_dup = command_frame(
-        1001,
-        PointType::Control,
-        10,
+
+    assert_eq!(
+        exchange(&mut stream, frame).await.status(),
+        CommandAckStatus::Accepted
+    );
+    let _ = receiver.recv().await.expect("first command");
+    assert_eq!(
+        exchange(&mut stream, frame).await.status(),
+        CommandAckStatus::Duplicate
+    );
+    let conflict = command_frame(
+        0x5678,
+        7,
+        1,
+        PointKind::Command,
         2.0,
-        0,
-        u64::MAX,
-        producer_id,
-        seq,
+        issued_at_ms,
+        issued_at_ms + 5_000,
     );
-
-    send_notification(&uds_path, notif_first).await;
-    // Small pause to ensure first notification is fully processed before sending duplicate
-    tokio::time::sleep(Duration::from_millis(20)).await;
-    send_notification(&uds_path, notif_dup).await;
-
-    // First command must arrive
-    let cmd = timeout(Duration::from_millis(500), rx.recv())
-        .await
-        .expect("timed out waiting for first command")
-        .expect("channel closed");
-
-    match cmd {
-        ChannelCommand::Control { value, .. } => {
-            assert!(
-                (value - 1.0).abs() < 1e-9,
-                "expected first value 1.0, got {}",
-                value
-            );
-        },
-        other => panic!("Expected Control, got {:?}", other),
-    }
-
-    // No second command should arrive (duplicate is dropped)
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    let dup_result = timeout(Duration::from_millis(50), rx.recv()).await;
-    assert!(
-        dup_result.is_err(),
-        "Duplicate notification was NOT dropped — second command arrived unexpectedly"
+    assert_eq!(
+        exchange(&mut stream, conflict).await.status(),
+        CommandAckStatus::Conflict
     );
+    assert!(receiver.try_recv().is_err());
 
-    let _ = shutdown_tx.send(true);
-}
-
-/// Send a notification carrying a NaN value.
-/// The domain command-value policy must reject it; no command should be dispatched.
-#[tokio::test]
-async fn test_listener_rejects_nan_value() {
-    let (_dir, uds_path) = temp_uds_path();
-
-    let (tx, mut rx) = mpsc::channel::<ChannelCommand>(8);
-    let mut senders = HashMap::new();
-    senders.insert(1001u32, tx);
-
-    let (shutdown_tx, _handle) = start_listener(&uds_path, senders);
-    wait_for_listener(&uds_path).await;
-
-    let nan_notif = command_frame(1001, PointType::Control, 5, f64::NAN, 1234, u64::MAX, 99, 1);
-    send_notification(&uds_path, nan_notif).await;
-
-    // Give the listener time to process
-    tokio::time::sleep(Duration::from_millis(100)).await;
-
-    // No command should arrive
-    let result = timeout(Duration::from_millis(50), rx.recv()).await;
-    assert!(
-        result.is_err(),
-        "NaN notification was NOT rejected — a command arrived unexpectedly"
-    );
-
-    let _ = shutdown_tx.send(true);
+    drop(stream);
+    running.stop().await;
 }
 
 #[tokio::test]
-async fn test_listener_rejects_expired_command() {
-    let (_dir, uds_path) = temp_uds_path();
-    let (tx, mut rx) = mpsc::channel::<ChannelCommand>(8);
-    let mut senders = HashMap::new();
-    senders.insert(1001u32, tx);
-
-    let (shutdown_tx, _handle) = start_listener(&uds_path, senders);
-    wait_for_listener(&uds_path).await;
-
-    let now_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("system clock")
-        .as_millis() as u64;
-    let expired = command_frame(
-        1001,
-        PointType::Control,
-        5,
-        1.0,
-        now_ms.saturating_sub(10_000),
-        now_ms.saturating_sub(1),
-        99,
-        2,
+async fn unknown_channel_is_rejected_without_dispatch() {
+    let (_directory, path) = temp_uds_path();
+    let (running, mut stream, mut receiver) = start_listener(&path, 7).await;
+    let issued_at_ms = now_ms();
+    let frame = command_frame(
+        0x9abc,
+        9999,
+        1,
+        PointKind::Action,
+        -4.0,
+        issued_at_ms,
+        issued_at_ms + 5_000,
     );
-    send_notification(&uds_path, expired).await;
 
-    assert!(
-        timeout(Duration::from_millis(100), rx.recv())
-            .await
-            .is_err(),
-        "expired command must not reach the channel runtime"
+    assert_eq!(
+        exchange(&mut stream, frame).await.status(),
+        CommandAckStatus::Unavailable
     );
-    let _ = shutdown_tx.send(true);
+    assert!(receiver.try_recv().is_err());
+
+    drop(stream);
+    running.stop().await;
 }

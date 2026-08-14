@@ -186,20 +186,18 @@ impl InstanceManager {
             product.measurements.iter().map(|point| point.id).collect();
         let action_points: Vec<_> = product.actions.iter().map(|point| point.id).collect();
 
-        match data_type {
-            Some(InstanceDataPlane::Measurement) => Ok(InstanceLiveDataView::Values(read_points(
-                &measurement_points,
-                false,
-            ))),
-            Some(InstanceDataPlane::Action) => Ok(InstanceLiveDataView::Values(read_points(
-                &action_points,
-                true,
-            ))),
-            None => Ok(InstanceLiveDataView::Complete {
-                measurements: read_points(&measurement_points, false),
-                actions: read_points(&action_points, true),
-            }),
-        }
+        let measurements = match data_type {
+            Some(InstanceDataPlane::Action) => BTreeMap::new(),
+            Some(InstanceDataPlane::Measurement) | None => read_points(&measurement_points, false),
+        };
+        let actions = match data_type {
+            Some(InstanceDataPlane::Measurement) => BTreeMap::new(),
+            Some(InstanceDataPlane::Action) | None => read_points(&action_points, true),
+        };
+        Ok(InstanceLiveDataView {
+            measurements,
+            actions,
+        })
     }
 
     /// Merge one instance's selected product with its revisioned desired routing.

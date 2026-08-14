@@ -22,15 +22,14 @@ const NOT_OPERATOR_FACING: &[(&str, &str)] = &[
         "SKIP_VALIDATION",
         "development escape hatch, not a deployment knob",
     ),
-    ("DEVICE_SN", "provisioned by the installer, not set by hand"),
-    (
-        "DATABASE_DIR",
-        "install-layout detail resolved by install context",
-    ),
     ("HOSTNAME", "provided by the operating system"),
     (
         "AETHER_TEST_PG_DSN",
         "opts a developer into the ignored PostgreSQL integration tests; never read by a running service",
+    ),
+    (
+        "AETHER_TEST_TSDB_DSN",
+        "opts a developer into the ignored TimescaleDB integration tests; never read by a running service",
     ),
     ("CARGO_TARGET_TMPDIR", "provided by cargo during tests"),
 ];

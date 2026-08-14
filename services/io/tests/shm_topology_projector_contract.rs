@@ -305,7 +305,7 @@ async fn topology_change_publishes_both_planes_and_preserves_typed_intersections
         .expect("retained health read")
         .expect("retained health sample");
     assert!(retained.online());
-    assert_eq!(retained.timestamp_ms(), health_timestamp);
+    assert_eq!(retained.observed_at().get(), health_timestamp);
     health
         .set_online(2, false, health_timestamp + 1)
         .expect("new channel health");

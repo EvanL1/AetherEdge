@@ -54,14 +54,14 @@ pub struct UserLogin {
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct UserUpdate {
     pub role_id: Option<i64>,
     pub is_active: Option<bool>,
-    pub old_password: Option<String>,
-    pub new_password: Option<String>,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 #[schema(example = json!({"old_password": "e10adc3949ba59abbe56e057f20f883e", "new_password": "<MD5 hash of new password>"}))]
 pub struct PasswordChange {
     pub old_password: String,
@@ -82,12 +82,8 @@ pub struct TokenResponse {
     pub expires_in: i64,
 }
 
-/// Compatibility response envelope used by the gateway auth routes.
-///
-/// The gateway predates `common::SuccessResponse` and includes a human-readable
-/// message alongside typed data. Keep this schema explicit so generated clients
-/// match the wire format during migration.
-#[allow(dead_code)] // OpenAPI-only compatibility schema.
+/// Canonical response envelope used by gateway routes.
+#[allow(dead_code)] // OpenAPI-only wire schema.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct GatewayDataResponse<T> {
     pub success: bool,
@@ -95,14 +91,14 @@ pub struct GatewayDataResponse<T> {
     pub data: T,
 }
 
-#[allow(dead_code)] // OpenAPI-only compatibility schema.
+#[allow(dead_code)] // OpenAPI-only wire schema.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct GatewayMessageResponse {
     pub success: bool,
     pub message: String,
 }
 
-#[allow(dead_code)] // OpenAPI-only compatibility schema.
+#[allow(dead_code)] // OpenAPI-only wire schema.
 #[derive(Debug, ToSchema)]
 pub struct RegistrationResult {
     pub id: i64,
@@ -110,7 +106,7 @@ pub struct RegistrationResult {
     pub role_id: i64,
 }
 
-#[allow(dead_code)] // OpenAPI-only compatibility schema.
+#[allow(dead_code)] // OpenAPI-only wire schema.
 #[derive(Debug, ToSchema)]
 pub struct RoleListResponse {
     pub success: bool,
@@ -119,21 +115,21 @@ pub struct RoleListResponse {
     pub total: usize,
 }
 
-#[allow(dead_code)] // OpenAPI-only compatibility schema.
+#[allow(dead_code)] // OpenAPI-only wire schema.
 #[derive(Debug, ToSchema)]
 pub struct UserListData {
     pub total: usize,
     pub list: Vec<UserWithRole>,
 }
 
-#[allow(dead_code)] // OpenAPI-only compatibility schema.
+#[allow(dead_code)] // OpenAPI-only wire schema.
 #[derive(Debug, ToSchema)]
 pub struct DeletedUserData {
     pub user_id: i64,
     pub username: String,
 }
 
-#[allow(dead_code)] // OpenAPI-only compatibility schema.
+#[allow(dead_code)] // OpenAPI-only wire schema.
 #[derive(Debug, ToSchema)]
 pub struct AuthStatsData {
     pub active_refresh_tokens: usize,
@@ -142,7 +138,7 @@ pub struct AuthStatsData {
     pub refresh_token_expire_days: i64,
 }
 
-#[allow(dead_code)] // OpenAPI-only compatibility schema.
+#[allow(dead_code)] // OpenAPI-only wire schema.
 #[derive(Debug, ToSchema)]
 pub struct HomepagePageData {
     pub items: Vec<CalculatedPoint>,
@@ -152,22 +148,13 @@ pub struct HomepagePageData {
     pub pages: i64,
 }
 
-#[allow(dead_code)] // OpenAPI-only compatibility schema.
+#[allow(dead_code)] // OpenAPI-only wire schema.
 #[derive(Debug, ToSchema)]
 pub struct HomepageResetData {
     /// Number of homepage point definitions after reset; always zero.
     pub remaining_count: i64,
     /// Confirms that reset does not import domain-specific defaults.
     pub note: String,
-}
-
-#[allow(dead_code)] // OpenAPI-only compatibility schema.
-#[derive(Debug, ToSchema)]
-pub struct UserUpdateSuccess {
-    pub success: bool,
-    pub message: String,
-    /// Present for profile updates; omitted for the compatibility password path.
-    pub data: Option<UserWithRole>,
 }
 
 // ── Calculated Points ─────────────────────────────────────────────────────────
@@ -266,5 +253,31 @@ impl From<crate::read_models::CalculatedPointRecord> for CalculatedPoint {
             created_at: value.created_at,
             updated_at: value.updated_at,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn profile_update_rejects_password_fields() {
+        let retired_shape = serde_json::json!({
+            "old_password": "old",
+            "new_password": "new"
+        });
+
+        assert!(serde_json::from_value::<UserUpdate>(retired_shape).is_err());
+    }
+
+    #[test]
+    fn password_change_rejects_profile_fields() {
+        let mixed_shape = serde_json::json!({
+            "old_password": "old",
+            "new_password": "new",
+            "role_id": 1
+        });
+
+        assert!(serde_json::from_value::<PasswordChange>(mixed_shape).is_err());
     }
 }

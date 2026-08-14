@@ -5,9 +5,9 @@ use base64::Engine as _;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 
-const CLAIM_ENDPOINT_PATH: &str = "api/v1/fleet/enrollment-claims:claim";
-const CLAIM_REQUEST_SCHEMA: &str = "aether.cloud.gateway-enrollment-claim.v1";
-const CLAIMED_RESPONSE_SCHEMA: &str = "aether.cloud.gateway-enrollment-claimed.v1";
+const CLAIM_ENDPOINT_PATH: &str = "api/fleet/enrollment-claims:claim";
+const CLAIM_REQUEST_SCHEMA: &str = "aether.cloud.gateway-enrollment-claim";
+const CLAIMED_RESPONSE_SCHEMA: &str = "aether.cloud.gateway-enrollment-claimed";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct WireValidationError(&'static str);
@@ -274,7 +274,7 @@ mod tests {
     #[test]
     fn claimed_response_is_closed_and_requires_matching_identity_and_safe_revision() {
         let valid = serde_json::to_vec(&json!({
-            "schema": "aether.cloud.gateway-enrollment-claimed.v1",
+            "schema": "aether.cloud.gateway-enrollment-claimed",
             "gatewayId": GATEWAY_ID,
             "state": "claimed",
             "revision": MAX_CLOUD_ENROLLMENT_REVISION,
@@ -286,37 +286,37 @@ mod tests {
 
         let invalid_cases = [
             json!({
-                "schema": "aether.cloud.gateway-enrollment-claimed.v2",
+                "schema": "aether.cloud.gateway-enrollment-claimed.unsupported",
                 "gatewayId": GATEWAY_ID,
                 "state": "claimed",
                 "revision": 1,
             }),
             json!({
-                "schema": "aether.cloud.gateway-enrollment-claimed.v1",
+                "schema": "aether.cloud.gateway-enrollment-claimed",
                 "gatewayId": "44444444-4444-4444-8444-444444444444",
                 "state": "claimed",
                 "revision": 1,
             }),
             json!({
-                "schema": "aether.cloud.gateway-enrollment-claimed.v1",
+                "schema": "aether.cloud.gateway-enrollment-claimed",
                 "gatewayId": GATEWAY_ID,
                 "state": "credential-active",
                 "revision": 1,
             }),
             json!({
-                "schema": "aether.cloud.gateway-enrollment-claimed.v1",
+                "schema": "aether.cloud.gateway-enrollment-claimed",
                 "gatewayId": GATEWAY_ID,
                 "state": "claimed",
                 "revision": 0,
             }),
             json!({
-                "schema": "aether.cloud.gateway-enrollment-claimed.v1",
+                "schema": "aether.cloud.gateway-enrollment-claimed",
                 "gatewayId": GATEWAY_ID,
                 "state": "claimed",
                 "revision": MAX_CLOUD_ENROLLMENT_REVISION + 1,
             }),
             json!({
-                "schema": "aether.cloud.gateway-enrollment-claimed.v1",
+                "schema": "aether.cloud.gateway-enrollment-claimed",
                 "gatewayId": GATEWAY_ID,
                 "state": "claimed",
                 "revision": 1,
@@ -362,12 +362,12 @@ mod tests {
         let endpoint = claim_endpoint("https://api.aetheriot.dev", false).expect("Claim endpoint");
         assert_eq!(
             endpoint.as_str(),
-            "https://api.aetheriot.dev/api/v1/fleet/enrollment-claims:claim"
+            "https://api.aetheriot.dev/api/fleet/enrollment-claims:claim"
         );
     }
 
     #[test]
-    fn claim_request_serializes_the_exact_v1_contract() {
+    fn claim_request_serializes_the_exact_contract() {
         let bytes = encode_claim_request(
             "11111111-1111-4111-8111-111111111111",
             "22222222-2222-4222-8222-222222222222",
@@ -381,7 +381,7 @@ mod tests {
         assert_eq!(
             actual,
             json!({
-                "schema": "aether.cloud.gateway-enrollment-claim.v1",
+                "schema": "aether.cloud.gateway-enrollment-claim",
                 "tenantId": "11111111-1111-4111-8111-111111111111",
                 "projectId": "22222222-2222-4222-8222-222222222222",
                 "gatewayId": GATEWAY_ID,

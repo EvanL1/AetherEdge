@@ -48,8 +48,9 @@ impl<A> PointConfig<A> {
     }
 }
 
-/// Data format for protocol values (case-insensitive deserialization).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+/// Canonical data format for protocol values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum DataFormat {
     Bool,
     #[default]
@@ -75,62 +76,14 @@ impl DataFormat {
     }
 }
 
-impl<'de> Deserialize<'de> for DataFormat {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        struct DataFormatVisitor;
-
-        impl<'de> serde::de::Visitor<'de> for DataFormatVisitor {
-            type Value = DataFormat;
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                formatter.write_str("a data format string like 'int32', 'uint16', 'float32', etc.")
-            }
-
-            fn visit_str<E>(self, value: &str) -> Result<DataFormat, E>
-            where
-                E: serde::de::Error,
-            {
-                match value.to_lowercase().as_str() {
-                    "bool" | "boolean" => Ok(DataFormat::Bool),
-                    "uint16" | "u16" => Ok(DataFormat::UInt16),
-                    "int16" | "i16" => Ok(DataFormat::Int16),
-                    "uint32" | "u32" => Ok(DataFormat::UInt32),
-                    "int32" | "i32" => Ok(DataFormat::Int32),
-                    "uint64" | "u64" => Ok(DataFormat::UInt64),
-                    "int64" | "i64" => Ok(DataFormat::Int64),
-                    "float32" | "f32" | "float" => Ok(DataFormat::Float32),
-                    "float64" | "f64" | "double" => Ok(DataFormat::Float64),
-                    "string" => Ok(DataFormat::String),
-                    _ => Err(serde::de::Error::unknown_variant(
-                        value,
-                        &[
-                            "bool", "uint16", "int16", "uint32", "int32", "uint64", "int64",
-                            "float32", "float64", "string",
-                        ],
-                    )),
-                }
-            }
-        }
-
-        deserializer.deserialize_str(DataFormatVisitor)
-    }
-}
-
-/// Byte order for multi-byte values (supports serde aliases: BE/LE/WORD_SWAP/BYTE_SWAP).
+/// Canonical byte order for multi-byte values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum ByteOrder {
     #[default]
-    #[serde(alias = "big_endian", alias = "BIG_ENDIAN", alias = "BE")]
     Abcd,
-    #[serde(alias = "little_endian", alias = "LITTLE_ENDIAN", alias = "LE")]
     Dcba,
-    #[serde(alias = "WORD_SWAP", alias = "word_swap")]
     Badc,
-    #[serde(alias = "BYTE_SWAP", alias = "byte_swap")]
     Cdab,
 }
 
@@ -246,19 +199,37 @@ mod tests {
     }
 
     #[test]
-    fn test_data_format_case_insensitive() {
-        let formats = vec![
+    fn data_format_uses_one_canonical_spelling() {
+        for (json, expected) in [
             ("\"int32\"", DataFormat::Int32),
-            ("\"Int32\"", DataFormat::Int32),
-            ("\"INT32\"", DataFormat::Int32),
-            ("\"i32\"", DataFormat::Int32),
             ("\"float32\"", DataFormat::Float32),
-            ("\"Float32\"", DataFormat::Float32),
-        ];
-
-        for (json, expected) in formats {
+        ] {
             let result: DataFormat = serde_json::from_str(json).unwrap();
-            assert_eq!(result, expected, "Failed for {}", json);
+            assert_eq!(result, expected, "failed for {json}");
+            assert_eq!(serde_json::to_string(&result).unwrap(), json);
+        }
+        for retired in ["Int32", "INT32", "i32", "F32", "float", "boolean", "double"] {
+            let json = format!("\"{retired}\"");
+            assert!(
+                serde_json::from_str::<DataFormat>(&json).is_err(),
+                "accepted {retired}"
+            );
+        }
+    }
+
+    #[test]
+    fn byte_order_rejects_retired_aliases() {
+        for canonical in ["ABCD", "DCBA", "BADC", "CDAB"] {
+            let json = format!("\"{canonical}\"");
+            let parsed: ByteOrder = serde_json::from_str(&json).unwrap();
+            assert_eq!(serde_json::to_string(&parsed).unwrap(), json);
+        }
+        for retired in ["AB", "BA", "BE", "LE", "big_endian", "WORD_SWAP", "abcd"] {
+            let json = format!("\"{retired}\"");
+            assert!(
+                serde_json::from_str::<ByteOrder>(&json).is_err(),
+                "accepted {retired}"
+            );
         }
     }
 }

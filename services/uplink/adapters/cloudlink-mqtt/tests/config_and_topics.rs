@@ -1,42 +1,44 @@
 use std::path::PathBuf;
-use std::str::FromStr;
+use std::sync::Arc;
 
 use aether_cloudlink_mqtt::{
-    CloudLinkMigrationMode, CloudLinkMqttConfig, CloudLinkTlsConfig, DeploymentSecurity,
-    MqttClientIdentity, SecretString, TopicNamespace,
+    CloudLinkMqttConfig, CloudLinkTlsConfig, DeploymentSecurity, MqttClientIdentity,
+    MqttCloudLinkTransport, SecretString, TopicNamespace,
 };
-use aether_domain::TimestampMs;
 use aether_ports::{
-    CloudLinkEnqueue, CloudLinkMessageKind, CloudLinkSpool, CloudLinkTransportRoute,
+    CloudLinkTransport, CloudLinkTransportMessage, CloudLinkTransportRoute, PortErrorKind,
 };
-use aether_store_local::MemoryCloudLinkSpool;
 
 #[test]
-fn topic_namespace_is_versioned_exact_and_isolated_from_legacy_topics() {
+fn topic_namespace_is_exact_and_contains_no_compatibility_branch() {
     let topics = TopicNamespace::new("customer/site-a", "33333333-3333-4333-8333-333333333333")
         .expect("topics");
 
     assert_eq!(
         topics.topic(CloudLinkTransportRoute::SessionUp),
-        "customer/site-a/v1/gateways/33333333-3333-4333-8333-333333333333/up/session"
+        "customer/site-a/gateways/33333333-3333-4333-8333-333333333333/up/session"
     );
     assert_eq!(
         topics.topic(CloudLinkTransportRoute::TelemetryUp),
-        "customer/site-a/v1/gateways/33333333-3333-4333-8333-333333333333/up/telemetry"
+        "customer/site-a/gateways/33333333-3333-4333-8333-333333333333/up/telemetry"
+    );
+    assert_eq!(
+        topics.topic(CloudLinkTransportRoute::AlarmUp),
+        "customer/site-a/gateways/33333333-3333-4333-8333-333333333333/up/alarm"
     );
     assert_eq!(
         topics.topic(CloudLinkTransportRoute::IntegrationTopologyUp),
-        "customer/site-a/v1/gateways/33333333-3333-4333-8333-333333333333/up/integration/topology"
+        "customer/site-a/gateways/33333333-3333-4333-8333-333333333333/up/integration/topology"
     );
     assert_eq!(
         topics.topic(CloudLinkTransportRoute::IntegrationObservationsUp),
-        "customer/site-a/v1/gateways/33333333-3333-4333-8333-333333333333/up/integration/observations"
+        "customer/site-a/gateways/33333333-3333-4333-8333-333333333333/up/integration/observations"
     );
     assert_eq!(
         topics.topic(CloudLinkTransportRoute::AckDown),
-        "customer/site-a/v1/gateways/33333333-3333-4333-8333-333333333333/down/ack"
+        "customer/site-a/gateways/33333333-3333-4333-8333-333333333333/down/ack"
     );
-    assert_eq!(topics.publish_topics().len(), 7);
+    assert_eq!(topics.publish_topics().len(), 8);
     assert_eq!(topics.subscribe_topics().len(), 3);
     for topic in topics
         .publish_topics()
@@ -86,58 +88,9 @@ fn inbound_topics_map_only_to_the_three_allowed_downlink_routes() {
         None
     );
     assert_eq!(
-        topics.inbound_route("aether/v1/gateways/another/down/ack"),
+        topics.inbound_route("aether/gateways/another/down/ack"),
         None
     );
-}
-
-#[test]
-fn migration_mode_is_explicit_and_legacy_remains_the_compatibility_default() {
-    assert_eq!(
-        CloudLinkMigrationMode::default(),
-        CloudLinkMigrationMode::Legacy
-    );
-    assert_eq!(
-        CloudLinkMigrationMode::from_str("cloudlink-v1").expect("mode"),
-        CloudLinkMigrationMode::CloudLinkV1
-    );
-    assert_eq!(
-        CloudLinkMigrationMode::from_str("dual").expect("mode"),
-        CloudLinkMigrationMode::Dual
-    );
-    assert!(CloudLinkMigrationMode::Dual.legacy_enabled());
-    assert!(CloudLinkMigrationMode::Dual.cloudlink_enabled());
-    assert!(!CloudLinkMigrationMode::Legacy.cloudlink_enabled());
-    assert!(CloudLinkMigrationMode::from_str("write-through").is_err());
-}
-
-#[tokio::test]
-async fn dual_mode_keeps_one_cloudlink_identity_for_the_same_business_fact() {
-    let spool = MemoryCloudLinkSpool::new("telemetry", 8).expect("spool");
-    let content = CloudLinkEnqueue::new(
-        CloudLinkMessageKind::TelemetryBatch,
-        "batch-1",
-        format!("sha256:{}", "a".repeat(64)),
-        br#"{"samples":[]}"#.to_vec(),
-        TimestampMs::new(1),
-        None,
-    );
-
-    assert!(CloudLinkMigrationMode::CloudLinkV1.cloudlink_enabled());
-    let cloudlink_only = spool
-        .enqueue(content.clone())
-        .await
-        .expect("CloudLink identity");
-    assert!(CloudLinkMigrationMode::Dual.legacy_enabled());
-    assert!(CloudLinkMigrationMode::Dual.cloudlink_enabled());
-    let dual = spool
-        .enqueue(content)
-        .await
-        .expect("same CloudLink fact in dual mode");
-
-    assert_eq!(dual.identity(), cloudlink_only.identity());
-    assert_eq!(dual.digest(), cloudlink_only.digest());
-    assert_eq!(spool.status().await.expect("status").pending_records(), 1);
 }
 
 #[test]
@@ -202,4 +155,133 @@ fn packet_and_connection_bounds_are_validated_before_rumqttc_can_panic() {
     config.maximum_packet_bytes = aether_cloudlink::MAX_CLOUDLINK_MESSAGE_BYTES;
     config.broker_host = "mqtt://broker.example/secret".to_string();
     assert!(config.validate(DeploymentSecurity::Development).is_err());
+}
+
+#[tokio::test]
+async fn transport_construction_is_inert_and_manager_cancels_without_broker_io() {
+    let broker = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("test broker listener");
+    let address = broker.local_addr().expect("broker address");
+    let topics =
+        TopicNamespace::new("aether", "33333333-3333-4333-8333-333333333333").expect("topics");
+    let config = CloudLinkMqttConfig::development(
+        address.ip().to_string(),
+        address.port(),
+        "33333333-3333-4333-8333-333333333333",
+    );
+    let (_transport, manager) =
+        MqttCloudLinkTransport::new(config, topics, DeploymentSecurity::Development)
+            .expect("inert transport composition");
+
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(50), broker.accept())
+            .await
+            .is_err(),
+        "constructing the transport must not open a broker connection"
+    );
+
+    let shutdown = tokio_util::sync::CancellationToken::new();
+    shutdown.cancel();
+    tokio::time::timeout(std::time::Duration::from_secs(1), manager.run(shutdown))
+        .await
+        .expect("manager shutdown deadline")
+        .expect("manager shutdown");
+}
+
+#[tokio::test]
+async fn outbound_capacity_plus_one_fails_immediately_without_a_manager_poll() {
+    let topics =
+        TopicNamespace::new("aether", "33333333-3333-4333-8333-333333333333").expect("topics");
+    let mut config =
+        CloudLinkMqttConfig::development("127.0.0.1", 1883, "33333333-3333-4333-8333-333333333333");
+    config.request_capacity = 2;
+    let (transport, _manager) =
+        MqttCloudLinkTransport::new(config, topics, DeploymentSecurity::Development)
+            .expect("transport");
+
+    for payload in [vec![1], vec![2]] {
+        transport
+            .send(CloudLinkTransportMessage::new(
+                CloudLinkTransportRoute::SessionUp,
+                payload,
+                None,
+            ))
+            .await
+            .expect("bounded queue slot");
+    }
+    let error = tokio::time::timeout(
+        std::time::Duration::from_millis(50),
+        transport.send(CloudLinkTransportMessage::new(
+            CloudLinkTransportRoute::SessionUp,
+            vec![3],
+            None,
+        )),
+    )
+    .await
+    .expect("capacity failure must not wait for the manager")
+    .expect_err("capacity plus one must remain pending at the spool owner");
+
+    assert_eq!(error.kind(), PortErrorKind::Unavailable);
+    assert!(error.is_retryable());
+}
+
+#[tokio::test]
+async fn stalled_broker_and_request_burst_cannot_trap_the_event_loop_owner() {
+    let broker = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("test broker listener");
+    let address = broker.local_addr().expect("broker address");
+    let topics =
+        TopicNamespace::new("aether", "33333333-3333-4333-8333-333333333333").expect("topics");
+    let mut config = CloudLinkMqttConfig::development(
+        address.ip().to_string(),
+        address.port(),
+        "33333333-3333-4333-8333-333333333333",
+    );
+    config.request_capacity = 2;
+    config.reconnect_delay_secs = 1;
+    let (transport, manager) =
+        MqttCloudLinkTransport::new(config, topics, DeploymentSecurity::Development)
+            .expect("transport");
+    let shutdown = tokio_util::sync::CancellationToken::new();
+    let manager_shutdown = shutdown.clone();
+    let manager_task = tokio::spawn(async move { manager.run(manager_shutdown).await });
+
+    // Accept TCP but never send CONNACK. The MQTT request queue therefore has
+    // no broker progress while substantially more than its capacity arrives.
+    let (_connection, _) = tokio::time::timeout(std::time::Duration::from_secs(1), broker.accept())
+        .await
+        .expect("manager opened broker connection")
+        .expect("raw broker accept");
+    let mut senders = Vec::new();
+    for sequence in 0_u8..16 {
+        let transport = Arc::clone(&transport);
+        senders.push(tokio::spawn(async move {
+            transport
+                .send(CloudLinkTransportMessage::new(
+                    CloudLinkTransportRoute::SessionUp,
+                    vec![sequence.saturating_add(1)],
+                    None,
+                ))
+                .await
+        }));
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    shutdown.cancel();
+    tokio::time::timeout(std::time::Duration::from_secs(1), manager_task)
+        .await
+        .expect("event-loop owner must remain cancellable under backpressure")
+        .expect("manager task")
+        .expect("manager shutdown");
+    for sender in senders {
+        let result = tokio::time::timeout(std::time::Duration::from_secs(1), sender)
+            .await
+            .expect("blocked sender released when manager stops")
+            .expect("sender task");
+        if let Err(error) = result {
+            assert_eq!(error.kind(), PortErrorKind::Unavailable);
+        }
+    }
 }

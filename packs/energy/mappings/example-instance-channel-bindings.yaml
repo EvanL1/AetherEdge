@@ -1,4 +1,4 @@
-schema: aether.pack.mapping-set.v1
+schema: aether.pack.mapping-set
 id: energy.example-instance-channel-bindings
 kind: instance_channel_bindings
 description: Uncommissioned semantic bindings for the Energy example composition.

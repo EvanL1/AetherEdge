@@ -1,7 +1,6 @@
 {
-  "schema_version": 1,
   "composition": "aether-edge-six-service",
-  "aether_version": "0.0.1",
+  "aether_version": "0.0.2",
   "target_triple": "aarch64-unknown-linux-musl",
   "target_os": "linux",
   "services": [
@@ -28,6 +27,7 @@
     "data_processing.process",
     "data_processing.processors.health",
     "data_processing.tasks.list",
+    "device.command_outcome.read",
     "device.read_point",
     "device.write_point",
     "io.channel.manage",
@@ -42,6 +42,6 @@
   ],
   "checksum": {
     "algorithm": "sha256",
-    "digest": "04047e098527b3221ec4fb79649869dd1d6ed8af2102ce9b86e173151605084f"
+    "digest": "fae4c1e9b61c2d6eebb2f24093c035a1305ce29d80a0d5a2b435922455d76bf8"
   }
 }

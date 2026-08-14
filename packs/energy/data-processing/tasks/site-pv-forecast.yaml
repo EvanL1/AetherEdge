@@ -1,9 +1,9 @@
-schema: aether.data-processing-task.v1
+schema: aether.data-processing-task
 id: energy.site-pv-forecast
 revision: 1
 enabled: false
 kind: forecast
-processor_contract: aether.data-processing.forecast.v1
+processor_contract: aether.data-processing.forecast
 description: Forecast site PV generation from governed PV history and a complete weather frame.
 
 target:
@@ -506,7 +506,7 @@ governance:
   audit_raw_values: false
 
 output:
-  schema: aether.data-processing.output.forecast.v1
+  schema: aether.data-processing.output.forecast
   value_type: number
   unit: kW
   sign_convention: positive_generation

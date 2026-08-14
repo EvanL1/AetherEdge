@@ -70,7 +70,7 @@ NOT be written into IO-owned T/S shared memory. Aether creates `DerivedData`
 only after correlation, digest, task, binding, feature, unit, timestamp,
 horizon, finite-value, status, provenance, and expiry validation succeeds.
 
-Version 1 uses interval-end timestamps. For cadence `c`, a history label `t`
+The contract uses interval-end timestamps. For cadence `c`, a history label `t`
 aggregates raw observations in `(t-c, t]`; the history grid ends at `as_of`,
 and future covariates and forecast points begin at `as_of+c`. The default
 runtime queries the existing `aether-history` SQLite file through the read-only
@@ -91,7 +91,7 @@ runtime engineering-unit or sign conversion. Commission a normalized source
 or add and test an explicit transform before enabling a route that needs
 conversion.
 
-Version 1 also does not preserve device-origin sample quality end to end: the
+The current storage path also does not preserve device-origin sample quality end to end: the
 current SQLite history schema stores numeric observations without their device
 quality, and the current SHM bridge labels accepted finite live values as
 `good`. Freshness, gaps, missingness, numeric ranges, provenance, and issue-time
@@ -121,8 +121,8 @@ tasks set `max_attempts: 1`; any caller retry is a new bounded invocation.
 | `energy.site-pv-forecast` | 30 minutes | historical `pv` plus all 19 weather fields | all 19 weather fields; never future `pv` | generation-positive PV power in kW |
 
 The PV declaration contains the complete 19-field weather contract used by
-the compatibility processor. A model artifact with an input dimension of 20
-also consumes the historical `pv` target as its twentieth feature. A
+the downstream reference processor. A model artifact with an input dimension
+of 20 also consumes the historical `pv` target as its twentieth feature. A
 19-dimensional artifact may use the weather fields only. Feature ordering,
 scaling, tensors, ONNX/RKNN execution, and inverse transforms stay inside the
 processor; the Aether frame remains named and unit-bearing.
@@ -211,11 +211,12 @@ Before changing either safe default, a composition root must:
 10. enable the task declaration only after the binding and processor health
    checks pass.
 
-For the Load-Forecasting compatibility processor, health is not sufficient for
-production. The pinned upstream future-covariate off-by-one must be fixed with
-a golden step-to-row test, verbose sensitive output removed, actual artifact
-files resolved and pinned, upstream licensing cleared, and a real artifact
-benchmarked below the frame-and-processor work deadline at target-hardware p95. See the
+For the downstream Load-Forecasting reference processor, health is not
+sufficient for production. The pinned upstream future-covariate off-by-one
+must be fixed with a golden step-to-row test, verbose sensitive output removed,
+actual artifact files resolved and pinned, upstream licensing cleared, and a
+real artifact benchmarked below the frame-and-processor work deadline at
+target-hardware p95. See the
 [downstream Load-Forecasting readiness gates](https://github.com/EvanL1/AetherEMS/tree/main/processors/load-forecasting#production-cutover-blockers).
 
 Processor loss or network failure must leave acquisition, SHM, history,

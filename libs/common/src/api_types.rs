@@ -305,13 +305,13 @@ pub fn app_error_from(error: &dyn errors::AetherErrorTrait) -> AppError {
 /// Paginated response wrapper
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(ToSchema))]
+#[serde(deny_unknown_fields)]
 pub struct PaginatedResponse<T> {
     /// List of items
-    #[serde(rename = "list", alias = "items")]
-    pub items: Vec<T>,
+    pub list: Vec<T>,
     /// Total number of items
     pub total: usize,
-    /// Current page (0-indexed)
+    /// Current page (1-indexed)
     pub page: usize,
     /// Items per page
     pub page_size: usize,
@@ -325,16 +325,17 @@ pub struct PaginatedResponse<T> {
 
 impl<T> PaginatedResponse<T> {
     /// Create a new paginated response
-    pub fn new(items: Vec<T>, total: usize, page: usize, page_size: usize) -> Self {
+    pub fn new(list: Vec<T>, total: usize, page: usize, page_size: usize) -> Self {
+        let page = page.max(1);
         let total_pages = total.div_ceil(page_size);
         Self {
-            items,
+            list,
             total,
             page,
             page_size,
             total_pages,
-            has_next: page + 1 < total_pages,
-            has_previous: page > 0,
+            has_next: page < total_pages,
+            has_previous: page > 1,
         }
     }
 
@@ -365,8 +366,7 @@ impl<T> PaginatedResponse<T> {
             Vec::new()
         };
 
-        // Convert to 0-indexed for internal storage
-        Self::new(items, total, page - 1, page_size)
+        Self::new(items, total, page, page_size)
     }
 }
 
@@ -493,10 +493,24 @@ mod tests {
     #[test]
     fn test_pagination() {
         let items = vec![1, 2, 3, 4, 5];
-        let paginated = PaginatedResponse::new(items, 100, 0, 5);
+        let paginated = PaginatedResponse::new(items, 100, 1, 5);
+        assert_eq!(paginated.page, 1);
         assert_eq!(paginated.total_pages, 20);
         assert!(paginated.has_next);
         assert!(!paginated.has_previous);
+        let wire = serde_json::to_value(&paginated).expect("pagination serializes");
+        assert!(wire.get("list").is_some());
+        assert!(wire.get("items").is_none());
+        let retired = serde_json::json!({
+            "items": [1, 2, 3, 4, 5],
+            "total": 100,
+            "page": 1,
+            "page_size": 5,
+            "total_pages": 20,
+            "has_next": true,
+            "has_previous": false
+        });
+        assert!(serde_json::from_value::<PaginatedResponse<i32>>(retired).is_err());
     }
 
     #[test]

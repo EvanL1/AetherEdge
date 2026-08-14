@@ -19,11 +19,11 @@ default = []
 local-runtime = ["dep:aether-store-local"]
 
 [dependencies]
-aether-application = { version = "0.0.1", path = "../aether-application" }
-aether-domain = { version = "0.0.1", path = "../aether-domain" }
-aether-pack = { version = "0.0.1", path = "../aether-pack" }
-aether-ports = { version = "0.0.1", path = "../aether-ports" }
-aether-store-local = { version = "0.0.1", path = "../../libs/aether-store-local", optional = true }
+aether-application = { version = "0.0.2", path = "../aether-application" }
+aether-domain = { version = "0.0.2", path = "../aether-domain" }
+aether-pack = { version = "0.0.2", path = "../aether-pack" }
+aether-ports = { version = "0.0.2", path = "../aether-ports" }
+aether-store-local = { version = "0.0.2", path = "../../libs/aether-store-local", optional = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]

@@ -47,5 +47,5 @@ Escalate when no verified backup or accepted loss-evidence path exists. Losing
 telemetry is preferable to fabricating a contiguous durable acknowledgement.
 
 See the [local store implementation](../../libs/aether-store-local/README.md),
-[CloudLink MQTT reference](../reference/cloudlink-mqtt-v1.md), and
+[CloudLink MQTT reference](../reference/cloudlink-mqtt.md), and
 [Gateway identity recovery](gateway-identity-recovery.md).

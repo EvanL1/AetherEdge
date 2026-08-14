@@ -48,7 +48,6 @@ fn channel_manifest_preserves_only_the_writer_ownership_padding() {
 fn write_managed_shm(path: &std::path::Path, layout_hash: u64, generation: u64, value: f64) {
     let mut image = vec![0_u8; aether_dataplane::calculate_file_size(1)];
     image[0..8].copy_from_slice(&aether_dataplane::AETHER_SHM_MAGIC.to_ne_bytes());
-    image[8..12].copy_from_slice(&aether_dataplane::SHM_LAYOUT_VERSION.to_ne_bytes());
     image[12..16].copy_from_slice(&1_u32.to_ne_bytes());
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -158,7 +157,7 @@ fn channel_health_roundtrips_without_redis() {
         .expect("known online state");
 
     assert!(health.online());
-    assert_eq!(health.timestamp_ms(), now_ms);
+    assert_eq!(health.observed_at().get(), now_ms);
     assert_eq!(reader.read_channel(20).expect("unknown state"), None);
     assert_eq!(reader.read_channel(99).expect("unconfigured channel"), None);
 }
@@ -194,7 +193,7 @@ fn channel_health_reader_reopens_after_writer_process_restart() {
         .set_online(10, false, now_ms + 1)
         .expect("write second generation");
     second_writer
-        .update_heartbeat(now_ms + 1)
+        .update_heartbeat(now_ms)
         .expect("publish second heartbeat");
 
     let reopened = reader
@@ -202,7 +201,7 @@ fn channel_health_reader_reopens_after_writer_process_restart() {
         .expect("reader reopens canonical health path")
         .expect("second generation state");
     assert!(!reopened.online());
-    assert_eq!(reopened.timestamp_ms(), now_ms + 1);
+    assert_eq!(reopened.observed_at().get(), now_ms + 1);
 }
 
 #[test]
@@ -211,14 +210,14 @@ fn point_watch_wire_frame_is_explicit_little_endian() {
         .expect("slot fits the compact wire frame");
 
     let bytes = event.to_bytes();
-    let decoded = PointWatchEvent::from_bytes(&bytes).expect("decode compact v1 event");
+    let decoded = PointWatchEvent::from_bytes(&bytes).expect("decode compact event");
 
     assert_eq!(PointWatchEvent::SIZE, 16);
     assert_eq!(decoded, event);
     assert_eq!(&bytes[0..4], &10_u32.to_le_bytes());
     assert_eq!(&bytes[8..12], &42_u32.to_le_bytes());
     assert_eq!(bytes[12], 0);
-    assert_eq!(&bytes[13..16], &[0xA5, 1, 0x5A]);
+    assert_eq!(&bytes[13..16], &[0xA5, 0, 0x5A]);
     assert_eq!(decoded.slot_index(), 42);
     assert_eq!(
         point_watch_socket_for_consumer("alarm"),
@@ -230,9 +229,15 @@ fn point_watch_wire_frame_is_explicit_little_endian() {
 }
 
 #[test]
-fn point_watch_rejects_unversioned_and_unknown_kind_frames() {
-    let unversioned = [0_u8; PointWatchEvent::SIZE];
-    assert!(PointWatchEvent::from_bytes(&unversioned).is_err());
+fn point_watch_rejects_invalid_magic_reserved_bytes_and_unknown_kind() {
+    let invalid_magic = [0_u8; PointWatchEvent::SIZE];
+    assert!(PointWatchEvent::from_bytes(&invalid_magic).is_err());
+
+    let mut nonzero_reserved = PointWatchEvent::new(10, PointKind::Telemetry, 7, 42)
+        .expect("event")
+        .to_bytes();
+    nonzero_reserved[14] = 1;
+    assert!(PointWatchEvent::from_bytes(&nonzero_reserved).is_err());
 
     let mut unknown_kind = PointWatchEvent::new(10, PointKind::Telemetry, 7, 42)
         .expect("event")
@@ -256,6 +261,7 @@ fn point_watch_event_matches_only_its_typed_address_in_the_current_manifest() {
 
 #[tokio::test]
 async fn point_watch_listener_delivers_hints_on_an_isolated_socket() {
+    use std::os::unix::fs::PermissionsExt as _;
     use tokio::io::AsyncWriteExt;
 
     let socket = std::path::PathBuf::from(format!(
@@ -281,6 +287,12 @@ async fn point_watch_listener_delivers_hints_on_an_isolated_socket() {
     })
     .await
     .expect("listener bind timeout");
+    let socket_mode = std::fs::symlink_metadata(&socket)
+        .expect("PointWatch socket metadata")
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(socket_mode, 0o600, "PointWatch socket must be owner-only");
     let event = PointWatchEvent::new(10, PointKind::Status, 3, 8).expect("wire event");
     stream
         .write_all(&event.to_bytes())

@@ -36,7 +36,7 @@ impl RuleLiveState for ShmRuleLiveState {
     ) -> Option<(f64, u64)> {
         self.topology
             .load()
-            .read_instance_point(instance_id, instance_type != 0, point_id)
+            .read_rule_instance_point(instance_id, instance_type != 0, point_id)
             .ok()
             .flatten()
     }
@@ -54,7 +54,7 @@ impl RuleLiveState for ShmRuleLiveState {
             return None;
         }
         generation
-            .read_instance_point(instance_id, instance_type != 0, point_id)
+            .read_rule_instance_point(instance_id, instance_type != 0, point_id)
             .ok()
             .flatten()
     }

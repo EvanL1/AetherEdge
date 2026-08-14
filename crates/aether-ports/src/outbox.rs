@@ -1,4 +1,4 @@
-//! Durable store-and-forward capability for unreliable uplinks.
+//! Durable store-and-forward capability for asynchronous destinations.
 
 use aether_domain::TimestampMs;
 use async_trait::async_trait;
@@ -24,7 +24,7 @@ impl OutboxId {
     }
 }
 
-/// Payload waiting to be delivered to an uplink.
+/// Payload waiting to be delivered by its owning composition.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OutboxMessage {
     destination: String,
@@ -33,7 +33,7 @@ pub struct OutboxMessage {
 }
 
 impl OutboxMessage {
-    /// Creates a pending uplink message.
+    /// Creates a pending delivery message.
     pub fn new(
         destination: impl Into<String>,
         payload: impl Into<Vec<u8>>,
@@ -65,7 +65,7 @@ impl OutboxMessage {
     }
 }
 
-/// Stored message returned to an uplink worker.
+/// Stored message returned to a delivery worker.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OutboxEntry {
     id: OutboxId,

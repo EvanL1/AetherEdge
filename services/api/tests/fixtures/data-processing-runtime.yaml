@@ -1,5 +1,5 @@
 # Industry-neutral runtime fixture for composition-root contract tests.
-schema: aether.data-processing-runtime.v1
+schema: aether.data-processing-runtime
 
 history:
   path: /app/data/aether-history.db
@@ -22,7 +22,7 @@ routes:
     task:
       id: example.signal-forecast
       revision: 1
-      processor_contract: aether.data-processing.forecast.v1
+      processor_contract: aether.data-processing.forecast
       target:
         name: signal
         unit: "1"
@@ -130,7 +130,7 @@ routes:
       endpoint: http://127.0.0.1:8989/
       id: example-forecast-processor
       version: 0.1.0
-      contract: aether.data-processing.forecast.v1
+      contract: aether.data-processing.forecast
       requires_artifact: true
       boundary: local
       max_frame_cells: 5000

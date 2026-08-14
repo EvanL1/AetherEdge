@@ -375,12 +375,8 @@ fn compile_point_mapping(
     let data_type = match values.get("data_type") {
         None => default_data_type,
         Some(serde_json::Value::String(value)) if value == "float" => JsonDataType::Float,
-        Some(serde_json::Value::String(value)) if matches!(value.as_str(), "int" | "integer") => {
-            JsonDataType::Int
-        },
-        Some(serde_json::Value::String(value)) if matches!(value.as_str(), "bool" | "boolean") => {
-            JsonDataType::Bool
-        },
+        Some(serde_json::Value::String(value)) if value == "int" => JsonDataType::Int,
+        Some(serde_json::Value::String(value)) if value == "bool" => JsonDataType::Bool,
         _ => {
             return Err(invalid_stored_mapping(
                 point_id,
@@ -832,6 +828,27 @@ mod tests {
         let payload = br#"{"status": true}"#;
         let batch = mapper.parse(payload).unwrap();
         assert_eq!(batch.iter().next().unwrap().value.as_bool(), Some(true));
+    }
+
+    #[test]
+    fn mapping_data_type_rejects_retired_spellings() {
+        let mut runtime = runtime_snapshot();
+        for retired in ["integer", "boolean"] {
+            runtime.telemetry_points.clear();
+            runtime.telemetry_points.push(TelemetryPoint {
+                base: point(
+                    105,
+                    Some(&format!(
+                        r#"{{"json_path":"$.value","data_type":"{retired}"}}"#
+                    )),
+                ),
+                scale: 1.0,
+                offset: 0.0,
+                data_type: "float64".to_string(),
+                reverse: false,
+            });
+            assert!(JsonMapper::from_runtime_config(&runtime).is_err());
+        }
     }
 
     #[test]

@@ -25,6 +25,49 @@ struct PublisherTarget {
     sender: mpsc::Sender<PointWatchEvent>,
 }
 
+struct PreparedDrainTarget {
+    receiver: mpsc::Receiver<PointWatchEvent>,
+    socket_path: PathBuf,
+}
+
+/// PointWatch drain workers constructed without starting asynchronous work.
+///
+/// Composition roots can publish and validate every fallible authority before
+/// calling [`Self::spawn`], preventing an initialization error from detaching
+/// already-running socket workers.
+pub struct PreparedPointWatchDrains {
+    targets: Vec<PreparedDrainTarget>,
+    dropped_count: Arc<AtomicU64>,
+}
+
+impl PreparedPointWatchDrains {
+    /// Starts every prepared consumer drain under one observed task.
+    #[must_use]
+    pub fn spawn(self, shutdown: CancellationToken) -> tokio::task::JoinHandle<()> {
+        let Self {
+            targets,
+            dropped_count,
+        } = self;
+        tokio::spawn(async move {
+            // JoinSet owns its children: aborting this aggregate task drops
+            // the set and aborts every socket drain instead of detaching it.
+            let mut drains = tokio::task::JoinSet::new();
+            for target in targets {
+                drains.spawn(drain_target(
+                    target.receiver,
+                    target.socket_path,
+                    Arc::clone(&dropped_count),
+                    shutdown.clone(),
+                ));
+            }
+            while drains.join_next().await.is_some() {
+                // Individual drain errors are JoinError-only because the
+                // worker returns (). Continue observing every owned child.
+            }
+        })
+    }
+}
+
 /// Non-blocking fanout from committed acquisition samples to isolated
 /// consumer PointWatch sockets.
 pub struct PointWatchPublisher {
@@ -40,6 +83,16 @@ impl PointWatchPublisher {
         target_configs: Vec<(Arc<SubscriptionBitmap>, PathBuf)>,
         shutdown: CancellationToken,
     ) -> (Arc<Self>, tokio::task::JoinHandle<()>) {
+        let (publisher, prepared) = Self::prepare_with_fanout(target_configs);
+        let task = prepared.spawn(shutdown);
+        (publisher, task)
+    }
+
+    /// Builds bounded fanout queues without spawning socket drain workers.
+    #[must_use]
+    pub fn prepare_with_fanout(
+        target_configs: Vec<(Arc<SubscriptionBitmap>, PathBuf)>,
+    ) -> (Arc<Self>, PreparedPointWatchDrains) {
         let dropped_count = Arc::new(AtomicU64::new(0));
         let mut targets = Vec::with_capacity(target_configs.len());
         let mut drains = Vec::with_capacity(target_configs.len());
@@ -49,23 +102,22 @@ impl PointWatchPublisher {
                 subscriptions,
                 sender,
             });
-            drains.push(tokio::spawn(drain_target(
+            drains.push(PreparedDrainTarget {
                 receiver,
                 socket_path,
-                Arc::clone(&dropped_count),
-                shutdown.clone(),
-            )));
+            });
         }
         let publisher = Arc::new(Self {
             targets,
-            dropped_count,
+            dropped_count: Arc::clone(&dropped_count),
         });
-        let task = tokio::spawn(async move {
-            for drain in drains {
-                let _ = drain.await;
-            }
-        });
-        (publisher, task)
+        (
+            publisher,
+            PreparedPointWatchDrains {
+                targets: drains,
+                dropped_count,
+            },
+        )
     }
 
     /// Returns the number of hints dropped before complete UDS delivery.

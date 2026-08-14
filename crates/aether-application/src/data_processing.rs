@@ -60,7 +60,7 @@ impl DataProcessingRoute {
         )
         .map_err(|_| {
             ApplicationError::InvalidProcessingConfiguration(
-                "route cannot be represented by the v1 processor contract".to_string(),
+                "route cannot be represented by the processor contract".to_string(),
             )
         })?;
         let maximum_frame_cells = maximum_task_cell_count(&task)?;
@@ -1251,7 +1251,7 @@ impl DataProcessingApplication {
 }
 
 fn stable_processing_id(scope: &str, outer_id: &str, input_digest: &str) -> String {
-    let name = format!("aether.data-processing.v1\0{scope}\0{outer_id}\0{input_digest}");
+    let name = format!("aether.data-processing\0{scope}\0{outer_id}\0{input_digest}");
     Uuid::new_v5(&Uuid::NAMESPACE_URL, name.as_bytes()).to_string()
 }
 
@@ -1522,7 +1522,7 @@ fn validate_processor_result(
 ) -> Result<(), ApplicationError> {
     encode_result(result).map_err(|_| {
         ApplicationError::InvalidProcessorResult(
-            "processor result violates the versioned wire contract".to_string(),
+            "processor result violates the wire contract".to_string(),
         )
     })?;
     let descriptor = route.processor.descriptor();

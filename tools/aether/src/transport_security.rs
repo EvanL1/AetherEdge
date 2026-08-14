@@ -7,8 +7,8 @@ use anyhow::{Context, Result, bail};
 /// Refuses to attach a Bearer credential to remote plaintext HTTP.
 ///
 /// Direct service ports are loopback interfaces. A remote command must use a
-/// certificate-validated HTTPS ingress; read-only compatibility queries do not
-/// call this guard because they carry no access token.
+/// certificate-validated HTTPS ingress; unauthenticated read-only queries do
+/// not call this guard because they carry no access token.
 pub(crate) fn require_secure_bearer_transport(base_url: &str) -> Result<()> {
     let url = reqwest::Url::parse(base_url)
         .with_context(|| format!("invalid governed service URL `{base_url}`"))?;

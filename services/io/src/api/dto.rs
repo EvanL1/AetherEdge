@@ -9,8 +9,7 @@ use utoipa::ToSchema;
 
 pub use crate::core::config::{ChannelConfig, ChannelCore, ChannelLoggingConfig};
 pub use common::{
-    AppError, ComponentHealth, ErrorInfo, ErrorResponse, HealthStatus, PaginatedResponse,
-    ServiceStatus as SharedServiceStatus, SuccessResponse,
+    AppError, ErrorInfo, ErrorResponse, HealthStatus, PaginatedResponse, SuccessResponse,
 };
 
 /// service status response
@@ -23,6 +22,82 @@ pub struct ServiceStatus {
     pub start_time: DateTime<Utc>,
     pub channels: u32,
     pub active_channels: u32,
+    #[serde(default)]
+    pub data_event_ingress: DataEventIngressStatus,
+    /// Durable command admission and outcome-ledger telemetry.
+    #[serde(default)]
+    pub command_ledger: CommandLedgerStatus,
+    /// Machine-readable command-listener telemetry.
+    #[serde(default)]
+    pub command_listener: CommandListenerStatus,
+}
+
+/// Aggregate admission telemetry across event-driven IO channels.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
+pub struct DataEventIngressStatus {
+    pub channels: u32,
+    pub unhealthy_channels: u32,
+    pub closed_channels: u32,
+    pub saturated_channels: u32,
+    pub accepted: u64,
+    pub coalesced: u64,
+    pub dropped_full: u64,
+    pub dropped_closed: u64,
+    pub dropped_contended: u64,
+    pub oversized: u64,
+    pub discarded_on_close: u64,
+    pub pending: u64,
+    pub high_watermark: u64,
+    pub capacity: u64,
+}
+
+/// Operational view of the bounded durable command ledger.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
+pub struct CommandLedgerStatus {
+    pub configured: bool,
+    pub available: bool,
+    pub total: u64,
+    pub capacity: u64,
+    pub received: u64,
+    pub queued: u64,
+    pub dispatching: u64,
+    pub succeeded: u64,
+    pub failed: u64,
+    pub expired: u64,
+    pub possibly_applied: u64,
+    pub oldest_nonterminal_updated_at_ms: Option<u64>,
+    pub oldest_terminal_updated_at_ms: Option<u64>,
+    pub capacity_rejections: u64,
+    pub cleanup_failures: u64,
+    pub outcome_persistence_failures: u64,
+    pub outcome_persistence_pending: u64,
+    pub error: Option<String>,
+}
+
+/// Bounded command-listener resources and traffic telemetry.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
+pub struct CommandListenerStatus {
+    pub configured: bool,
+    pub running: bool,
+    pub active_connections: u64,
+    pub connection_capacity: u64,
+    pub rejected_connections: u64,
+    pub idle_timeouts: u64,
+    pub frames_total: u64,
+    pub last_frame_at_ms: Option<u64>,
+}
+
+/// Public command outcome without the internal idempotency payload digest.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct CommandOutcomeResponse {
+    pub command_id: String,
+    pub channel_id: Option<u32>,
+    pub state: String,
+    pub received_at_ms: u64,
+    pub accepted_at_ms: Option<u64>,
+    pub updated_at_ms: u64,
+    pub expires_at_ms: u64,
+    pub diagnostic: Option<String>,
 }
 
 /// channel status response for list endpoint
@@ -53,74 +128,6 @@ pub struct ChannelStatusDto {
     #[schema(value_type = String, format = "date-time")]
     pub last_update: DateTime<Utc>,
     pub statistics: HashMap<String, serde_json::Value>,
-}
-
-/// Create a health status with memory and CPU checks
-pub fn create_health_status(
-    status: &str,
-    uptime: u64,
-    memory_usage: u64,
-    cpu_usage: f64,
-) -> HealthStatus {
-    let service_status = match status {
-        "healthy" | "ok" | "OK" => SharedServiceStatus::Healthy,
-        "degraded" => SharedServiceStatus::Degraded,
-        _ => SharedServiceStatus::Unhealthy,
-    };
-
-    let health_check = |ok: bool, msg: String| ComponentHealth {
-        status: if ok {
-            SharedServiceStatus::Healthy
-        } else {
-            SharedServiceStatus::Degraded
-        },
-        message: Some(msg),
-        duration_ms: None,
-    };
-
-    let checks = HashMap::from([
-        (
-            "memory".into(),
-            health_check(
-                memory_usage < 1_073_741_824,
-                format!("Memory usage: {} bytes", memory_usage),
-            ),
-        ),
-        (
-            "cpu".into(),
-            health_check(cpu_usage < 80.0, format!("CPU usage: {:.2}%", cpu_usage)),
-        ),
-    ]);
-
-    HealthStatus {
-        status: service_status,
-        service: "aether-io".to_string(),
-        version: env!("CARGO_PKG_VERSION").to_string(),
-        uptime_seconds: uptime,
-        timestamp: chrono::Utc::now(),
-        checks,
-        system: Some(serde_json::json!({
-            "process_cpu_percent": cpu_usage,
-            "process_memory_mb": memory_usage / 1024 / 1024
-        })),
-    }
-}
-
-/// Governed channel lifecycle operation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ChannelOperationKind {
-    Start,
-    Stop,
-    Restart,
-}
-
-/// Channel operation request.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct ChannelOperation {
-    /// Governed operation: `start`, `stop`, or `restart`.
-    #[schema(example = "restart")]
-    pub operation: ChannelOperationKind,
 }
 
 /// Channel creation request
@@ -158,9 +165,12 @@ pub struct ChannelCreateRequest {
     /// Modbus TCP requires `host: non-empty string` and
     /// `port: integer 1..65535`; Modbus RTU requires
     /// `device: non-empty string` and `baud_rate: integer 1..4294967295`.
-    /// Optional `poll_interval_ms` and `read_timeout_ms` are integers in
-    /// `1..86400000`. See `GET /api/protocols` for all supported parameters.
-    #[schema(value_type = Object, example = json!({"host": "192.168.1.100", "port": 502, "read_timeout_ms": 3000, "poll_interval_ms": 1000}))]
+    /// Optional `poll_interval_ms`, `connect_timeout_ms`, `read_timeout_ms`,
+    /// and `write_timeout_ms` are integers in `1..86400000`.
+    /// `write_timeout_ms` includes the response acknowledgement. Read and write
+    /// deadlines are independent and each defaults to 3000 ms. See
+    /// `GET /api/protocols` for all supported parameters.
+    #[schema(value_type = Object, example = json!({"host": "192.168.1.100", "port": 502, "connect_timeout_ms": 5000, "read_timeout_ms": 3000, "write_timeout_ms": 3000, "poll_interval_ms": 1000}))]
     pub parameters: HashMap<String, serde_json::Value>,
 
     /// Logging configuration (optional, defaults to disabled)
@@ -238,33 +248,15 @@ pub struct ChannelCompletionAudit {
 /// Receipt returned after a channel desired-state mutation was accepted.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ChannelMutationResult {
-    /// Legacy-compatible channel ID field.
-    #[schema(maximum = 9999)]
-    pub id: u32,
-    /// Explicit typed receipt channel identity.
     #[schema(maximum = 9999)]
     pub channel_id: u32,
-    /// Request-provided name retained for create/update wire compatibility.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-    /// Request-provided description retained for create/update wire compatibility.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    /// Request-provided protocol retained for create/update wire compatibility.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub protocol: Option<String>,
     #[schema(format = "uuid")]
     pub request_id: String,
     pub operation: ChannelMutationOperation,
     #[schema(minimum = 1, maximum = 9223372036854775807_i64)]
     pub resulting_revision: u64,
-    /// Legacy-compatible desired enabled field.
-    pub enabled: bool,
     pub desired_enabled: bool,
     pub runtime_projection: ChannelRuntimeProjectionResult,
-    /// Legacy-compatible runtime status (`running`, `connecting`, `stopped`,
-    /// `degraded`, or `removed`). New clients should use runtime_projection.
-    pub runtime_status: String,
     pub reconciliation_required: bool,
     pub completion_audit: ChannelCompletionAudit,
     /// Channel mutations are non-idempotent and never advertised as safe for
@@ -347,51 +339,6 @@ pub struct ChannelReconciliationResponse {
     #[schema(default = true, example = true)]
     pub success: bool,
     pub data: ChannelReconciliationResult,
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    #[schema(value_type = Object)]
-    pub metadata: HashMap<String, serde_json::Value>,
-}
-
-/// Channel lifecycle operation accepted by the compatibility control route.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ChannelControlOperationResult {
-    Start,
-    Stop,
-    Restart,
-}
-
-/// Unified receipt for governed start, stop, and restart operations.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct ChannelControlResult {
-    #[schema(maximum = 9999)]
-    pub channel_id: u32,
-    #[schema(format = "uuid")]
-    pub request_id: String,
-    pub operation: ChannelControlOperationResult,
-    /// Desired-state revision observed after the operation. This can be null
-    /// when a reconciliation observes an absent channel without a tombstone.
-    #[schema(minimum = 1, maximum = 9223372036854775807_i64)]
-    pub desired_revision: Option<u64>,
-    /// Desired enabled state observed after the operation, or null when the
-    /// authoritative channel definition is absent.
-    pub desired_enabled: Option<bool>,
-    pub runtime_projection: ChannelRuntimeProjectionResult,
-    pub reconciliation_required: bool,
-    pub completion_audit: ChannelCompletionAudit,
-    /// Lifecycle operations can reconnect a protocol session and are never
-    /// safe for automatic retry.
-    #[schema(default = false, example = false)]
-    pub retryable: bool,
-    pub message: String,
-}
-
-/// Standard successful lifecycle-control response shown by Swagger UI.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct ChannelControlResponse {
-    #[schema(default = true, example = true)]
-    pub success: bool,
-    pub data: ChannelControlResult,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     #[schema(value_type = Object)]
     pub metadata: HashMap<String, serde_json::Value>,
@@ -706,6 +653,9 @@ mod tests {
             start_time,
             channels: 5,
             active_channels: 3,
+            data_event_ingress: DataEventIngressStatus::default(),
+            command_ledger: CommandLedgerStatus::default(),
+            command_listener: CommandListenerStatus::default(),
         };
 
         let serialized = serde_json::to_string(&status).unwrap();
@@ -734,43 +684,6 @@ mod tests {
         assert!(serialized.contains('1'));
         assert!(serialized.contains("modbus_tcp"));
         assert!(serialized.contains("true"));
-    }
-
-    #[test]
-    fn test_health_status_serialization() {
-        let health = create_health_status("healthy", 7200, 1_024_000, 15.5);
-
-        // Verify health status fields (without comparing enums)
-        assert_eq!(health.service, "aether-io");
-        assert_eq!(health.uptime_seconds, 7200);
-        assert!(health.checks.contains_key("memory"));
-        assert!(health.checks.contains_key("cpu"));
-
-        // Verify serialization contains expected values
-        let serialized = serde_json::to_string(&health).unwrap();
-        assert!(serialized.contains("healthy"));
-        assert!(serialized.contains("7200"));
-        assert!(serialized.contains("aether-io"));
-    }
-
-    #[test]
-    fn test_channel_operation_deserialization() {
-        let json_data = r#"{"operation": "start"}"#;
-        let operation: ChannelOperation = serde_json::from_str(json_data).unwrap();
-        assert_eq!(operation.operation, ChannelOperationKind::Start);
-
-        let json_data = r#"{"operation": "stop"}"#;
-        let operation: ChannelOperation = serde_json::from_str(json_data).unwrap();
-        assert_eq!(operation.operation, ChannelOperationKind::Stop);
-
-        let json_data = r#"{"operation": "restart"}"#;
-        let operation: ChannelOperation = serde_json::from_str(json_data).unwrap();
-        assert_eq!(operation.operation, ChannelOperationKind::Restart);
-
-        assert!(
-            serde_json::from_str::<ChannelOperation>(r#"{"operation": "invalid"}"#).is_err(),
-            "unsupported lifecycle operations must be rejected by the typed DTO"
-        );
     }
 
     #[test]

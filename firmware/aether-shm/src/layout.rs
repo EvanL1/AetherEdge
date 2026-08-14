@@ -8,9 +8,6 @@ use core::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 /// Eight-byte identity for the Aether firmware shared-memory ABI.
 pub const FIRMWARE_SHM_MAGIC: [u8; 8] = *b"AETHFWSM";
 
-/// Current firmware shared-memory ABI version.
-pub const FIRMWARE_SHM_VERSION: u32 = 2;
-
 /// Exact byte size of the firmware shared-memory header.
 pub const FIRMWARE_HEADER_SIZE: usize = 16;
 
@@ -24,7 +21,7 @@ pub const MAX_FIRMWARE_SLOT_COUNT: u32 = max_slot_count_for_size_limit(usize::MA
 #[repr(C, align(8))]
 pub(crate) struct FirmwareShmHeader {
     magic: [u8; 8],
-    version: u32,
+    reserved: u32,
     slot_count: u32,
 }
 
@@ -32,23 +29,21 @@ impl FirmwareShmHeader {
     pub(crate) const fn new(slot_count: u32) -> Self {
         Self {
             magic: FIRMWARE_SHM_MAGIC,
-            version: FIRMWARE_SHM_VERSION,
+            reserved: 0,
             slot_count,
         }
     }
 
     #[inline]
     pub(crate) fn is_valid(&self, slot_count: u32) -> bool {
-        self.magic == FIRMWARE_SHM_MAGIC
-            && self.version == FIRMWARE_SHM_VERSION
-            && self.slot_count == slot_count
+        self.magic == FIRMWARE_SHM_MAGIC && self.reserved == 0 && self.slot_count == slot_count
     }
 }
 
 const _: () = assert!(core::mem::size_of::<FirmwareShmHeader>() == FIRMWARE_HEADER_SIZE);
 const _: () = assert!(core::mem::align_of::<FirmwareShmHeader>() == 8);
 const _: () = assert!(core::mem::offset_of!(FirmwareShmHeader, magic) == 0);
-const _: () = assert!(core::mem::offset_of!(FirmwareShmHeader, version) == 8);
+const _: () = assert!(core::mem::offset_of!(FirmwareShmHeader, reserved) == 8);
 const _: () = assert!(core::mem::offset_of!(FirmwareShmHeader, slot_count) == 12);
 
 /// One firmware point value and its stable point metadata.
@@ -232,7 +227,6 @@ mod tests {
     #[test]
     fn firmware_layout_has_its_own_identity_and_exact_sizes() {
         assert_eq!(FIRMWARE_SHM_MAGIC, *b"AETHFWSM");
-        assert_eq!(FIRMWARE_SHM_VERSION, 2);
         assert_eq!(core::mem::size_of::<FirmwareShmHeader>(), 16);
         assert_eq!(core::mem::size_of::<FirmwarePointSlot>(), 32);
         assert_eq!(firmware_shm_size(0), Some(16));
@@ -260,12 +254,12 @@ mod tests {
     }
 
     #[test]
-    fn header_rejects_a_different_capacity_or_version() {
+    fn header_rejects_a_different_capacity_or_nonzero_reserved_bytes() {
         let mut header = FirmwareShmHeader::new(8);
         assert!(header.is_valid(8));
         assert!(!header.is_valid(7));
 
-        header.version += 1;
+        header.reserved = 1;
         assert!(!header.is_valid(8));
     }
 

@@ -44,14 +44,6 @@ pub enum CloudLinkCodecError {
         /// Rejected discriminator.
         found: String,
     },
-    /// The candidate protocol version is not supported.
-    #[error("unsupported CloudLink protocol version {found:?}; supported version is {supported}")]
-    UnsupportedProtocolVersion {
-        /// Rejected version.
-        found: String,
-        /// Implemented version.
-        supported: &'static str,
-    },
     /// One closed field violated a semantic bound.
     #[error("invalid CloudLink field {field}: {message}")]
     InvalidField {
@@ -84,10 +76,10 @@ pub enum CloudLinkCodecError {
     #[error("CloudLink point values must be finite")]
     NonFinitePointValue,
     /// Command/action points cannot become a control channel via telemetry.
-    #[error("CloudLink v1 business telemetry cannot contain command or action points")]
+    #[error("CloudLink business telemetry cannot contain command or action points")]
     ControlPointForbidden,
     /// Canonical content disagrees with its sealed digest.
-    #[error("CloudLink business digest does not match canonical versioned content")]
+    #[error("CloudLink business digest does not match canonical content")]
     DigestMismatch,
     /// A response belongs to another or stale session.
     #[error("CloudLink session epoch or identity does not match the current verified session")]
@@ -95,9 +87,6 @@ pub enum CloudLinkCodecError {
     /// An explicit protocol deadline has been reached or passed.
     #[error("CloudLink message deadline has expired")]
     MessageExpired,
-    /// A session acceptance did not select an offered version.
-    #[error("CloudLink session selected a protocol version the edge did not offer")]
-    VersionNegotiationFailed,
     /// Runtime Manifest bytes do not match their existing canonical checksum.
     #[error("CloudLink Runtime Manifest checksum is invalid")]
     RuntimeManifestChecksum,
@@ -116,7 +105,7 @@ impl CloudLinkCodecError {
     pub fn failure_code(&self) -> &'static str {
         match self {
             Self::MessageTooLarge { .. } | Self::TooManySamples { .. } => "FIELD_BOUND",
-            Self::IntegrationExtensionNotEnabled => "UNSUPPORTED_VERSION",
+            Self::IntegrationExtensionNotEnabled => "EXTENSION_DISABLED",
             Self::IntegrationStreamBindingConflict => "STREAM_BINDING_CONFLICT",
             Self::IntegrationBatchIdMismatch => "BATCH_ID_MISMATCH",
             Self::IntegrationContract { source } => source.code().as_str(),
@@ -125,9 +114,6 @@ impl CloudLinkCodecError {
             },
             Self::InvalidJson { .. } | Self::CanonicalJson { .. } => "INVALID_JSON",
             Self::UnsupportedMessage { .. } => "UNSUPPORTED_MESSAGE",
-            Self::UnsupportedProtocolVersion { .. } | Self::VersionNegotiationFailed => {
-                "UNSUPPORTED_VERSION"
-            },
             Self::InvalidField { field, message }
                 if matches!(*field, "gateway_key_id" | "gateway_signature")
                     && message.contains("required") =>

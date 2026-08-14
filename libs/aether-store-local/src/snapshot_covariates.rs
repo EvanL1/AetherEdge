@@ -16,7 +16,7 @@ use aether_ports::{
 use async_trait::async_trait;
 use serde::Deserialize;
 
-const SNAPSHOT_SCHEMA: &str = "aether.covariate-snapshot.v1";
+const SNAPSHOT_SCHEMA: &str = "aether.covariate-snapshot";
 const QUARTER_HOUR: &str = "quarter_hour";
 const QUARTER_HOUR_SOURCE: &str = "calendar.utc.quarter_hour";
 const QUARTER_HOUR_MS: u64 = 15 * 60 * 1_000;
@@ -331,7 +331,7 @@ struct LoadedSnapshot {
 impl LoadedSnapshot {
     fn from_wire(snapshot: SnapshotWire, limits: SnapshotCovariateLimits) -> PortResult<Self> {
         if snapshot.schema != SNAPSHOT_SCHEMA {
-            return Err(invalid_data("covariate snapshot schema is unsupported"));
+            return Err(invalid_data("covariate snapshot schema is invalid"));
         }
         if snapshot.bindings.len() > limits.max_bindings {
             return Err(rejected("snapshot exceeds its binding bound"));
@@ -400,7 +400,7 @@ pub struct SnapshotCovariateSource {
 }
 
 impl SnapshotCovariateSource {
-    /// Configures a reloadable `aether.covariate-snapshot.v1` JSON path.
+    /// Configures a reloadable `aether.covariate-snapshot` JSON path.
     ///
     /// The file need not exist yet. File availability and contents are checked
     /// by each [`CovariateSource::resolve`] call.

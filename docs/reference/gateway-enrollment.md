@@ -147,7 +147,7 @@ protection.
 Endpoint and headers:
 
 ```http
-POST {cloudOrigin}/api/v1/fleet/enrollment-claims:claim
+POST {cloudOrigin}/api/fleet/enrollment-claims:claim
 Content-Type: application/json
 Idempotency-Key: <stable UUID>
 ```
@@ -156,7 +156,7 @@ Request:
 
 ```json
 {
-  "schema": "aether.cloud.gateway-enrollment-claim.v1",
+  "schema": "aether.cloud.gateway-enrollment-claim",
   "tenantId": "11111111-1111-4111-8111-111111111111",
   "projectId": "22222222-2222-4222-8222-222222222222",
   "gatewayId": "33333333-3333-4333-8333-333333333333",
@@ -173,7 +173,7 @@ Accepted success response:
 
 ```json
 {
-  "schema": "aether.cloud.gateway-enrollment-claimed.v1",
+  "schema": "aether.cloud.gateway-enrollment-claimed",
   "gatewayId": "33333333-3333-4333-8333-333333333333",
   "state": "claimed",
   "revision": 1

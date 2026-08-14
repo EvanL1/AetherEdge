@@ -142,7 +142,7 @@ pub async fn get_channel_mappings_handler(
                                 "function_code": 3,
                                 "register_address": 102,
                                 "data_type": "uint16",
-                                "byte_order": "AB"
+                                "byte_order": "ABCD"
                             }
                         }
                     ],
@@ -164,7 +164,7 @@ pub async fn get_channel_mappings_handler(
                                 "function_code": 5,
                                 "register_address": 0,
                                 "data_type": "uint16",
-                                "byte_order": "AB"
+                                "byte_order": "ABCD"
                             }
                         },
                         {
@@ -175,7 +175,7 @@ pub async fn get_channel_mappings_handler(
                                 "function_code": 5,
                                 "register_address": 1,
                                 "data_type": "uint16",
-                                "byte_order": "AB"
+                                "byte_order": "ABCD"
                             }
                         }
                     ],
@@ -208,7 +208,7 @@ pub async fn get_channel_mappings_handler(
                                 "function_code": 6,
                                 "register_address": 202,
                                 "data_type": "int16",
-                                "byte_order": "AB"
+                                "byte_order": "ABCD"
                             }
                         }
                     ],
@@ -241,7 +241,7 @@ pub async fn get_channel_mappings_handler(
                                 "function_code": 2,
                                 "register_address": 100,
                                 "data_type": "uint16",
-                                "byte_order": "AB"
+                                "byte_order": "ABCD"
                             }
                         },
                         {
@@ -252,7 +252,7 @@ pub async fn get_channel_mappings_handler(
                                 "function_code": 5,
                                 "register_address": 0,
                                 "data_type": "uint16",
-                                "byte_order": "AB"
+                                "byte_order": "ABCD"
                             }
                         },
                         {
@@ -406,7 +406,7 @@ pub async fn update_channel_mappings_handler(
     Query(reload_query): Query<crate::api::dto::AutoReloadQuery>,
     Extension(boundary): Extension<crate::api::handlers::point_handlers::PointTopologyHttpBoundary>,
     headers: HeaderMap,
-    Json(mut req): Json<crate::api::dto::MappingBatchUpdateRequest>,
+    Json(req): Json<crate::api::dto::MappingBatchUpdateRequest>,
 ) -> Result<Json<SuccessResponse<crate::api::dto::MappingBatchUpdateResult>>, AppError> {
     // 1. Verify channel exists and get protocol
     let channel_info: Option<(String, bool)> =
@@ -425,12 +425,6 @@ pub async fn update_channel_mappings_handler(
             channel_id
         )));
     };
-
-    // 1.5. Normalize protocol_data types BEFORE validation
-    // This ensures validation works with properly typed numeric fields
-    for item in req.mappings.iter_mut() {
-        normalize_protocol_data(&protocol, &mut item.protocol_data);
-    }
 
     // 2. Validate input when in Replace mode. In Merge mode, we will validate after merging with existing.
     if matches!(req.mode, crate::api::dto::MappingUpdateMode::Replace) {
@@ -505,7 +499,6 @@ pub async fn update_channel_mappings_handler(
                         continue;
                     },
                 }
-                normalize_protocol_data(&protocol, &mut merged);
                 if let Err(error) = crate::point_topology::validate_protocol_mapping(
                     &protocol,
                     kind,
@@ -629,64 +622,4 @@ fn validate_mappings(
             .map(|error| error.message().to_string())
         })
         .collect()
-}
-
-/// Normalize protocol_data field types to ensure consistent JSON storage
-///
-/// Ensures numeric fields are stored as JSON numbers (not strings) for consistency.
-/// This prevents type mismatches between GET and PUT operations.
-///
-/// ## Type Rules
-/// ### Modbus Protocol
-/// - `slave_id`: number
-/// - `function_code`: number
-/// - `register_address`: number
-/// - `bit_position`: number (if present)
-/// - `byte_order`: string (unchanged)
-/// - `data_type`: string (unchanged)
-///
-/// ### CAN Protocol
-/// - `can_id`: number
-/// - `start_bit`: number
-/// - `bit_length`: number
-/// - `scale`: number
-/// - `offset`: number
-/// - `byte_order`: string (unchanged)
-/// - `data_type`: string (unchanged)
-/// - `signed`: boolean (unchanged)
-///
-fn normalize_protocol_data(protocol: &str, value: &mut serde_json::Value) {
-    use serde_json::{Number, Value};
-
-    let Some(factory) = crate::protocols::get_protocol_registry().factory(protocol) else {
-        return;
-    };
-    let numeric_fields = factory.numeric_mapping_fields();
-    if numeric_fields.is_empty() {
-        return;
-    }
-
-    let to_number = |v: &Value| -> Option<Number> {
-        match v {
-            Value::String(s) => {
-                if let Ok(n) = s.parse::<i64>() {
-                    Some(Number::from(n))
-                } else if let Ok(f) = s.parse::<f64>() {
-                    Number::from_f64(f)
-                } else {
-                    None
-                }
-            },
-            _ => None,
-        }
-    };
-
-    let Some(obj) = value.as_object_mut() else {
-        return;
-    };
-    for field in numeric_fields {
-        if let Some(normalized) = obj.get(*field).and_then(&to_number) {
-            obj.insert((*field).to_owned(), Value::Number(normalized));
-        }
-    }
 }

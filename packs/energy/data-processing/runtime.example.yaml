@@ -1,7 +1,7 @@
 # Synthetic commissioning template. Copy to the configured runtime path, replace
 # every example logical/physical route and artifact digest, then validate against
 # the site's Aether database before setting AETHER_DATA_PROCESSING_ENABLED=true.
-schema: aether.data-processing-runtime.v1
+schema: aether.data-processing-runtime
 
 history:
   path: /app/data/aether-history.db
@@ -24,7 +24,7 @@ routes:
     task:
       id: energy.site-load-forecast
       revision: 1
-      processor_contract: aether.data-processing.forecast.v1
+      processor_contract: aether.data-processing.forecast
       target:
         name: load
         unit: kW
@@ -134,7 +134,7 @@ routes:
       endpoint: http://127.0.0.1:8989/
       id: load-forecasting-edge
       version: 0.1.0
-      contract: aether.data-processing.forecast.v1
+      contract: aether.data-processing.forecast
       requires_artifact: true
       boundary: local
       max_frame_cells: 5000

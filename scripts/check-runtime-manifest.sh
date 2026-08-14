@@ -6,14 +6,19 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 echo "Checking runtime-manifest schema and generated artifact..."
-python3 -m json.tool contracts/runtime/runtime-manifest.v1.schema.json >/dev/null
-python3 -m json.tool config.template/runtime-manifest.json >/dev/null
-if command -v uvx >/dev/null 2>&1; then
-    uvx --from check-jsonschema check-jsonschema --check-metaschema \
-        contracts/runtime/runtime-manifest.v1.schema.json
-    uvx --from check-jsonschema check-jsonschema \
-        --schemafile contracts/runtime/runtime-manifest.v1.schema.json \
-        config.template/runtime-manifest.json config.e2e/runtime-manifest.json
+cargo run --quiet --locked -p aether-runtime-catalog \
+    --features schema-validation --bin aether-runtime-manifest -- \
+    validate-json-schema \
+    --schema contracts/runtime/runtime-manifest.schema.json \
+    --instance config.template/runtime-manifest.json \
+    --instance config.e2e/runtime-manifest.json
+
+DEFAULT_RUNTIME_CATALOG_TREE=$(cargo tree --quiet --locked \
+    -p aether-runtime-catalog -e normal)
+if rg -q '^jsonschema v|[[:space:]]jsonschema v' \
+    <<<"$DEFAULT_RUNTIME_CATALOG_TREE"; then
+    echo "ERROR: schema validation entered the runtime catalog default dependency graph" >&2
+    exit 1
 fi
 
 AETHER_VERSION=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)
@@ -21,11 +26,12 @@ if [[ -z "$AETHER_VERSION" ]]; then
     echo "ERROR: workspace Aether version is unavailable" >&2
     exit 1
 fi
-cargo run --quiet -p aether-runtime-catalog --bin aether-runtime-manifest -- \
+cargo run --quiet --locked -p aether-runtime-catalog --bin aether-runtime-manifest -- \
     verify --path config.template/runtime-manifest.json \
     --aether-version "$AETHER_VERSION" >/dev/null
 
-cargo test --quiet -p aether-runtime-catalog --lib --bins --tests
+cargo test --quiet --locked -p aether-runtime-catalog \
+    --features schema-validation --lib --bins --tests
 ./scripts/test-runtime-manifest.sh
 
 if rg -n 'full_distribution_pack_runtime|FULL_DISTRIBUTION_PROTOCOLS' \

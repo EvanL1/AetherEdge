@@ -27,7 +27,7 @@ use axum::{
     routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
-#[cfg(feature = "openapi")]
+#[cfg(any(feature = "swagger-ui", all(test, feature = "openapi")))]
 use utoipa::OpenApi;
 use uuid::Uuid;
 
@@ -52,7 +52,7 @@ pub(crate) fn router() -> Router<Arc<AppState>> {
         )
 }
 
-#[cfg(feature = "openapi")]
+#[cfg(any(feature = "swagger-ui", all(test, feature = "openapi")))]
 #[derive(OpenApi)]
 #[openapi(
     paths(list_tasks, processor_health, process),
@@ -574,7 +574,7 @@ impl ProcessRequestBody {
 
 #[cfg_attr(feature = "openapi", utoipa::path(
     get,
-    path = "/api/v1/data-processing/tasks",
+    path = "/api/data-processing/tasks",
     params(
         ("x-request-id" = Option<String>, Header, description = "Caller-provided audit correlation ID")
     ),
@@ -597,14 +597,14 @@ async fn list_tasks(
     let context = request_context(&claims, &headers, false)?;
     let tasks = application.list_tasks(&context).await?;
     Ok(Json(TasksResponse {
-        schema: "aether.data-processing.tasks.v1",
+        schema: "aether.data-processing.tasks",
         tasks: tasks.iter().map(TaskResponse::from).collect(),
     }))
 }
 
 #[cfg_attr(feature = "openapi", utoipa::path(
     get,
-    path = "/api/v1/data-processing/processors/health",
+    path = "/api/data-processing/processors/health",
     params(
         ("x-request-id" = Option<String>, Header, description = "Caller-provided audit correlation ID")
     ),
@@ -627,7 +627,7 @@ async fn processor_health(
     let context = request_context(&claims, &headers, false)?;
     let processors = application.processor_health(&context).await?;
     Ok(Json(ProcessorsHealthResponse {
-        schema: "aether.data-processing.processors-health.v1",
+        schema: "aether.data-processing.processors-health",
         processors: processors
             .iter()
             .map(|processor| ProcessorHealthResponse {
@@ -644,7 +644,7 @@ async fn processor_health(
 
 #[cfg_attr(feature = "openapi", utoipa::path(
     post,
-    path = "/api/v1/data-processing/process",
+    path = "/api/data-processing/process",
     params(
         ("x-request-id" = Option<String>, Header, description = "Caller-provided audit correlation ID"),
         ("x-aether-confirmed" = Option<bool>, Header, description = "Explicit confirmation for policies that require it")
@@ -656,7 +656,7 @@ async fn processor_health(
     ),
     responses(
         (status = 200, description = "Validated derived-data envelope", body = serde_json::Value,
-            content_type = "application/vnd.aether.data-processing+json;version=1"),
+            content_type = "application/vnd.aether.data-processing+json"),
         (status = 400, description = "Invalid request", body = ErrorEnvelope),
         (status = 401, description = "Missing or invalid access token"),
         (status = 403, description = "Authenticated actor lacks run permission", body = ErrorEnvelope),
@@ -963,7 +963,7 @@ mod tests {
     }
 
     #[test]
-    fn request_body_is_strict_and_versioned() {
+    fn request_body_is_strict() {
         let unknown = serde_json::from_value::<ProcessRequestBody>(serde_json::json!({
             "task_id": "example.signal-forecast",
             "expected_task_revision": 1,

@@ -8,6 +8,9 @@
 /// - **Storage connection** (`StorageSettings`) – exposed via `/hisApi/storage`.
 use sqlx::SqlitePool;
 use std::borrow::Cow;
+use std::collections::HashMap;
+use std::fmt::Display;
+use std::str::FromStr;
 use tracing::info;
 
 use crate::models::{ServiceConfig, StorageSettings, pattern_serde};
@@ -40,8 +43,8 @@ const DEFAULTS: &[(&str, &str, &str)] = &[
     ),
     (
         "subscribe_patterns",
-        r#"["inst:*:M","inst:*:A"]"#,
-        "JSON logical-series glob patterns to collect",
+        r#"{"inst:*:M":null,"inst:*:A":null}"#,
+        "JSON object mapping logical-series glob patterns to optional intervals",
     ),
     (
         "exclude_patterns",
@@ -110,13 +113,34 @@ pub async fn create_config_table(
 
 // ── Shared internal helper ────────────────────────────────────────────────────
 
-async fn load_all_kv(
-    pool: &SqlitePool,
-) -> anyhow::Result<std::collections::HashMap<String, String>> {
+async fn load_all_kv(pool: &SqlitePool) -> anyhow::Result<HashMap<String, String>> {
     let rows: Vec<(String, String)> = sqlx::query_as("SELECT key, value FROM history_config")
         .fetch_all(pool)
         .await?;
     Ok(rows.into_iter().collect())
+}
+
+fn value_or_default<'a>(
+    values: &'a HashMap<String, String>,
+    key: &str,
+    default: &'static str,
+) -> &'a str {
+    values.get(key).map(String::as_str).unwrap_or(default)
+}
+
+fn parse_value<T>(
+    values: &HashMap<String, String>,
+    key: &str,
+    default: &'static str,
+) -> anyhow::Result<T>
+where
+    T: FromStr,
+    T::Err: Display,
+{
+    let value = value_or_default(values, key, default);
+    value
+        .parse()
+        .map_err(|error| anyhow::anyhow!("invalid history_config {key}={value:?}: {error}"))
 }
 
 async fn upsert_pairs(pool: &SqlitePool, pairs: &[(&str, Cow<'_, str>)]) -> anyhow::Result<()> {
@@ -142,24 +166,26 @@ async fn upsert_pairs(pool: &SqlitePool, pairs: &[(&str, Cow<'_, str>)]) -> anyh
 /// Load operational settings from the DB (`/hisApi/config`).
 pub async fn load_config(pool: &SqlitePool) -> anyhow::Result<ServiceConfig> {
     let map = load_all_kv(pool).await?;
-    let get = |k: &str, d: &str| map.get(k).cloned().unwrap_or_else(|| d.to_string());
 
-    let subscribe_patterns = crate::models::pattern_serde::from_json_str(&get(
+    let subscribe_patterns = crate::models::pattern_serde::from_json_str(value_or_default(
+        &map,
         "subscribe_patterns",
-        r#"["inst:*:M","inst:*:A"]"#,
-    ));
+        r#"{"inst:*:M":null,"inst:*:A":null}"#,
+    ))
+    .map_err(|error| anyhow::anyhow!("invalid history_config subscribe_patterns: {error}"))?;
     let exclude_patterns: Vec<String> =
-        serde_json::from_str(&get("exclude_patterns", "[]")).unwrap_or_default();
+        serde_json::from_str(value_or_default(&map, "exclude_patterns", "[]"))
+            .map_err(|error| anyhow::anyhow!("invalid history_config exclude_patterns: {error}"))?;
 
     let mut cfg = ServiceConfig {
-        collection_interval_secs: get("collection_interval_secs", "30").parse().unwrap_or(30),
-        flush_interval_secs: get("flush_interval_secs", "60").parse().unwrap_or(60),
-        batch_size: get("batch_size", "1000").parse().unwrap_or(1000),
-        cleanup_enabled: get("cleanup_enabled", "true") == "true",
-        cleanup_older_than_days: get("cleanup_older_than_days", "30").parse().unwrap_or(30),
-        default_page_size: get("default_page_size", "100").parse().unwrap_or(100),
-        max_page_size: get("max_page_size", "1000").parse().unwrap_or(1000),
-        max_time_range_days: get("max_time_range_days", "365").parse().unwrap_or(365),
+        collection_interval_secs: parse_value(&map, "collection_interval_secs", "30")?,
+        flush_interval_secs: parse_value(&map, "flush_interval_secs", "60")?,
+        batch_size: parse_value(&map, "batch_size", "1000")?,
+        cleanup_enabled: parse_value(&map, "cleanup_enabled", "true")?,
+        cleanup_older_than_days: parse_value(&map, "cleanup_older_than_days", "30")?,
+        default_page_size: parse_value(&map, "default_page_size", "100")?,
+        max_page_size: parse_value(&map, "max_page_size", "1000")?,
+        max_time_range_days: parse_value(&map, "max_time_range_days", "365")?,
         subscribe_patterns,
         exclude_patterns,
     };
@@ -215,12 +241,11 @@ pub async fn save_config(pool: &SqlitePool, cfg: &ServiceConfig) -> anyhow::Resu
 /// Load storage connection settings from the DB (`/hisApi/storage`).
 pub async fn load_storage(pool: &SqlitePool) -> anyhow::Result<StorageSettings> {
     let map = load_all_kv(pool).await?;
-    let get = |k: &str, d: &str| map.get(k).cloned().unwrap_or_else(|| d.to_string());
 
     Ok(StorageSettings {
-        enabled: get("storage_enabled", "true") == "true",
-        backend: get("storage_backend", "sqlite"),
-        url: get("storage_url", ""),
+        enabled: parse_value(&map, "storage_enabled", "true")?,
+        backend: value_or_default(&map, "storage_backend", "sqlite").to_owned(),
+        url: value_or_default(&map, "storage_url", "").to_owned(),
     })
 }
 
@@ -232,4 +257,69 @@ pub async fn save_storage(pool: &SqlitePool, s: &StorageSettings) -> anyhow::Res
         ("storage_url", Cow::Borrowed(s.url.as_str())),
     ];
     upsert_pairs(pool, &pairs).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    async fn config_pool() -> SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("open in-memory history config database");
+        create_config_table(&pool, "history.db")
+            .await
+            .expect("create history config table");
+        pool
+    }
+
+    #[tokio::test]
+    async fn corrupt_operational_values_fail_closed() {
+        let pool = config_pool().await;
+        for (key, invalid, valid) in [
+            ("collection_interval_secs", "thirty", "30"),
+            ("flush_interval_secs", "sixty", "60"),
+            ("batch_size", "many", "1000"),
+            ("cleanup_enabled", "yes", "true"),
+            ("cleanup_older_than_days", "old", "30"),
+            ("default_page_size", "normal", "100"),
+            ("max_page_size", "large", "1000"),
+            ("max_time_range_days", "year", "365"),
+            ("subscribe_patterns", "[]", r#"{"inst:*:M":null}"#),
+            ("exclude_patterns", "not-json", "[]"),
+        ] {
+            sqlx::query("UPDATE history_config SET value = ? WHERE key = ?")
+                .bind(invalid)
+                .bind(key)
+                .execute(&pool)
+                .await
+                .expect("write corrupt fixture");
+            let error = load_config(&pool)
+                .await
+                .expect_err("present corrupt configuration must be rejected");
+            assert!(error.to_string().contains(key), "{key}: {error:#}");
+            sqlx::query("UPDATE history_config SET value = ? WHERE key = ?")
+                .bind(valid)
+                .bind(key)
+                .execute(&pool)
+                .await
+                .expect("restore valid fixture");
+        }
+    }
+
+    #[tokio::test]
+    async fn corrupt_storage_enabled_fails_closed() {
+        let pool = config_pool().await;
+        sqlx::query("UPDATE history_config SET value = '1' WHERE key = 'storage_enabled'")
+            .execute(&pool)
+            .await
+            .expect("write corrupt fixture");
+        let error = load_storage(&pool)
+            .await
+            .expect_err("non-boolean storage_enabled must be rejected");
+        assert!(error.to_string().contains("storage_enabled"), "{error:#}");
+    }
 }

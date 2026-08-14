@@ -12,15 +12,15 @@ Official distributions may package one or more packs over a compatible Aether
 release. AetherEMS is the reference energy distribution; see
 the Pack manifests.
 
-Pack v1 manifests are loaded by the industry-neutral `aether-pack` crate and
+Pack manifests are loaded by the industry-neutral `aether-pack` crate and
 the `aether_sdk::pack` facade. The machine-readable contract is
-[`contracts/pack/pack-manifest.v1.schema.json`](../contracts/pack/pack-manifest.v1.schema.json).
+[`contracts/pack/pack-manifest.schema.json`](../contracts/pack/pack-manifest.schema.json).
 Loading validates compatibility and fail-safe examples but never installs or
 commissions a pack.
 
 Compatibility is evaluated against the composition-provided, checksummed
-`runtime-manifest.json`, not a hard-coded "full" catalog. Its v1 schema is
-[`contracts/runtime/runtime-manifest.v1.schema.json`](../contracts/runtime/runtime-manifest.v1.schema.json);
+`runtime-manifest.json`, not a hard-coded "full" catalog. Its schema is
+[`contracts/runtime/runtime-manifest.schema.json`](../contracts/runtime/runtime-manifest.schema.json);
 missing adapters or capabilities reject activation before Pack assets load.
 
 ## Pack-only artifacts

@@ -16,7 +16,7 @@ use sha2::{Digest, Sha256};
 
 use aether_pack::{PackManifest, load_active_packs, load_pack_manifest, parse_active_packs_config};
 
-const ARTIFACT_SCHEMA: &str = "aether.pack-artifact.v1";
+const ARTIFACT_SCHEMA: &str = "aether.pack-artifact";
 const ARTIFACT_METADATA_FILE: &str = "pack-artifact.json";
 const PAYLOAD_DIRECTORY: &str = "pack";
 const SHA256_ALGORITHM: &str = "sha256";
@@ -451,7 +451,7 @@ fn read_artifact_metadata(artifact_root: &Path) -> Result<ArtifactMetadata> {
 fn validate_artifact_metadata(metadata: &ArtifactMetadata) -> Result<()> {
     ensure!(
         metadata.schema == ARTIFACT_SCHEMA,
-        "unsupported Pack artifact schema {:?}",
+        "invalid Pack artifact schema {:?}",
         metadata.schema
     );
     ensure!(
@@ -865,7 +865,7 @@ fn update_active_pack_value(
 
 fn aggregate_payload_digest(files: &[FileRecord]) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(b"aether.pack-payload.v1\0");
+    hasher.update(b"aether.pack-payload\0");
     for file in files {
         let path_bytes = file.path.as_bytes();
         hasher.update((path_bytes.len() as u64).to_be_bytes());

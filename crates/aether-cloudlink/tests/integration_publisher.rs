@@ -216,9 +216,8 @@ async fn file_spools_replay_after_restart_and_application_ack_is_written_back() 
     };
     let identity = observation_delivery.delivery().expect("durable identity");
     let ack = json!({
-        "schema": "aether.cloudlink.durable-ack.v1",
+        "schema": "aether.cloudlink.durable-ack",
         "protocol": "aether.cloudlink",
-        "protocol_version": "1.0",
         "message_kind": "durable-ack",
         "gateway_id": resumed_session().gateway_id(),
         "session_id": resumed_session().session_id(),
@@ -311,9 +310,8 @@ async fn replay_within_one_session_reuses_the_exact_signed_payload_bytes() {
         .await
         .expect("second PUBACK");
     let request = json!({
-        "schema": "aether.cloudlink.replay-request.v1",
+        "schema": "aether.cloudlink.replay-request",
         "protocol": "aether.cloudlink",
-        "protocol_version": "1.0",
         "message_kind": "replay-request",
         "gateway_id": session().gateway_id(),
         "session_id": session().session_id(),

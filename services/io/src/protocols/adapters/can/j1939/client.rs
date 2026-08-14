@@ -20,8 +20,8 @@ use crate::protocols::core::metadata::{
 };
 use crate::protocols::core::point::TransformConfig;
 use crate::protocols::core::traits::{
-    CommunicationMode, ConnectionState, DataEvent, DataEventReceiver, DataEventSender, Diagnostics,
-    PollResult, data_event_channel,
+    CommunicationMode, ConnectionState, DataEvent, DataEventReceiver, DataEventSink, Diagnostics,
+    PollResult, data_event_channel_with_capacity,
 };
 use crate::protocols::runtime::ChannelRuntime;
 
@@ -34,7 +34,6 @@ use crate::protocols::runtime::ChannelRuntime;
 #[serde(default, deny_unknown_fields)]
 pub struct J1939Config {
     /// CAN interface name (e.g., "can0").
-    #[serde(alias = "can_interface")]
     pub device: String,
 
     /// Source address of the target device (ECU address).
@@ -220,7 +219,7 @@ pub struct J1939Client {
     receive_handle: Option<JoinHandle<()>>,
 
     // Event queue for the unified channel task.
-    event_tx: DataEventSender,
+    event_tx: DataEventSink,
     event_rx: Option<DataEventReceiver>,
 
     // Explicit SPN-to-point projection from the immutable runtime snapshot.
@@ -231,6 +230,7 @@ impl J1939Client {
     /// Create a new J1939 client with the given configuration.
     pub fn new(config: J1939Config, points: Vec<J1939PointConfig>) -> Result<Self> {
         config.validate()?;
+        let configured_point_count = points.len();
         let mut point_lookup = HashMap::<u32, Vec<J1939PointConfig>>::new();
         for point in points {
             if !matches!(point.point_type, PointType::Telemetry | PointType::Signal) {
@@ -244,7 +244,7 @@ impl J1939Client {
             point_lookup.entry(point.spn).or_default().push(point);
         }
 
-        let (event_tx, event_rx) = data_event_channel();
+        let (event_tx, event_rx) = data_event_channel_with_capacity(configured_point_count);
 
         Ok(Self {
             config,
@@ -338,16 +338,15 @@ impl J1939Client {
                             read_count.fetch_add(1, Ordering::Relaxed);
 
                             // Queue the update without blocking the receive loop.
-                            let _ = event_tx.try_send(DataEvent::DataUpdate(batch));
+                            event_tx.publish(DataEvent::DataUpdate(batch));
                         }
                     },
                     Err(e) => {
                         last_error.store(Some(Arc::new(format!("CAN read error: {}", e))));
                         error_count.fetch_add(1, Ordering::Relaxed);
                         connection_state.store(ConnectionState::Error.into(), Ordering::Release);
-                        let _ = event_tx.try_send(DataEvent::Error(e.to_string()));
-                        let _ =
-                            event_tx.try_send(DataEvent::ConnectionChanged(ConnectionState::Error));
+                        event_tx.publish(DataEvent::Error(e.to_string()));
+                        event_tx.publish(DataEvent::ConnectionChanged(ConnectionState::Error));
                         break;
                     },
                 }
@@ -426,6 +425,7 @@ impl ChannelRuntime for J1939Client {
         }
         if let Some(handle) = self.receive_handle.take() {
             handle.abort();
+            let _ = handle.await;
         }
         self.socket = None;
         self.connection_state
@@ -444,9 +444,8 @@ impl ChannelRuntime for J1939Client {
             .store(ConnectionState::Connected.into(), Ordering::Release);
 
         // Notify the runtime without blocking the receive path.
-        let _ = self
-            .event_tx
-            .try_send(DataEvent::ConnectionChanged(ConnectionState::Connected));
+        self.event_tx
+            .publish(DataEvent::ConnectionChanged(ConnectionState::Connected));
 
         Ok(())
     }
@@ -454,6 +453,7 @@ impl ChannelRuntime for J1939Client {
     async fn disconnect(&mut self) -> Result<()> {
         if let Some(handle) = self.receive_handle.take() {
             handle.abort();
+            let _ = handle.await;
         }
         self.socket = None;
 
@@ -461,9 +461,8 @@ impl ChannelRuntime for J1939Client {
             .store(ConnectionState::Disconnected.into(), Ordering::Release);
 
         // Notify the runtime without blocking the receive path.
-        let _ = self
-            .event_tx
-            .try_send(DataEvent::ConnectionChanged(ConnectionState::Disconnected));
+        self.event_tx
+            .publish(DataEvent::ConnectionChanged(ConnectionState::Disconnected));
 
         Ok(())
     }
@@ -486,6 +485,7 @@ impl ChannelRuntime for J1939Client {
         }
         if let Some(handle) = self.receive_handle.take() {
             handle.abort();
+            let _ = handle.await;
         }
         let socket = self.socket.take().ok_or(GatewayError::NotConnected)?;
         self.start_receive_task(socket);
@@ -496,6 +496,7 @@ impl ChannelRuntime for J1939Client {
         // Stop the receive task
         if let Some(handle) = self.receive_handle.take() {
             handle.abort();
+            let _ = handle.await;
         }
         Ok(())
     }
@@ -580,6 +581,16 @@ mod tests {
         assert!(
             serde_json::from_value::<J1939Config>(
                 serde_json::json!({"device": "can0", "request_interval_ms": 1000})
+            )
+            .is_err()
+        );
+        assert!(
+            serde_json::from_value::<J1939Config>(serde_json::json!({"can_interface": "can0"}))
+                .is_err()
+        );
+        assert!(
+            serde_json::from_value::<J1939Config>(
+                serde_json::json!({"device": "can0", "can_interface": "can0"})
             )
             .is_err()
         );

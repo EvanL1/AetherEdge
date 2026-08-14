@@ -2,10 +2,10 @@
 //!
 //! Owns commissioned instances, logical routing, and deterministic rules.
 
-use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 // aether-automation imports
 use aether_automation::infra::{
@@ -19,11 +19,12 @@ use aether_automation::{
 };
 use aether_calc::MemoryStateStore;
 use aether_rules::{
-    DEFAULT_TICK_MS, PointWatchDispatcher, PointWatchHint, RuleScheduler, WatchEvent,
+    DEFAULT_RULE_EXECUTION_TIMEOUT, DEFAULT_TICK_MS, MAX_RULE_CONCURRENCY, PointWatchDispatcher,
+    PointWatchHint, RuleScheduler, WatchEvent,
 };
 use aether_shm_bridge::{
-    PointWatchEvent, PointWatchEventListener, SubscriptionBitmap, bitmap_path_for_consumer,
-    default_shm_path, point_watch_socket_from_shm,
+    PointWatchEvent, PointWatchEventListener, PreparedPointWatchEventListener, SubscriptionBitmap,
+    bitmap_path_for_consumer, default_shm_path, point_watch_socket_from_shm,
 };
 use aether_sqlite_topology::load_sqlite_shm_capacity;
 
@@ -32,20 +33,189 @@ async fn openapi_document() -> axum::Json<utoipa::openapi::OpenApi> {
     axum::Json(routes::openapi_document())
 }
 
+const MAX_RULE_TICK_MS: u64 = 60_000;
+const MAX_RULE_TIMEOUT_MS: u64 = 120_000;
+
+async fn optional_global_u64(pool: &sqlx::SqlitePool, key: &str) -> Result<Option<u64>> {
+    let raw = sqlx::query_scalar::<_, String>(
+        "SELECT value FROM service_config WHERE service_name = 'global' AND key = ?",
+    )
+    .bind(key)
+    .fetch_optional(pool)
+    .await
+    .map_err(|error| AutomationError::DatabaseError(format!("failed to load {key}: {error}")))?;
+    raw.map(|value| {
+        value.parse::<u64>().map_err(|error| {
+            AutomationError::InvalidConfig(format!("{key} must be an unsigned integer: {error}"))
+        })
+    })
+    .transpose()
+}
+
+fn bounded_config(value: u64, key: &str, min: u64, max: u64) -> Result<u64> {
+    if !(min..=max).contains(&value) {
+        return Err(AutomationError::InvalidConfig(format!(
+            "{key} must be in {min}..={max}"
+        )));
+    }
+    Ok(value)
+}
+
+async fn run_command_notifier_probe(
+    sink: Arc<aether_shm_bridge::ShmDeviceCommandSink>,
+    shutdown: CancellationToken,
+) {
+    let mut interval = tokio::time::interval(Duration::from_secs(1));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        tokio::select! {
+            biased;
+            _ = shutdown.cancelled() => break,
+            _ = interval.tick() => {
+                if let Err(error) = sink.probe_notifier().await {
+                    debug!("Command notifier probe did not become ready: {error}");
+                }
+            },
+        }
+    }
+}
+
+async fn run_command_topology_rebuild(
+    sink: Arc<aether_shm_bridge::ShmDeviceCommandSink>,
+    pool: sqlx::SqlitePool,
+    topology: Arc<aether_automation::infra::runtime_topology::AutomationTopologyHandle>,
+    shutdown: CancellationToken,
+) {
+    let rebuild_notify = sink.rebuild_trigger();
+    loop {
+        tokio::select! {
+            _ = rebuild_notify.notified() => {},
+            _ = shutdown.cancelled() => break,
+        }
+        info!("SHM rebuild triggered — refreshing the complete automation topology...");
+        const MAX_RETRIES: u32 = 10;
+        const BASE_DELAY_MS: u64 = 1_000;
+        const MAX_DELAY_MS: u64 = 15_000;
+        let mut retry_count = 0_u32;
+        let ok = loop {
+            match topology.refresh(&pool).await {
+                Ok(_) => {
+                    info!("Complete automation topology restored successfully");
+                    break true;
+                },
+                Err(error) if retry_count < MAX_RETRIES => {
+                    let delay = (BASE_DELAY_MS * 2_u64.pow(retry_count)).min(MAX_DELAY_MS);
+                    info!(
+                        "Automation topology refresh retry {}/{} in {}ms: {}",
+                        retry_count + 1,
+                        MAX_RETRIES,
+                        delay,
+                        error
+                    );
+                    tokio::select! {
+                        _ = tokio::time::sleep(Duration::from_millis(delay)) => {},
+                        _ = shutdown.cancelled() => return,
+                    }
+                    retry_count += 1;
+                },
+                Err(error) => {
+                    warn!(
+                        "Automation topology refresh failed after {} retries: {}. A later unavailable command will start a new bounded cycle.",
+                        MAX_RETRIES, error
+                    );
+                    break false;
+                },
+            }
+        };
+        if ok {
+            info!("SHM auto-rebuild complete — M2C dispatch restored");
+        }
+    }
+}
+
+#[cfg(unix)]
+async fn run_shm_inode_watch(
+    sink: Arc<aether_shm_bridge::ShmDeviceCommandSink>,
+    path: PathBuf,
+    shutdown: CancellationToken,
+) {
+    use std::os::unix::fs::MetadataExt;
+
+    const WATCH_INTERVAL: Duration = Duration::from_secs(5);
+    let mut last_inode = std::fs::metadata(&path).ok().map(|metadata| metadata.ino());
+    if let Some(inode) = last_inode {
+        info!("SHM inode watcher: baseline inode={inode} for {path:?}");
+    } else {
+        info!("SHM inode watcher: canonical path {path:?} not yet present");
+    }
+
+    loop {
+        tokio::select! {
+            _ = tokio::time::sleep(WATCH_INTERVAL) => {},
+            _ = shutdown.cancelled() => break,
+        }
+        let current_inode = match std::fs::metadata(&path) {
+            Ok(metadata) => Some(metadata.ino()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => {
+                warn!("SHM inode watcher: stat {path:?} failed: {error}");
+                continue;
+            },
+        };
+        match (last_inode, current_inode) {
+            (Some(old), Some(new)) if old != new => {
+                info!("SHM inode watcher: canonical inode changed {old} -> {new}");
+                last_inode = Some(new);
+                sink.invalidate_and_rebuild();
+            },
+            (None, Some(new)) => {
+                info!("SHM inode watcher: canonical path appeared (inode={new})");
+                last_inode = Some(new);
+            },
+            (Some(_), None) => {
+                warn!("SHM inode watcher: canonical path {path:?} disappeared");
+            },
+            _ => {},
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Create service info
     let service_info = bootstrap::create_service_info();
-
-    // Initialize cancellation token for graceful shutdown
-    let shutdown_token = CancellationToken::new();
-    debug!("Shutdown token initialized");
 
     // Create application state with all initialized components
     let composition = bootstrap::compose_automation(&service_info).await?;
     let state = composition.state;
     let sqlite_pool = composition.sqlite_pool;
     let runtime_topology = composition.runtime_topology;
+
+    // Validate the listener address before starting any background task so a
+    // configuration error cannot bypass coordinated cancellation and drain.
+    let addr = match bootstrap::internal_api_bind_address(&state.config.api) {
+        Ok(addr) => addr,
+        Err(error) => {
+            common::logging::shutdown_logging_tasks().await;
+            return Err(error);
+        },
+    };
+    let listener = match common::shutdown::bind_http_listener(addr) {
+        Ok(listener) => listener,
+        Err(error) => {
+            common::logging::shutdown_logging_tasks().await;
+            return Err(AutomationError::InvalidConfig(format!(
+                "failed to bind internal API address {addr} before runtime activation: {error}"
+            )));
+        },
+    };
+
+    // Initialize cancellation and supervision only after all fallible listener
+    // configuration has been validated.
+    let shutdown_token = CancellationToken::new();
+    let mut supervisor =
+        common::task_supervisor::CriticalTaskSupervisor::new(Duration::from_secs(5));
+    debug!("Shutdown token initialized");
 
     // Create API routes using the routes module. The gateway is the only
     // process that serves Swagger UI; this loopback service publishes its spec.
@@ -55,15 +225,14 @@ async fn main() -> Result<()> {
     // Initialize Rule Engine (integrated on port 6002)
     // ============================================================================
     // Load tick_ms from global config (SQLite key-value table)
-    let tick_ms: u64 = sqlx::query_scalar::<_, String>(
-        "SELECT value FROM service_config WHERE service_name = 'global' AND key = 'rules.tick_ms'",
-    )
-    .fetch_optional(&sqlite_pool)
-    .await
-    .ok()
-    .flatten()
-    .and_then(|s| s.parse().ok())
-    .unwrap_or(DEFAULT_TICK_MS);
+    let tick_ms = bounded_config(
+        optional_global_u64(&sqlite_pool, "rules.tick_ms")
+            .await?
+            .unwrap_or(DEFAULT_TICK_MS),
+        "rules.tick_ms",
+        1,
+        MAX_RULE_TICK_MS,
+    )?;
 
     debug!("Rule scheduler tick_ms: {}", tick_ms);
 
@@ -84,9 +253,8 @@ async fn main() -> Result<()> {
             .max(100),
     );
 
-    // UDS notification is self-healing. A command receipt is returned only
-    // after the complete command event has been written to this transport;
-    // the receipt is not a physical-device acknowledgement.
+    // UDS notification is self-healing. Its receipt proves IO durably admitted
+    // the CommandId and exact payload; it is not a physical-device outcome.
     let m2c_socket = std::env::var("AETHER_M2C_SOCKET")
         .unwrap_or_else(|_| aether_shm_bridge::DEFAULT_COMMAND_UDS_PATH.to_string());
     state
@@ -98,170 +266,32 @@ async fn main() -> Result<()> {
                 "failed to configure command UDS notifier: {error}"
             ))
         })?;
-    info!("Typed command notifier configured for {m2c_socket}; reconnect is automatic");
+    info!("Durable command notifier configured for {m2c_socket}; reconnect is automatic");
 
-    // A stale command writer requests a bounded refresh of the complete
-    // point/health/routing generation. Partial IO publication keeps the prior
-    // service generation and is retried.
-    {
-        let rebuild_notify = state.shm_dispatch.rebuild_trigger();
-        let rebuild_pool = sqlite_pool.clone();
-        let rebuild_topology = Arc::clone(&runtime_topology);
-        let rebuild_token = shutdown_token.clone();
-        tokio::spawn(async move {
-            loop {
-                tokio::select! {
-                    _ = rebuild_notify.notified() => {},
-                    _ = rebuild_token.cancelled() => break,
-                }
-                info!("SHM rebuild triggered — refreshing the complete automation topology...");
-                const MAX_RETRIES: u32 = 10;
-                const BASE_DELAY_MS: u64 = 1000;
-                const MAX_DELAY_MS: u64 = 15000;
-                let mut retry_count = 0u32;
-                let ok = loop {
-                    match rebuild_topology.refresh(&rebuild_pool).await {
-                        Ok(_) => {
-                            info!("Complete automation topology restored successfully");
-                            break true;
-                        },
-                        Err(e) if retry_count < MAX_RETRIES => {
-                            let delay = (BASE_DELAY_MS * 2u64.pow(retry_count)).min(MAX_DELAY_MS);
-                            info!(
-                                "Automation topology refresh retry {}/{} in {}ms: {}",
-                                retry_count + 1,
-                                MAX_RETRIES,
-                                delay,
-                                e
-                            );
-                            tokio::time::sleep(Duration::from_millis(delay)).await;
-                            retry_count += 1;
-                        },
-                        Err(e) => {
-                            warn!(
-                                "Automation topology refresh failed after {} retries: {}. \
-                                 A later unavailable command will start a new bounded cycle.",
-                                MAX_RETRIES, e
-                            );
-                            break false;
-                        },
-                    }
-                };
-                if ok {
-                    info!("SHM auto-rebuild complete — M2C dispatch restored");
-                }
-            }
-        });
-    }
-
-    // Spawn SHM canonical-path inode watcher.
-    //
-    // Step 3 of the SHM decoupling roadmap replaces in-place
-    // reconfigure_existing with `ShmWriterHandle::rebuild_via_swap`: io
-    // creates a new SHM file at a staging path, then POSIX-renames it
-    // over the canonical path. automation's existing command mmap is still
-    // mmap'd to the *previous* inode (now unlinked but live in memory),
-    // so its `writer.generation()` reads stay constant. The command sink closes
-    // that blind spot synchronously: every command holds the stable authority
-    // sidecar's shared lease through SHM + UDS + receipt formation and checks
-    // the mapped `(device, inode)` against the canonical path before and after
-    // the transaction. IO holds the exclusive lease throughout publication.
-    //
-    // This low-frequency watcher is therefore a recovery accelerator, not a
-    // correctness boundary. It periodically `stat(canonical_path)` and
-    // compare the inode against a cached baseline. On change, fire the
-    // existing `rebuild_trigger` Notify, which the auto-rebuild task
-    // above already handles end-to-end (validated open on the new inode and
-    // coherent writer/manifest publication).
-    {
-        use std::os::unix::fs::MetadataExt;
-        const WATCH_INTERVAL: Duration = Duration::from_secs(5);
-
-        let watch_dispatch = Arc::clone(&state.shm_dispatch);
-        let watch_path = shm_path.clone();
-        let watch_token = shutdown_token.clone();
-
-        tokio::spawn(async move {
-            // Baseline: capture initial inode (None if canonical does not
-            // yet exist — io may not have created it yet). We only
-            // fire on a *change* from a known-good value to avoid a
-            // spurious rebuild during cold boot.
-            let mut last_inode = std::fs::metadata(&watch_path).ok().map(|m| m.ino());
-            if let Some(ino) = last_inode {
-                info!(
-                    "SHM inode watcher: baseline inode={} for {:?}",
-                    ino, watch_path
-                );
-            } else {
-                info!(
-                    "SHM inode watcher: canonical path {:?} not yet present; will start tracking once it appears",
-                    watch_path
-                );
-            }
-
-            loop {
-                tokio::select! {
-                    _ = tokio::time::sleep(WATCH_INTERVAL) => {},
-                    _ = watch_token.cancelled() => break,
-                }
-
-                let current_inode = match std::fs::metadata(&watch_path) {
-                    Ok(m) => Some(m.ino()),
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-                    Err(e) => {
-                        warn!(
-                            "SHM inode watcher: stat {:?} failed (non-NotFound): {}",
-                            watch_path, e
-                        );
-                        continue;
-                    },
-                };
-
-                match (last_inode, current_inode) {
-                    (Some(old), Some(new)) if old != new => {
-                        info!(
-                            "SHM inode watcher: canonical path inode changed {} → {} \
-                             (io likely performed an atomic-swap reload); \
-                             triggering writer rebuild",
-                            old, new
-                        );
-                        last_inode = Some(new);
-                        // The prior mmap still reports its old stable header
-                        // generation after rename, so invalidate it explicitly
-                        // before asking the rebuild loop to reopen the path.
-                        watch_dispatch.invalidate_and_rebuild();
-                    },
-                    (None, Some(new)) => {
-                        info!(
-                            "SHM inode watcher: canonical path now exists (inode={}); \
-                             tracking baseline",
-                            new
-                        );
-                        last_inode = Some(new);
-                    },
-                    (Some(_), None) => {
-                        warn!(
-                            "SHM inode watcher: canonical path {:?} disappeared — \
-                             io may be mid-restart; keeping prior baseline",
-                            watch_path
-                        );
-                    },
-                    _ => {}, // no change
-                }
-            }
-        });
-    }
+    // Complete every fallible startup step before any long-running task is
+    // spawned. Otherwise an audit-store error would bypass coordinated drain.
+    let rule_audit = aether_store_local::SqliteAuditSink::initialize(sqlite_pool.clone())
+        .await
+        .map_err(|error| AutomationError::DatabaseError(error.to_string()))?;
 
     // Load max_concurrency from global config (SQLite key-value table)
-    let max_concurrency: usize = sqlx::query_scalar::<_, String>(
-        "SELECT value FROM service_config WHERE service_name = 'global' AND key = 'rules.max_concurrency'",
-    )
-    .fetch_optional(&sqlite_pool)
-    .await
-    .ok()
-    .flatten()
-    .and_then(|s| s.parse().ok())
-    .unwrap_or(4);
+    let max_concurrency = usize::try_from(bounded_config(
+        optional_global_u64(&sqlite_pool, "rules.max_concurrency")
+            .await?
+            .unwrap_or(4),
+        "rules.max_concurrency",
+        1,
+        MAX_RULE_CONCURRENCY as u64,
+    )?)
+    .map_err(|_| AutomationError::InvalidConfig("rules.max_concurrency is too large".into()))?;
+    let rule_execution_timeout_ms = bounded_config(
+        optional_global_u64(&sqlite_pool, "rules.execution_timeout_ms")
+            .await?
+            .unwrap_or(DEFAULT_RULE_EXECUTION_TIMEOUT.as_millis() as u64),
+        "rules.execution_timeout_ms",
+        1,
+        MAX_RULE_TIMEOUT_MS,
+    )?;
 
     // ── PointWatch bootstrap (automation side) ──────────────────────────────────────
     // PointWatch is an optional latency optimization and may fall back to
@@ -291,6 +321,7 @@ async fn main() -> Result<()> {
     type PwInitResult = (
         Option<Arc<SubscriptionBitmap>>,
         Option<PointWatchDispatcher>,
+        Option<PreparedPointWatchEventListener>,
         Option<tokio::sync::mpsc::Receiver<PointWatchEvent>>,
         Option<tokio::sync::mpsc::Receiver<WatchEvent>>,
     );
@@ -301,7 +332,7 @@ async fn main() -> Result<()> {
             None
         },
     };
-    let (pw_bitmap, pw_dispatcher, pw_event_rx, pw_watch_rx): PwInitResult = {
+    let (pw_bitmap, pw_dispatcher, pw_listener, pw_event_rx, pw_watch_rx): PwInitResult = {
         let bitmap_path = bitmap_path_for_consumer(&shm_path, "automation");
         let bitmap = point_watch_capacity.and_then(|capacity| {
             match SubscriptionBitmap::open_or_create(&bitmap_path, capacity) {
@@ -327,24 +358,27 @@ async fn main() -> Result<()> {
                     point_watch_socket.display()
                 );
 
-                // Spawn the UDS listener run loop (accepts io connection).
-                tokio::spawn(async move {
-                    if let Err(error) = listener.run().await {
-                        warn!("PointWatchListener exited with error: {error}");
-                    }
-                });
-                // Create dispatcher (empty sub index until rebuild_point_watch).
-                // watch_rx flows to RuleScheduler; dispatcher.dispatch() sends onto it.
-                let (dispatcher, watch_rx) = PointWatchDispatcher::new();
-
-                (
-                    Some(bitmap),
-                    Some(dispatcher),
-                    Some(event_rx),
-                    Some(watch_rx),
-                )
+                match listener.prepare() {
+                    Ok(listener) => {
+                        // Create dispatcher only after the socket is owned.
+                        let (dispatcher, watch_rx) = PointWatchDispatcher::new();
+                        (
+                            Some(bitmap),
+                            Some(dispatcher),
+                            Some(listener),
+                            Some(event_rx),
+                            Some(watch_rx),
+                        )
+                    },
+                    Err(error) => {
+                        warn!(
+                            "PointWatch disabled because its local listener could not be prepared: {error}"
+                        );
+                        (None, None, None, None, None)
+                    },
+                }
             },
-            None => (None, None, None, None),
+            None => (None, None, None, None, None),
         }
     };
 
@@ -370,7 +404,12 @@ async fn main() -> Result<()> {
         // mandatory audit + CommandDispatcher path as external control.
         Some(rule_action_application),
     );
-    scheduler.set_max_concurrency(max_concurrency);
+    scheduler
+        .set_max_concurrency(max_concurrency)
+        .map_err(AutomationError::from)?;
+    scheduler
+        .set_execution_timeout(Duration::from_millis(rule_execution_timeout_ms))
+        .map_err(AutomationError::from)?;
 
     // Wire PointWatch event receiver into the scheduler (before Arc::new).
     // When present, RuleScheduler::start() selects on this channel alongside
@@ -399,6 +438,11 @@ async fn main() -> Result<()> {
     }
 
     let scheduler = Arc::new(scheduler);
+    state
+        .install_rule_scheduler(Arc::clone(&scheduler))
+        .map_err(|_| {
+            AutomationError::InternalError("rule scheduler was installed more than once".into())
+        })?;
     let rule_runtime = Arc::new(match pw_bitmap {
         Some(bitmap) => RuleRuntimeCoordinator::new(Arc::clone(&scheduler)).with_point_watch(
             Arc::clone(&runtime_topology),
@@ -422,7 +466,49 @@ async fn main() -> Result<()> {
                 warn!("PointWatch subscriptions remain gated: {error}");
             }
         },
-        Err(e) => warn!("Rule Engine: failed to load rules: {}", e),
+        Err(error) => {
+            shutdown_token.cancel();
+            // Startup cannot advertise readiness with an empty/stale rule set.
+            // Drain the already-composed recovery listeners before returning.
+            let _ = supervisor.run(shutdown_token.clone()).await;
+            common::logging::shutdown_logging_tasks().await;
+            return Err(AutomationError::SchedulerError(format!(
+                "initial rule load failed: {error}"
+            )));
+        },
+    }
+
+    // No fallible bootstrap step remains beyond this point. Only now activate
+    // long-running tasks, so every startup error above exits without a detached
+    // Tokio task or an enabled rule loop.
+    {
+        let sink = Arc::clone(&state.shm_dispatch);
+        let task_shutdown = shutdown_token.clone();
+        supervisor.spawn("automation-command-notifier-probe", async move {
+            run_command_notifier_probe(sink, task_shutdown).await;
+        });
+    }
+    {
+        let sink = Arc::clone(&state.shm_dispatch);
+        let pool = sqlite_pool.clone();
+        let topology = Arc::clone(&runtime_topology);
+        let task_shutdown = shutdown_token.clone();
+        supervisor.spawn("automation-command-topology-rebuild", async move {
+            run_command_topology_rebuild(sink, pool, topology, task_shutdown).await;
+        });
+    }
+    {
+        let sink = Arc::clone(&state.shm_dispatch);
+        let path = shm_path.clone();
+        let task_shutdown = shutdown_token.clone();
+        supervisor.spawn("automation-shm-inode-watch", async move {
+            run_shm_inode_watch(sink, path, task_shutdown).await;
+        });
+    }
+    if let Some(listener) = pw_listener {
+        supervisor.spawn_result("automation-point-watch-listener", async move {
+            listener.run().await.map_err(anyhow::Error::from)
+        });
     }
 
     // Refresh the full SQLite + point/health topology periodically. Transient
@@ -432,7 +518,7 @@ async fn main() -> Result<()> {
         let refresh_topology = Arc::clone(&runtime_topology);
         let refresh_pool = sqlite_pool.clone();
         let refresh_token = shutdown_token.clone();
-        tokio::spawn(async move {
+        supervisor.spawn("automation-topology-refresh", async move {
             let mut interval = tokio::time::interval(topology_refresh_interval);
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             // Startup already attempted one refresh; avoid an immediate duplicate tick.
@@ -459,12 +545,14 @@ async fn main() -> Result<()> {
     if let Some(mut changes) = rule_runtime.topology_changes() {
         let subscription_runtime = Arc::clone(&rule_runtime);
         let subscription_token = shutdown_token.clone();
-        tokio::spawn(async move {
+        supervisor.spawn_result("automation-point-watch-reload", async move {
             loop {
                 tokio::select! {
+                    biased;
+                    _ = subscription_token.cancelled() => return Ok(()),
                     changed = changes.changed() => {
                         if changed.is_err() {
-                            break;
+                            return Err(anyhow::anyhow!("topology change stream closed"));
                         }
                         match subscription_runtime.reload().await {
                             Ok(refresh) => {
@@ -486,12 +574,11 @@ async fn main() -> Result<()> {
                                     );
                                 }
                             },
-                            Err(error) => warn!(
-                                "PointWatch subscription refresh failed; scheduler tick fallback remains active: {error}"
-                            ),
+                            Err(error) => return Err(anyhow::anyhow!(
+                                "rules/PointWatch reload after topology change failed: {error}"
+                            )),
                         }
                     },
-                    _ = subscription_token.cancelled() => break,
                 }
             }
         });
@@ -512,9 +599,11 @@ async fn main() -> Result<()> {
         let topology_for_bridge = Arc::clone(&runtime_topology);
         let runtime_for_bridge = Arc::clone(&rule_runtime);
         let shutdown_token_bridge = shutdown_token.clone();
-        tokio::spawn(async move {
+        supervisor.spawn_result("automation-point-watch-bridge", async move {
             loop {
                 tokio::select! {
+                    biased;
+                    _ = shutdown_token_bridge.cancelled() => return Ok(()),
                     ev = event_rx.recv() => {
                         match ev {
                             Some(e) => {
@@ -553,21 +642,18 @@ async fn main() -> Result<()> {
                                     sample.timestamp_ms(),
                                 ));
                             }
-                            None => break, // listener channel closed
+                            None => return Err(anyhow::anyhow!(
+                                "PointWatch listener channel closed"
+                            )),
                         }
                     }
-                    _ = shutdown_token_bridge.cancelled() => break,
                 }
             }
-            debug!("PointWatch bridge task stopped");
         });
         info!("PointWatch bridge task spawned");
     }
 
     // Create rule engine state and routes
-    let rule_audit = aether_store_local::SqliteAuditSink::initialize(sqlite_pool.clone())
-        .await
-        .map_err(|error| AutomationError::DatabaseError(error.to_string()))?;
     let rule_audit: Arc<dyn aether_ports::AuditSink> = Arc::new(rule_audit);
     let rule_application = Arc::new(aether_application::RuleExecutionApplication::new(
         scheduler.clone(),
@@ -599,21 +685,6 @@ async fn main() -> Result<()> {
     let app = app.route("/openapi.json", axum::routing::get(openapi_document));
 
     // Start HTTP service (model API + rule engine - port 6002)
-    let addr: SocketAddr = format!("{}:{}", state.config.api.host, state.config.api.port)
-        .parse()
-        .map_err(|error| {
-            AutomationError::InvalidConfig(format!(
-                "invalid internal API bind address {}:{}: {error}",
-                state.config.api.host, state.config.api.port
-            ))
-        })?;
-
-    // Create socket for unified API (port 6002)
-    let socket = tokio::net::TcpSocket::new_v4()?;
-    socket.set_reuseaddr(true)?;
-    socket.bind(addr)?;
-    let listener = socket.listen(1024)?;
-
     info!("Automation service started on {}", addr);
     info!("");
     info!("Model API endpoints (port {}):", state.config.api.port);
@@ -633,66 +704,53 @@ async fn main() -> Result<()> {
     info!("  GET /api/scheduler/status - Scheduler status");
     info!("  POST /api/scheduler/reload - Reload rules");
 
-    // Prepare graceful shutdown
-    let cancel_token = shutdown_token.clone();
-    let shutdown_signal = async move {
-        cancel_token.cancelled().await;
-        info!("Shutdown signal received, stopping service...");
-    };
-
-    // Spawn server task
-    let server_task = async move {
-        if let Err(e) = axum::serve(listener, app)
-            .with_graceful_shutdown(shutdown_signal)
-            .await
-        {
-            error!("Server error: {}", e);
+    let scheduler_task = Arc::clone(&scheduler);
+    let scheduler_stop = Arc::clone(&scheduler);
+    let scheduler_shutdown = shutdown_token.clone();
+    supervisor.spawn("automation-rule-scheduler", async move {
+        let mut scheduler_run = std::pin::pin!(scheduler_task.start());
+        tokio::select! {
+            _ = &mut scheduler_run => {},
+            _ = scheduler_shutdown.cancelled() => {
+                scheduler_stop.stop();
+                // Let an in-progress rule finish its receipt/state update. The
+                // outer critical-task supervisor still enforces the service's
+                // five-second drain deadline.
+                scheduler_run.await;
+            },
         }
-    };
-
-    // Spawn server task
-    let server_handle = tokio::spawn(server_task);
-    info!("Server started (port {})", state.config.api.port);
-
-    // Start rule scheduler in background
-    let scheduler_handle = {
-        let scheduler = Arc::clone(&scheduler);
-        tokio::spawn(async move {
-            scheduler.start().await;
-        })
-    };
+    });
+    // The listener is already reserved and every fallible rule bootstrap step
+    // has completed, so logging maintenance can now join the runtime lifecycle.
+    common::logging::enable_sighup_log_reopen();
+    let supervisor_shutdown = shutdown_token.clone();
+    let supervisor_task = tokio::spawn(async move { supervisor.run(supervisor_shutdown).await });
     info!("Rule scheduler started");
 
-    // Wait for shutdown signal (Ctrl+C or SIGTERM)
-    common::shutdown::wait_for_shutdown().await;
-    info!("Initiating graceful shutdown...");
-
-    // Signal all tasks to shutdown
+    let server_result =
+        common::shutdown::serve_prebound_with_shutdown(listener, addr, app, shutdown_token.clone())
+            .await;
     shutdown_token.cancel();
-
-    // Stop scheduler
     scheduler.stop();
+    let supervisor_result = supervisor_task.await.map_err(|error| {
+        AutomationError::InternalError(format!("task supervisor join failed: {error}"))
+    })?;
+    let logger_scheduler = Arc::clone(&scheduler);
+    let logger_shutdown =
+        tokio::task::spawn_blocking(move || logger_scheduler.shutdown_rule_logging())
+            .await
+            .map_err(|error| {
+                AutomationError::InternalError(format!("rule logger shutdown task failed: {error}"))
+            })?
+            .map_err(|error| {
+                AutomationError::InternalError(format!(
+                    "rule logger did not drain cleanly: {error}"
+                ))
+            });
 
-    // Wait for tasks to complete with timeout
-    let shutdown_timeout = tokio::time::Duration::from_secs(30);
-
-    // Wait for server task
-    match tokio::time::timeout(shutdown_timeout, server_handle).await {
-        Ok(Ok(())) => info!("Server shut down gracefully"),
-        Ok(Err(e)) => error!("Server task failed: {}", e),
-        Err(_) => {
-            error!("Server shutdown timed out");
-        },
-    }
-
-    // Wait for scheduler to stop
-    match tokio::time::timeout(shutdown_timeout, scheduler_handle).await {
-        Ok(Ok(())) => info!("Scheduler shut down gracefully"),
-        Ok(Err(e)) => error!("Scheduler task failed: {}", e),
-        Err(_) => {
-            error!("Scheduler shutdown timed out");
-        },
-    }
+    server_result.map_err(|error| AutomationError::InternalError(error.to_string()))?;
+    supervisor_result?;
+    logger_shutdown?;
 
     info!("Automation service shutdown complete");
     Ok(())

@@ -36,14 +36,14 @@ const MAX_FORECAST_POINTS: usize = 4_096;
 const MAX_QUANTILES: usize = 19;
 const MAX_CADENCE_SECONDS: u64 = 86_400;
 
-/// Failure while converting or validating the Data Processing v1 wire format.
+/// Failure while converting or validating the Data Processing wire format.
 #[derive(Debug, Error)]
 pub enum CodecError {
     /// JSON syntax or strict DTO deserialization failed.
     #[error("invalid Data Processing JSON")]
     Json(#[source] serde_json::Error),
     /// A wire-only invariant was violated.
-    #[error("invalid Data Processing v1 contract: {0}")]
+    #[error("invalid Data Processing contract: {0}")]
     Contract(&'static str),
     /// A domain constructor rejected the decoded value.
     #[error("invalid Data Processing domain value: {0}")]
@@ -59,26 +59,26 @@ impl From<DomainError> for CodecError {
     }
 }
 
-/// Encodes a complete domain request as strict Data Processing v1 JSON.
+/// Encodes a complete domain request as strict Data Processing JSON.
 pub fn encode_request(request: &DataProcessingRequest) -> Result<Vec<u8>, CodecError> {
     let dto = DataProcessingRequestDto::try_from(request)?;
     serde_json::to_vec(&dto).map_err(CodecError::Json)
 }
 
-/// Decodes strict Data Processing v1 JSON into a validated domain request.
+/// Decodes strict Data Processing JSON into a validated domain request.
 pub fn decode_request(bytes: &[u8]) -> Result<DataProcessingRequest, CodecError> {
     serde_json::from_slice::<DataProcessingRequestDto>(bytes)
         .map(DataProcessingRequestDto::into_domain)
         .map_err(CodecError::Json)
 }
 
-/// Encodes an untrusted domain result as strict Data Processing v1 JSON.
+/// Encodes an untrusted domain result as strict Data Processing JSON.
 pub fn encode_result(result: &ProcessingResult) -> Result<Vec<u8>, CodecError> {
     let dto = ProcessingResultDto::try_from(result)?;
     serde_json::to_vec(&dto).map_err(CodecError::Json)
 }
 
-/// Decodes strict Data Processing v1 JSON into a structurally valid result.
+/// Decodes strict Data Processing JSON into a structurally valid result.
 ///
 /// Correlation and commissioned task-policy validation remain the
 /// application's responsibility.
@@ -88,7 +88,7 @@ pub fn decode_result(bytes: &[u8]) -> Result<ProcessingResult, CodecError> {
         .map_err(CodecError::Json)
 }
 
-/// Encodes Aether-accepted derived data as strict Data Processing v1 JSON.
+/// Encodes Aether-accepted derived data as strict Data Processing JSON.
 ///
 /// There is deliberately no inverse decoder: only Aether's application layer
 /// may create [`DerivedData`] after accepting an untrusted processor result.
@@ -132,7 +132,7 @@ pub fn compute_input_digest(
     Ok(encoded)
 }
 
-/// Validates that a commissioned task is representable by v1 wire limits.
+/// Validates that a commissioned task is representable by the wire limits.
 ///
 /// Composition roots call this before advertising a route so unsupported
 /// cadence, collection, identifier, or unit shapes fail at startup rather
@@ -149,7 +149,7 @@ pub fn validate_task_contract(task: &DataProcessingTask) -> Result<(), CodecErro
         || specification.max_horizon_steps() > MAX_FORECAST_POINTS
     {
         return Err(CodecError::Contract(
-            "task cadence or sample bounds exceed the v1 contract",
+            "task cadence or sample bounds exceed the contract",
         ));
     }
     if specification.allowed_fallbacks().len() != specification.fallback_policies().len()
@@ -159,7 +159,7 @@ pub fn validate_task_contract(task: &DataProcessingTask) -> Result<(), CodecErro
             .any(|policy| policy.strategy() != "persistence")
     {
         return Err(CodecError::Contract(
-            "v1 routes require a complete registered fallback verifier",
+            "routes require a complete registered fallback verifier",
         ));
     }
     validate_feature_name(specification.target().name())?;
@@ -196,13 +196,13 @@ pub fn validate_task_contract(task: &DataProcessingTask) -> Result<(), CodecErro
             > MAX_PROVENANCE_ENTRIES
     {
         return Err(CodecError::Contract(
-            "task feature bounds exceed the v1 contract",
+            "task feature bounds exceed the contract",
         ));
     }
     Ok(())
 }
 
-/// Validates every identity that a composition root will place on the v1 wire.
+/// Validates every identity that a composition root will place on the wire.
 ///
 /// This complements [`validate_task_contract`] with site binding, artifact,
 /// and processor descriptor values that are not owned by the task itself.
@@ -261,7 +261,7 @@ pub(crate) fn request_to_wire(request: &DataProcessingRequest) -> Result<Request
 
 pub(crate) fn request_from_wire(wire: RequestWire) -> Result<DataProcessingRequest, CodecError> {
     if wire.schema != REQUEST_SCHEMA {
-        return Err(CodecError::Contract("unsupported request schema"));
+        return Err(CodecError::Contract("invalid request schema"));
     }
     validate_uuid(&wire.request_id)?;
     validate_identifier(&wire.processor_contract)?;
@@ -332,7 +332,7 @@ pub(crate) fn result_to_wire(result: &ProcessingResult) -> Result<ResultWire, Co
 
 pub(crate) fn result_from_wire(wire: ResultWire) -> Result<ProcessingResult, CodecError> {
     if wire.schema != RESULT_SCHEMA {
-        return Err(CodecError::Contract("unsupported result schema"));
+        return Err(CodecError::Contract("invalid result schema"));
     }
     validate_uuid(&wire.request_id)?;
     validate_digest(&wire.input_digest)?;
@@ -539,7 +539,7 @@ fn frame_to_wire(frame: &ProcessingFrame) -> Result<FrameWire, CodecError> {
 
 fn frame_from_wire(wire: FrameWire) -> Result<ProcessingFrame, CodecError> {
     if wire.schema != FRAME_SCHEMA {
-        return Err(CodecError::Contract("unsupported frame schema"));
+        return Err(CodecError::Contract("invalid frame schema"));
     }
     validate_frame_limits(&wire)?;
     validate_provenance_shape(&wire)?;
@@ -843,7 +843,7 @@ fn validate_provenance_shape(frame: &FrameWire) -> Result<(), CodecError> {
 
 fn validate_frame_limits(frame: &FrameWire) -> Result<(), CodecError> {
     if frame.cadence_seconds == 0 || frame.cadence_seconds > MAX_CADENCE_SECONDS {
-        return Err(CodecError::Contract("frame cadence is outside v1 limits"));
+        return Err(CodecError::Contract("frame cadence is outside limits"));
     }
     validate_segment_limits(&frame.history)?;
     if let Some(future) = &frame.future_covariates {
@@ -851,13 +851,11 @@ fn validate_frame_limits(frame: &FrameWire) -> Result<(), CodecError> {
     }
     if frame.static_features.len() > MAX_STATIC_FEATURES {
         return Err(CodecError::Contract(
-            "static feature count exceeds the v1 limit",
+            "static feature count exceeds the limit",
         ));
     }
     if frame.provenance.len() > MAX_PROVENANCE_ENTRIES {
-        return Err(CodecError::Contract(
-            "provenance count exceeds the v1 limit",
-        ));
+        return Err(CodecError::Contract("provenance count exceeds the limit"));
     }
     Ok(())
 }
@@ -865,12 +863,12 @@ fn validate_frame_limits(frame: &FrameWire) -> Result<(), CodecError> {
 fn validate_segment_limits(segment: &SegmentWire) -> Result<(), CodecError> {
     if segment.timestamps.is_empty() || segment.timestamps.len() > MAX_SEGMENT_SAMPLES {
         return Err(CodecError::Contract(
-            "segment timestamp count is outside v1 limits",
+            "segment timestamp count is outside limits",
         ));
     }
     if segment.features.is_empty() || segment.features.len() > MAX_FEATURES_PER_SEGMENT {
         return Err(CodecError::Contract(
-            "segment feature count is outside v1 limits",
+            "segment feature count is outside limits",
         ));
     }
     if segment.features.values().any(|series| {
@@ -879,9 +877,7 @@ fn validate_segment_limits(segment: &SegmentWire) -> Result<(), CodecError> {
             || series.quality.is_empty()
             || series.quality.len() > MAX_SEGMENT_SAMPLES
     }) {
-        return Err(CodecError::Contract(
-            "series array count is outside v1 limits",
-        ));
+        return Err(CodecError::Contract("series array count is outside limits"));
     }
     Ok(())
 }
@@ -968,7 +964,7 @@ fn options_to_wire(options: &ProcessingOptions) -> Result<OptionsWire, CodecErro
                 || options.quantiles().len() > MAX_QUANTILES
             {
                 return Err(CodecError::Contract(
-                    "forecast options exceed v1 collection limits",
+                    "forecast options exceed collection limits",
                 ));
             }
             Ok(OptionsWire::Forecast {
@@ -997,9 +993,7 @@ fn options_from_wire(wire: OptionsWire) -> Result<ProcessingOptions, CodecError>
             if horizon_steps == 0
                 || horizon_steps > u64::try_from(MAX_FORECAST_POINTS).unwrap_or(u64::MAX)
             {
-                return Err(CodecError::Contract(
-                    "forecast horizon is outside v1 limits",
-                ));
+                return Err(CodecError::Contract("forecast horizon is outside limits"));
             }
             if quantiles.as_ref().is_some_and(Vec::is_empty) {
                 return Err(CodecError::Contract(
@@ -1011,7 +1005,7 @@ fn options_from_wire(wire: OptionsWire) -> Result<ProcessingOptions, CodecError>
                 .is_some_and(|values| values.len() > MAX_QUANTILES)
             {
                 return Err(CodecError::Contract(
-                    "forecast quantile count exceeds the v1 limit",
+                    "forecast quantile count exceeds the limit",
                 ));
             }
             Ok(ProcessingOptions::Forecast(ForecastOptions::new(
@@ -1080,14 +1074,12 @@ fn output_to_wire(output: &ProcessingOutput) -> Result<ForecastOutputWire, Codec
                     .any(|point| point.quantiles().len() > MAX_QUANTILES)
             {
                 return Err(CodecError::Contract(
-                    "forecast output exceeds v1 collection limits",
+                    "forecast output exceeds collection limits",
                 ));
             }
             let cadence_seconds = milliseconds_to_seconds(output.cadence_ms())?;
             if cadence_seconds > MAX_CADENCE_SECONDS {
-                return Err(CodecError::Contract(
-                    "forecast cadence exceeds the v1 limit",
-                ));
+                return Err(CodecError::Contract("forecast cadence exceeds the limit"));
             }
             validate_feature_name(output.target())?;
             validate_unit(output.unit())?;
@@ -1112,25 +1104,23 @@ fn output_to_wire(output: &ProcessingOutput) -> Result<ForecastOutputWire, Codec
 
 fn output_from_wire(wire: ForecastOutputWire) -> Result<ProcessingOutput, CodecError> {
     if wire.schema != FORECAST_OUTPUT_SCHEMA {
-        return Err(CodecError::Contract("unsupported forecast output schema"));
+        return Err(CodecError::Contract("invalid forecast output schema"));
     }
     match wire.kind {
         TaskKindWire::Forecast => {},
     }
     if wire.timestamp_semantics != TimestampSemanticsWire::IntervalEnd {
         return Err(CodecError::Contract(
-            "v1 domain forecast requires interval_end timestamp semantics",
+            "domain forecast requires interval_end timestamp semantics",
         ));
     }
     if wire.points.is_empty() || wire.points.len() > MAX_FORECAST_POINTS {
         return Err(CodecError::Contract(
-            "forecast point count is outside v1 limits",
+            "forecast point count is outside limits",
         ));
     }
     if wire.cadence_seconds == 0 || wire.cadence_seconds > MAX_CADENCE_SECONDS {
-        return Err(CodecError::Contract(
-            "forecast cadence is outside v1 limits",
-        ));
+        return Err(CodecError::Contract("forecast cadence is outside limits"));
     }
     if wire.points.iter().any(|point| {
         point
@@ -1139,7 +1129,7 @@ fn output_from_wire(wire: ForecastOutputWire) -> Result<ProcessingOutput, CodecE
             .is_some_and(|quantiles| quantiles.len() > MAX_QUANTILES)
     }) {
         return Err(CodecError::Contract(
-            "forecast quantile count exceeds the v1 limit",
+            "forecast quantile count exceeds the limit",
         ));
     }
     validate_feature_name(&wire.target)?;
@@ -1383,9 +1373,7 @@ fn seconds_to_milliseconds_allow_zero(seconds: u64) -> Result<u64, CodecError> {
 
 fn milliseconds_to_seconds(milliseconds: u64) -> Result<u64, CodecError> {
     if !milliseconds.is_multiple_of(1_000) {
-        return Err(CodecError::Contract(
-            "v1 wire durations require whole seconds",
-        ));
+        return Err(CodecError::Contract("wire durations require whole seconds"));
     }
     Ok(milliseconds / 1_000)
 }
@@ -1473,7 +1461,7 @@ fn validate_digest(value: &str) -> Result<(), CodecError> {
 
 fn validate_stable_codes(values: &[String]) -> Result<(), CodecError> {
     if values.len() > MAX_WARNINGS {
-        return Err(CodecError::Contract("warning count exceeds the v1 limit"));
+        return Err(CodecError::Contract("warning count exceeds the limit"));
     }
     if contains_duplicates(values) {
         return Err(CodecError::Contract("stable codes must be unique"));

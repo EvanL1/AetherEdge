@@ -17,7 +17,6 @@ mod live_state;
 mod mirror;
 mod outbox;
 mod secret;
-mod uplink;
 
 pub use alarm::{
     AlarmRuleMutation, AlarmRuleMutationKind, AlarmRuleMutationReceipt, AlarmRuleMutator,
@@ -46,11 +45,11 @@ pub use channel::{
 pub use channel_health::{ChannelHealthObservation, ChannelHealthSource};
 pub use clock::Clock;
 pub use cloudlink::{
-    CloudLinkDataLossEvidence, CloudLinkDeliveryState, CloudLinkDurableAck, CloudLinkEnqueue,
-    CloudLinkMessageKind, CloudLinkRecord, CloudLinkRecordIdentity, CloudLinkReplayWindow,
-    CloudLinkSessionBinding, CloudLinkSpool, CloudLinkSpoolError, CloudLinkSpoolErrorReason,
-    CloudLinkSpoolStatus, CloudLinkTransport, CloudLinkTransportEvent, CloudLinkTransportMessage,
-    CloudLinkTransportRoute, DurableAckOutcome,
+    CloudLinkAdmission, CloudLinkDataLossEvidence, CloudLinkDeliveryState, CloudLinkDurableAck,
+    CloudLinkEnqueue, CloudLinkMessageKind, CloudLinkReceiptRetention, CloudLinkRecord,
+    CloudLinkRecordIdentity, CloudLinkReplayWindow, CloudLinkSessionBinding, CloudLinkSpool,
+    CloudLinkSpoolError, CloudLinkSpoolErrorReason, CloudLinkSpoolStatus, CloudLinkTransport,
+    CloudLinkTransportEvent, CloudLinkTransportMessage, CloudLinkTransportRoute, DurableAckOutcome,
 };
 pub use control::{CommandDispatcher, CommandReceipt, CommandTopologyFence, DeviceCommandSink};
 pub use data_processing::{
@@ -77,4 +76,3 @@ pub use live_state::{LiveState, LiveStateWriter};
 pub use mirror::StateMirror;
 pub use outbox::{DurableOutbox, OutboxEntry, OutboxId, OutboxMessage};
 pub use secret::{SecretMaterial, SecretRef, SecretResolver};
-pub use uplink::UplinkPublisher;

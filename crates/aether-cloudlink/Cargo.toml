@@ -12,9 +12,9 @@ keywords = ["iot", "edge", "gateway", "mqtt"]
 categories = ["embedded", "network-programming"]
 
 [dependencies]
-aether-domain = { version = "0.0.1", path = "../aether-domain" }
-aether-integration-contract = { version = "0.0.1", path = "../aether-integration-contract" }
-aether-ports = { version = "0.0.1", path = "../aether-ports" }
+aether-domain = { version = "0.0.2", path = "../aether-domain" }
+aether-integration-contract = { version = "0.0.2", path = "../aether-integration-contract" }
+aether-ports = { version = "0.0.2", path = "../aether-ports" }
 async-trait = { workspace = true }
 base64 = "0.22"
 ed25519-dalek = { version = "2.2", features = ["zeroize"] }

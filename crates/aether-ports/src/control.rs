@@ -3,7 +3,7 @@
 use aether_domain::{CommandId, ControlCommand, PhysicalDeviceCommand, TimestampMs};
 use async_trait::async_trait;
 
-use crate::{PortError, PortErrorKind, PortResult};
+use crate::PortResult;
 
 /// Expected service-local topology publication for one derived command.
 ///
@@ -32,22 +32,20 @@ impl CommandTopologyFence {
 /// Acceptance information from the local command plane.
 ///
 /// This receipt does not assert that a physical device executed or
-/// acknowledged the command. The legacy `completed_at` field name is retained
-/// for API compatibility and means "accepted by the local command transport";
-/// it can be renamed when the public response contract is versioned.
+/// acknowledged the command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CommandReceipt {
     command_id: CommandId,
-    completed_at: TimestampMs,
+    accepted_at: TimestampMs,
 }
 
 impl CommandReceipt {
     /// Creates a command receipt.
     #[must_use]
-    pub const fn new(command_id: CommandId, completed_at: TimestampMs) -> Self {
+    pub const fn new(command_id: CommandId, accepted_at: TimestampMs) -> Self {
         Self {
             command_id,
-            completed_at,
+            accepted_at,
         }
     }
 
@@ -59,8 +57,8 @@ impl CommandReceipt {
 
     /// Returns when the local command transport accepted the command.
     #[must_use]
-    pub const fn completed_at(self) -> TimestampMs {
-        self.completed_at
+    pub const fn accepted_at(self) -> TimestampMs {
+        self.accepted_at
     }
 }
 
@@ -72,20 +70,13 @@ pub trait CommandDispatcher: Send + Sync + 'static {
 
     /// Dispatches a command only if the dispatcher can pin the expected topology.
     ///
-    /// Existing manual command adapters remain source-compatible through
-    /// [`Self::dispatch`]. The default fails closed so a derived rule command can
-    /// never silently lose its generation fence when composed with an adapter
-    /// that has not implemented this stronger contract.
+    /// Implementations must handle this explicitly so a derived rule command
+    /// can never silently lose its generation fence.
     async fn dispatch_fenced(
         &self,
-        _command: ControlCommand,
-        _fence: CommandTopologyFence,
-    ) -> PortResult<CommandReceipt> {
-        Err(PortError::new(
-            PortErrorKind::Permanent,
-            "command dispatcher does not support topology-fenced dispatch",
-        ))
-    }
+        command: ControlCommand,
+        fence: CommandTopologyFence,
+    ) -> PortResult<CommandReceipt>;
 }
 
 /// Delivers an already-routed command to the physical device data plane.

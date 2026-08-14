@@ -34,7 +34,7 @@ pub struct Rule {
     #[serde(default)]
     pub priority: u32,
 
-    /// Cooldown period in milliseconds (legacy, use trigger_config for new rules)
+    /// Minimum interval between successful executions, in milliseconds.
     #[serde(default)]
     pub cooldown_ms: u64,
 
@@ -43,7 +43,8 @@ pub struct Rule {
     /// Supported formats:
     /// - `{"type": "interval", "interval_ms": 1000}` - Execute at fixed intervals
     ///
-    /// If not set, falls back to `cooldown_ms` as interval.
+    /// Enabled rules require this field; scheduling never infers a trigger from
+    /// the independent execution cooldown.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trigger_config: Option<String>,
 
@@ -146,12 +147,13 @@ pub struct RuleWires {
 
 /// Rule variable definition (matches Vue Flow format)
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RuleVariable {
     /// Variable name (e.g., "X1")
     pub name: String,
 
-    /// Instance ID (numeric), supports both "instance" and "instance_id" in JSON
-    #[serde(alias = "instance_id", skip_serializing_if = "Option::is_none")]
+    /// Instance ID (numeric).
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub instance: Option<u32>,
 
     /// Point type: "measurement" or "action"

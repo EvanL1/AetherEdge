@@ -617,7 +617,7 @@ async fn fetch_channel_sample(
         .await?
         .error_for_status()?;
     let json: Value = response.json().await?;
-    Ok(json.pointer("/data").and_then(parse_live_sample))
+    Ok(json.pointer("/data").and_then(parse_channel_sample))
 }
 
 async fn fetch_instances(client: &Client, base_url: &str) -> Result<Vec<InstanceInfo>> {
@@ -701,7 +701,7 @@ async fn fetch_inst_points(
             let pid = p["measurement_id"].as_u64().unwrap_or(0) as u32;
             let sample = live
                 .pointer(&format!("/measurements/{pid}"))
-                .and_then(parse_live_sample);
+                .and_then(parse_instance_sample);
             let (value, ts_ms) = sample.unwrap_or((f64::NAN, 0));
             rows.push(InstPointRow {
                 point_id: pid,
@@ -719,7 +719,7 @@ async fn fetch_inst_points(
             let pid = p["action_id"].as_u64().unwrap_or(0) as u32;
             let sample = live
                 .pointer(&format!("/actions/{pid}"))
-                .and_then(parse_live_sample);
+                .and_then(parse_instance_sample);
             let (value, ts_ms) = sample.unwrap_or((f64::NAN, 0));
             rows.push(InstPointRow {
                 point_id: pid,
@@ -786,30 +786,26 @@ pub(crate) fn is_stale(ts_ms: u64, threshold_s: u64) -> bool {
     now_ms().saturating_sub(ts_ms) / 1000 > threshold_s
 }
 
-fn parse_live_sample(sample: &Value) -> Option<(f64, u64)> {
-    let value = sample.get("value").and_then(|value| {
-        value
-            .as_f64()
-            .or_else(|| value.as_str().and_then(|value| value.parse().ok()))
-    })?;
+fn parse_channel_sample(sample: &Value) -> Option<(f64, u64)> {
+    let value = sample.get("value")?.as_str()?.parse::<f64>().ok()?;
     if !value.is_finite() {
         return None;
     }
-    let timestamp = sample
-        .get("timestamp_ms")
-        .or_else(|| sample.get("timestamp"))
-        .and_then(|timestamp| {
-            timestamp
-                .as_u64()
-                .or_else(|| timestamp.as_str().and_then(|value| value.parse().ok()))
-        })
-        .unwrap_or(0);
+    let timestamp = sample.get("timestamp")?.as_str()?.parse::<u64>().ok()?;
     Some((value, timestamp))
+}
+
+fn parse_instance_sample(sample: &Value) -> Option<(f64, u64)> {
+    let value = sample.get("value")?.as_f64()?;
+    if !value.is_finite() {
+        return None;
+    }
+    Some((value, sample.get("timestamp_ms")?.as_u64()?))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::parse_live_sample;
+    use super::{parse_channel_sample, parse_instance_sample};
 
     #[test]
     fn parses_shm_samples_from_channel_and_instance_apis() {
@@ -823,8 +819,31 @@ mod tests {
             "timestamp_ms": 1729000816000_u64
         });
 
-        assert_eq!(parse_live_sample(&channel), Some((12.5, 1729000815000)));
-        assert_eq!(parse_live_sample(&instance), Some((7.25, 1729000816000)));
-        assert_eq!(parse_live_sample(&serde_json::json!({"value": null})), None);
+        assert_eq!(parse_channel_sample(&channel), Some((12.5, 1729000815000)));
+        assert_eq!(
+            parse_instance_sample(&instance),
+            Some((7.25, 1729000816000))
+        );
+
+        // The IO and Automation services intentionally have distinct, fixed
+        // DTOs. Do not guess a second representation for either endpoint.
+        assert_eq!(
+            parse_channel_sample(&serde_json::json!({
+                "value": 12.5,
+                "timestamp_ms": 1729000815000_u64
+            })),
+            None
+        );
+        assert_eq!(
+            parse_instance_sample(&serde_json::json!({
+                "value": "7.25",
+                "timestamp": "1729000816000"
+            })),
+            None
+        );
+        assert_eq!(
+            parse_channel_sample(&serde_json::json!({"value": null})),
+            None
+        );
     }
 }

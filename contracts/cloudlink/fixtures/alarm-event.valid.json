@@ -1,0 +1,37 @@
+{
+  "schema": "aether.cloudlink.envelope",
+  "protocol": "aether.cloudlink",
+  "message_kind": "alarm-event",
+  "gateway_id": "33333333-3333-4333-8333-333333333333",
+  "session_id": "44444444-4444-4444-8444-444444444444",
+  "session_epoch": "7",
+  "credential_generation": "3",
+  "sent_at_ms": "1721000000123",
+  "delivery": {
+    "stream_id": "business",
+    "stream_epoch": "1",
+    "position": "19",
+    "batch_id": "alarm-trigger-42",
+    "digest": "sha256:51c46052c159342c6520c48ae45c8df187b6d7456e711591d6e9c9706f9b6148"
+  },
+  "payload": {
+    "type": "alarm",
+    "id": "alarm_007",
+    "event_id": "alarm-trigger-42",
+    "timestamp": 1721000000,
+    "data": {
+      "alarm_id": "42",
+      "event_id": "alarm-trigger-42",
+      "service_type": "io",
+      "source": "io",
+      "device": "10",
+      "channel_id": 10,
+      "data_type": "T",
+      "point_id": 8,
+      "status": 1,
+      "level": 2,
+      "value": 12.5,
+      "message": "High temperature"
+    }
+  }
+}

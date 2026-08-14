@@ -88,8 +88,8 @@ confidence into physical authority.
 ## Keep one remote boundary
 
 Only `aether-api` is intended for remote application traffic. It publishes fixed authenticated
-namespaces under `/api/v1/io`, `/api/v1/automation`, `/api/v1/history`, `/api/v1/uplink`, and
-`/api/v1/alarm`; their owning process APIs remain on loopback.
+namespaces under `/api/io`, `/api/automation`, `/api/history`, `/api/uplink`, and
+`/api/alarm`; their owning process APIs remain on loopback.
 
 A generated remote client must therefore:
 

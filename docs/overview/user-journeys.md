@@ -191,7 +191,7 @@ energy-domain example of this ownership model.
 
 Implemented today: the safe-empty six-service runtime, SHM live-state
 authority, embedded history, device protocols, deterministic rules and alarms,
-CLI, OpenAPI, governed commands, audit evidence, MCP foundations, Pack v1, and
+CLI, OpenAPI, governed commands, audit evidence, MCP foundations, Pack, and
 the SDK facade.
 
 Experimental or planned capabilities must remain visibly labeled. In

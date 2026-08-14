@@ -112,13 +112,14 @@ fn check_status_for_service_response(
     let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
         return CheckStatus::Error;
     };
-    let data = value.get("data").unwrap_or(&value);
+    let Some(data) = value.get("data") else {
+        return CheckStatus::Error;
+    };
     let enabled = data
         .get("storage_enabled")
         .and_then(serde_json::Value::as_bool);
     let backend = data
-        .get("configured_backend")
-        .or_else(|| data.get("backend"))
+        .get("backend")
         .and_then(serde_json::Value::as_str)
         .map(|backend| backend.to_ascii_lowercase());
 
@@ -162,7 +163,7 @@ const CORE_SERVICE_CHECKS: [ServiceCheck; 6] = [
     ServiceCheck {
         name: "aether-uplink",
         port: common::service_ports::UPLINK_PORT,
-        health_path: "/netApi/health",
+        health_path: "/health",
     },
     ServiceCheck {
         name: "aether-alarm",
@@ -298,7 +299,7 @@ async fn check_service(service: ServiceCheck) -> CheckResult {
             if response.status().is_success() {
                 match response.text().await {
                     Ok(body) => {
-                        let health = parse_health_body(&body);
+                        let health = parse_health_body(service.name, &body);
                         let extra = service_health_details(service.name, health.checks.as_ref());
 
                         match check_status_for_service_response(service.name, &body, health.state) {
@@ -362,9 +363,9 @@ async fn check_service(service: ServiceCheck) -> CheckResult {
     }
 }
 
-fn parse_health_body(body: &str) -> ParsedServiceHealth {
+fn parse_health_body(service_name: &str, body: &str) -> ParsedServiceHealth {
     let trimmed = body.trim();
-    if trimmed.eq_ignore_ascii_case("ok") || trimmed.eq_ignore_ascii_case("pong") {
+    if service_name == "aether-api" && trimmed == "ok" {
         return ParsedServiceHealth {
             state: ServiceHealthState::Healthy,
             checks: None,
@@ -377,24 +378,74 @@ fn parse_health_body(body: &str) -> ParsedServiceHealth {
             checks: None,
         };
     };
-    let data = value.get("data").unwrap_or(&value);
-    let status = data
-        .get("status")
-        .or_else(|| value.get("status"))
-        .and_then(serde_json::Value::as_str);
     let success = value.get("success").and_then(serde_json::Value::as_bool);
-    let checks = data.get("checks").or_else(|| value.get("checks")).cloned();
-
-    let state = match status.map(|status| status.to_ascii_lowercase()) {
-        Some(status) if matches!(status.as_str(), "healthy" | "running" | "ok") => {
-            ServiceHealthState::Healthy
+    let (state, checks) = match service_name {
+        "aether-io" | "aether-automation" => {
+            let Some(data) = value.get("data") else {
+                return ParsedServiceHealth {
+                    state: ServiceHealthState::Invalid,
+                    checks: None,
+                };
+            };
+            let status = data.get("status").and_then(serde_json::Value::as_str);
+            let state = match (success, status) {
+                (Some(true), Some("healthy")) => ServiceHealthState::Healthy,
+                (Some(false), Some("unhealthy")) => ServiceHealthState::Degraded,
+                _ => ServiceHealthState::Invalid,
+            };
+            (state, data.get("checks").cloned())
         },
-        Some(_) => ServiceHealthState::Degraded,
-        None => match success {
-            Some(true) => ServiceHealthState::Healthy,
-            Some(false) => ServiceHealthState::Degraded,
-            None => ServiceHealthState::Invalid,
+        "aether-history" => {
+            let valid_data = value
+                .get("data")
+                .and_then(serde_json::Value::as_object)
+                .is_some_and(|data| {
+                    data.get("backend")
+                        .and_then(serde_json::Value::as_str)
+                        .is_some()
+                        && data
+                            .get("storage_enabled")
+                            .and_then(serde_json::Value::as_bool)
+                            .is_some()
+                });
+            if !valid_data {
+                (ServiceHealthState::Invalid, None)
+            } else {
+                let state = match success {
+                    Some(true) => ServiceHealthState::Healthy,
+                    Some(false) => ServiceHealthState::Degraded,
+                    None => ServiceHealthState::Invalid,
+                };
+                (state, None)
+            }
         },
+        "aether-alarm" => {
+            let state = match (
+                success,
+                value.get("message").and_then(serde_json::Value::as_str),
+            ) {
+                (Some(true), Some(_)) => ServiceHealthState::Healthy,
+                _ => ServiceHealthState::Invalid,
+            };
+            (state, None)
+        },
+        "aether-uplink" => {
+            let canonical = value
+                .get("cloudlink")
+                .and_then(serde_json::Value::as_object)
+                .is_some()
+                && value
+                    .get("spool")
+                    .and_then(serde_json::Value::as_object)
+                    .is_some();
+            let state = if success == Some(true) && canonical {
+                ServiceHealthState::Healthy
+            } else {
+                ServiceHealthState::Invalid
+            };
+            (state, None)
+        },
+        _ => (ServiceHealthState::Invalid, None),
     };
 
     ParsedServiceHealth { state, checks }
@@ -723,7 +774,7 @@ mod tests {
                 ("aether-automation", "/health"),
                 ("aether-history", "/hisApi/health"),
                 ("aether-api", "/health"),
-                ("aether-uplink", "/netApi/health"),
+                ("aether-uplink", "/health"),
                 ("aether-alarm", "/health"),
             ]
         );
@@ -851,28 +902,52 @@ mod tests {
     }
 
     #[test]
-    fn health_parser_accepts_service_response_variants() {
+    fn health_parser_accepts_only_each_services_canonical_response() {
         let standard = parse_health_body(
+            "aether-io",
             r#"{"success":true,"data":{"status":"healthy","checks":{"sqlite":{}}}}"#,
         );
         assert_eq!(standard.state, ServiceHealthState::Healthy);
         assert!(standard.checks.is_some());
 
-        let alarm = parse_health_body(r#"{"success":true,"message":"Service is running"}"#);
+        let alarm = parse_health_body(
+            "aether-alarm",
+            r#"{"success":true,"message":"Service is running"}"#,
+        );
         assert_eq!(alarm.state, ServiceHealthState::Healthy);
 
-        let api = parse_health_body("ok");
+        let api = parse_health_body("aether-api", "ok");
         assert_eq!(api.state, ServiceHealthState::Healthy);
+
+        let uplink = parse_health_body(
+            "aether-uplink",
+            r#"{"success":true,"cloudlink":{},"spool":{}}"#,
+        );
+        assert_eq!(uplink.state, ServiceHealthState::Healthy);
+
+        for (service, body) in [
+            ("aether-api", "pong"),
+            ("aether-io", r#"{"success":true,"status":"healthy"}"#),
+            (
+                "aether-alarm",
+                r#"{"success":true,"data":{"status":"healthy"}}"#,
+            ),
+            (
+                "aether-uplink",
+                r#"{"success":true,"message":"MQTT connected"}"#,
+            ),
+        ] {
+            assert_eq!(
+                parse_health_body(service, body).state,
+                ServiceHealthState::Invalid,
+                "{service} accepted a retired health shape"
+            );
+        }
     }
 
     #[test]
-    fn health_parser_treats_optional_dependency_outages_as_degraded() {
-        let uplink = parse_health_body(
-            r#"{"success":false,"message":"MQTT disconnected","data":{"mqtt_connected":false}}"#,
-        );
-        assert_eq!(uplink.state, ServiceHealthState::Degraded);
-
-        let invalid = parse_health_body("not-json");
+    fn health_parser_rejects_invalid_json() {
+        let invalid = parse_health_body("aether-io", "not-json");
         assert_eq!(invalid.state, ServiceHealthState::Invalid);
         assert_eq!(
             check_status_for_service_health(invalid.state),
@@ -890,7 +965,7 @@ mod tests {
             check_status_for_service_response(
                 "aether-history",
                 sqlite,
-                parse_health_body(sqlite).state,
+                parse_health_body("aether-history", sqlite).state,
             ),
             CheckStatus::Error
         );
@@ -898,7 +973,7 @@ mod tests {
             check_status_for_service_response(
                 "aether-history",
                 postgres,
-                parse_health_body(postgres).state,
+                parse_health_body("aether-history", postgres).state,
             ),
             CheckStatus::Warning
         );
@@ -906,19 +981,9 @@ mod tests {
             check_status_for_service_response(
                 "aether-history",
                 disabled,
-                parse_health_body(disabled).state,
+                parse_health_body("aether-history", disabled).state,
             ),
             CheckStatus::Warning
-        );
-
-        let legacy_with_explicit_config = r#"{"success":false,"data":{"backend":"disabled","configured_backend":"sqlite","storage_enabled":true}}"#;
-        assert_eq!(
-            check_status_for_service_response(
-                "aether-history",
-                legacy_with_explicit_config,
-                parse_health_body(legacy_with_explicit_config).state,
-            ),
-            CheckStatus::Error
         );
     }
 

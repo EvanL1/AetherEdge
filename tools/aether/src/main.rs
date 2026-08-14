@@ -17,7 +17,6 @@ mod logs_tui;
 mod mcp;
 mod mcp_docs;
 mod models;
-mod net;
 mod output;
 mod pack_artifact;
 mod routing;
@@ -157,11 +156,7 @@ enum Commands {
     },
 
     /// Initialize database schema (migration-only, safe upgrade)
-    Init {
-        /// DEPRECATED: This option is disabled for safety. Database can only be upgraded, not reset.
-        #[arg(short, long, hide = true)]
-        force: bool,
-    },
+    Init,
 
     /// Export configuration from SQLite to YAML/CSV
     Export {
@@ -246,13 +241,6 @@ enum Commands {
     Alarms {
         #[command(subcommand)]
         command: alarms::AlarmCommands,
-    },
-
-    /// Manage uplink: MQTT connection/config and TLS certificates
-    #[command(about = "Manage MQTT connection, uplink config, and TLS certificates")]
-    Net {
-        #[command(subcommand)]
-        command: net::NetCommands,
     },
 
     /// Query historical data from history
@@ -382,7 +370,7 @@ async fn run(cli: Cli) -> Result<()> {
     let db_path = install_paths.data_directory;
     let install_mode = install_paths.install_mode;
 
-    if !json && matches!(cli.command, Commands::Init { .. }) && !cli.no_color {
+    if !json && matches!(cli.command, Commands::Init) && !cli.no_color {
         print_banner();
         println!(
             "{} Config: {}, DB: {}",
@@ -447,14 +435,14 @@ async fn run(cli: Cli) -> Result<()> {
             }
             cloud::handle_command(command, &db_path, json).await?;
         },
-        Commands::Init { force } => {
+        Commands::Init => {
             if host.is_some() {
                 eprintln!("warning: --host is ignored for 'init' (local filesystem operation)");
             }
             if !json {
                 println!("{}", "Initializing database schema...".bright_cyan());
             }
-            init_command(&db_path, force, json).await?;
+            init_command(&db_path, json).await?;
         },
         Commands::Export { output, detailed } => {
             if host.is_some() {
@@ -520,10 +508,6 @@ async fn run(cli: Cli) -> Result<()> {
         Commands::Alarms { command } => {
             let urls = mcp::BaseUrls::from_api_base(&api_base_url(host));
             alarms::handle_command(command, &urls.alarm, json).await?;
-        },
-        Commands::Net { command } => {
-            let urls = mcp::BaseUrls::from_api_base(&api_base_url(host));
-            net::handle_command(command, &urls.uplink, json).await?;
         },
         Commands::History { command } => {
             let urls = mcp::BaseUrls::from_api_base(&api_base_url(host));
@@ -997,28 +981,12 @@ fn require_data_directory(db_path: &Path) -> Result<()> {
     Ok(())
 }
 
-async fn init_command(db_path: &Path, force: bool, json: bool) -> Result<()> {
+async fn init_command(db_path: &Path, json: bool) -> Result<()> {
     require_data_directory(db_path)?;
     let db_file = db_path.join("aether.db");
 
     if !json {
         println!();
-    }
-
-    // --force is disabled for safety (migration-only policy)
-    if force {
-        if !json {
-            eprintln!(
-                "{} --force is disabled for safety.",
-                "WARNING".bright_yellow()
-            );
-            eprintln!("   Database can only be upgraded, not reset.");
-            eprintln!(
-                "   If you really need to reset, manually delete: {}",
-                db_file.display()
-            );
-        }
-        return Ok(());
     }
 
     if !json {
@@ -1281,7 +1249,7 @@ async fn check_point_duplicates(pool: &sqlx::SqlitePool, table: &str, json: bool
 #[cfg(test)]
 mod cli_tests {
     use super::{Cli, require_data_directory};
-    use clap::CommandFactory;
+    use clap::{CommandFactory, Parser};
     use std::path::Path;
 
     #[test]
@@ -1316,6 +1284,12 @@ mod cli_tests {
     #[test]
     fn cli_definition_is_valid() {
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn retired_init_force_and_net_commands_are_rejected() {
+        assert!(Cli::try_parse_from(["aether", "init", "--force"]).is_err());
+        assert!(Cli::try_parse_from(["aether", "net", "mqtt", "status"]).is_err());
     }
 
     #[test]

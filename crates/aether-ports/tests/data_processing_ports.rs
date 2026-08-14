@@ -290,7 +290,7 @@ fn data_processing_ports_are_object_safe_and_processors_are_discoverable() {
         "load-forecasting-edge",
         "2.1.0",
         vec![TaskKind::Forecast],
-        vec!["aether.data-processing.forecast.v1".into()],
+        vec!["aether.data-processing.forecast".into()],
         DataBoundary::Local,
         4_096,
         4_194_304,
@@ -303,7 +303,7 @@ fn data_processing_ports_are_object_safe_and_processors_are_discoverable() {
     assert!(
         processor
             .descriptor()
-            .supports_contract("aether.data-processing.forecast.v1")
+            .supports_contract("aether.data-processing.forecast")
     );
     assert_eq!(processor.descriptor().data_boundary(), DataBoundary::Local);
     assert_eq!(processor.descriptor().max_frame_samples(), 4_096);
@@ -317,7 +317,7 @@ fn processor_descriptors_reject_empty_identity_capabilities_and_limits() {
         "",
         "2.1.0",
         vec![TaskKind::Forecast],
-        vec!["aether.data-processing.forecast.v1".into()],
+        vec!["aether.data-processing.forecast".into()],
         DataBoundary::Local,
         10,
         1_024,
@@ -329,7 +329,7 @@ fn processor_descriptors_reject_empty_identity_capabilities_and_limits() {
         "processor",
         "2.1.0",
         vec![],
-        vec!["aether.data-processing.forecast.v1".into()],
+        vec!["aether.data-processing.forecast".into()],
         DataBoundary::Local,
         10,
         1_024,
@@ -341,7 +341,7 @@ fn processor_descriptors_reject_empty_identity_capabilities_and_limits() {
         "processor",
         "2.1.0",
         vec![TaskKind::Forecast],
-        vec!["aether.data-processing.forecast.v1".into()],
+        vec!["aether.data-processing.forecast".into()],
         DataBoundary::Remote,
         0,
         1_024,

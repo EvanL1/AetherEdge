@@ -1,4 +1,3 @@
-schema_version: 1
 id: energy
 name: Aether Energy
 version: 0.0.1
@@ -53,9 +52,7 @@ capabilities:
   rule_topics:
     - soc-management
   mappings:
-    - energy.product-name-aliases
     - energy.example-instance-channel-bindings
-    - energy.legacy-instance-properties-v5
   rules:
     - energy.battery-soc-management
   evaluations:

@@ -7,7 +7,7 @@ updated: 2026-07-11
 # Connect Data Processors
 
 This page explains the implemented integration pattern for **Aether Data
-Processing**. The core types, application orchestration, v1 codec, local test
+Processing**. The core types, application orchestration, strict codec, local test
 adapters, bounded HTTP adapter, schemas, and energy-pack examples are present
 in this repository. The opt-in `aether-api` composition reads a strict runtime
 configuration; the complete synthetic template is
@@ -64,11 +64,11 @@ commissioning loader translates validated assets into enabled routes.
 The following load-forecast task is illustrative:
 
 ```yaml
-schema: aether.data-processing-task.v1
+schema: aether.data-processing-task
 id: energy.site-load-forecast
 revision: 1
 kind: forecast
-processor_contract: aether.data-processing.forecast.v1
+processor_contract: aether.data-processing.forecast
 
 target:
   name: load
@@ -182,7 +182,7 @@ The declaration should contain only portable domain semantics:
 Site commissioning resolves `instance_ref` and `point_ref` to the actual
 instances and routes. Pack validation must fail closed if a required reference
 cannot be resolved or its physical unit, scale, offset, point kind, or target
-sign convention does not exactly match the commissioned task. The current v1
+sign convention does not exactly match the commissioned task. The runtime
 runtime validates those facts; it does not perform engineering-unit or sign
 conversion.
 
@@ -217,13 +217,14 @@ pub trait DataProcessor: Send + Sync {
 
 The request and result are typed contracts documented in
 [Data Processing Contracts](../reference/data-processing-contracts.md). A
-processor descriptor declares supported contract versions, task kinds, the
+processor descriptor declares supported task-contract identifiers, task kinds, the
 local/remote data boundary, and finite frame/request limits. It must not expose
 a generic vendor command set or an unvalidated `run(json)` escape hatch.
 
 A processor is responsible for:
 
-- rejecting unsupported contract versions, task kinds, features, and shapes;
+- rejecting every contract identifier other than its configured current task
+  contract, plus unsupported task kinds, features, and shapes;
 - applying the feature order and normalization owned by the selected model;
 - executing its deterministic algorithm or model runtime;
 - returning the actual model version and artifact digest;
@@ -251,14 +252,14 @@ Only a composition root chooses a concrete processor. The strict runtime YAML
 contains the full task, binding, history route, covariate source, and processor
 descriptor. This abbreviated fragment shows only the processor portion; do not
 use it as a complete configuration. `HttpDataProcessorConfig` receives a
-validated endpoint and derives the fixed `/v1/process` and `/v1/health` routes:
+validated endpoint and derives the fixed `/process` and `/health` routes:
 
 ```yaml
 processor:
   endpoint: http://127.0.0.1:8989/
   id: example-forecast-processor
   version: 0.1.0
-  contract: aether.data-processing.forecast.v1
+  contract: aether.data-processing.forecast
   requires_artifact: true
   boundary: local
   max_frame_cells: 5000
@@ -272,7 +273,7 @@ processor:
 The generic domain/processor contract supports static features, and custom
 in-process compositions can bind them through `DataProcessingBinding`. The
 current `aether-api` runtime YAML loader has no static-value binding field, so a
-runtime-configured v1 route must not declare static features. Add loader support
+runtime-configured route must not declare static features. Add loader support
 and tests before commissioning one; do not assume the wire schema alone makes
 it available.
 
@@ -298,14 +299,14 @@ task-specific transforms supplied by the commissioned assembly composition:
 3. Query the required historical range through `HistoryQuery`.
 4. Read the latest values through the read-only `LiveState` port when the task
    allows a live tail and that feature uses `aggregation: last`, then replace
-   only its final interval cell without changing SHM authority. Version 1
+   only its final interval cell without changing SHM authority. The runtime
    rejects live tail for `mean`, `sum`, `min`, or `max` because an instantaneous
    value cannot represent an aggregate bucket. The load/PV tasks forbid it.
 5. Obtain future-known inputs through a typed `CovariateSource`.
 6. Generate deterministic calendar features locally.
 7. Verify exact commissioned unit/sign metadata, align timestamps, aggregate
    raw observations, resolve duplicates, and apply the declared missing-data
-   policy. Version 1 performs no runtime unit/sign conversion.
+   policy. The runtime performs no unit/sign conversion.
 8. Calculate frame quality and a canonical input digest.
 9. Select the configured processor and submit one complete `ProcessingFrame`.
 10. Validate the returned task ID, request ID, input digest, timestamps, units,
@@ -332,7 +333,7 @@ and physical remaps behind an unchanged logical series can alter or splice an
 old event-time window. Binding revisions validate the current route only.
 Offline evaluations need a frozen historian export captured at the evaluation
 cut, or a bitemporal, epoch-bearing history adapter. Freeze the artifact
-registry too: v1 artifact identity has version and digest but no
+registry too: artifact identity has version and digest but no
 `trained_through` or `available_at`, so an old `as_of` alone cannot exclude a
 model released later.
 
@@ -353,31 +354,31 @@ be revised rather than allowing an undeclared read.
 
 ## Invoke the application API
 
-Version 1 is exposed by the opt-in, JWT-protected `aether-api` routes:
+The contract is exposed by the opt-in, JWT-protected `aether-api` routes:
 
-- `GET /api/v1/data-processing/tasks`;
-- `GET /api/v1/data-processing/processors/health`; and
-- `POST /api/v1/data-processing/process`.
+- `GET /api/data-processing/tasks`;
+- `GET /api/data-processing/processors/health`; and
+- `POST /api/data-processing/process`.
 
 Viewer, Engineer, and Admin roles may use discovery; processing requires
 Engineer or Admin. The process body is the strict application request, not a
 complete frame or processor endpoint. `x-request-id` is optional and
 `x-aether-confirmed: true` supplies explicit confirmation when route policy
 requires it. CLI and MCP bindings for these capabilities are not implemented
-in v1; future transports must call the same application API rather than the
+in the current composition; future transports must call the same application API rather than the
 sidecar.
 
 ## Request a processor directly during development
 
-The optional HTTP adapter maps `DataProcessor::process` to the versioned
-processor-facing `POST /v1/process` endpoint. The downstream AetherEMS
+The optional HTTP adapter maps `DataProcessor::process` to the canonical
+processor-facing `POST /process` endpoint. The downstream AetherEMS
 Load-Forecasting processor implements that endpoint; it is a processor boundary,
 not an application-facing endpoint on the default Aether services.
 
 ```bash
 curl --fail-with-body \
-  --request POST http://127.0.0.1:8989/v1/process \
-  --header 'Content-Type: application/vnd.aether.data-processing+json;version=1' \
+  --request POST http://127.0.0.1:8989/process \
+  --header 'Content-Type: application/vnd.aether.data-processing+json' \
   --data @processing-request.json
 ```
 
@@ -388,7 +389,7 @@ quality, policy, and result validation cannot be bypassed.
 ## Retry and content identity
 
 `data_processing.process` is a read-only query but is deliberately declared
-`idempotent: false`. Version 1 has no request replay store, de-duplication
+`idempotent: false`. The runtime has no request replay store, de-duplication
 contract, exact-result guarantee, or `409 REQUEST_ID_REUSED` behavior. Each
 accepted invocation receives its own audit record and may execute the processor
 again.
@@ -422,7 +423,7 @@ Before routing a task to a processor, verify that it:
 - proves that processor loss cannot block acquisition or deterministic safety
   behavior.
 
-SHM v5 retains device-origin quality for live samples and combines it with
+The current SHM layout retains device-origin quality for live samples and combines it with
 freshness policy. The current SQLite history schema still does not retain
 source quality, so historical and mixed frames cannot claim complete
 end-to-end quality fidelity. A deployment requiring original quality for
@@ -431,11 +432,11 @@ production.
 
 ## Related pages
 
-- [Data Processing Contracts](../reference/data-processing-contracts.md) — v1 wire contracts and validation rules
+- [Data Processing Contracts](../reference/data-processing-contracts.md) — wire contracts and validation rules
 - [HTTP Data Processor](../../services/api/adapters/http-data-processor/README.md) — bounded local/remote adapter and composition API
 - [AetherEMS Power Forecasting](https://github.com/EvanL1/AetherEMS/blob/main/packs/energy/knowledge/power-forecasting.md) — the first downstream task and processor
-- [Load-Forecasting Processor](https://github.com/EvanL1/AetherEMS/tree/main/processors/load-forecasting) — downstream energy-domain `/v1/process` implementation
-- [JSON Schemas](../../contracts/data-processing/README.md) — strict v1 transport validation
+- [Load-Forecasting Processor](https://github.com/EvanL1/AetherEMS/tree/main/processors/load-forecasting) — downstream energy-domain `/process` implementation
+- [JSON Schemas](../../contracts/data-processing/README.md) — strict transport validation
 - [Data Flow](../concepts/data-flow.md) — authoritative live and historical paths
 - [System Architecture](../concepts/architecture.md) — core layers and service boundaries
 - [Safe Operations for Applications and Agents](safe-operations.md) — why derived data does not bypass control policy

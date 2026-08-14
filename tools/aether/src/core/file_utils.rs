@@ -255,6 +255,7 @@ pub fn set_database_permissions<P: AsRef<Path>>(path: P) -> Result<()> {
 #[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
 mod tests {
     use super::*;
+    use aether_config::io::TelemetryPoint;
     use serde_json::json;
 
     // ========================================================================
@@ -457,5 +458,36 @@ mod tests {
         };
 
         assert_eq!(error.row_number, 0);
+    }
+
+    #[test]
+    fn typed_point_csv_accepts_one_scalar_representation() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("telemetry.csv");
+        std::fs::write(
+            &path,
+            concat!(
+                "point_id,signal_name,scale,offset,unit,reverse,data_type\n",
+                "1,voltage,0,-1.5,V,true,float64\n",
+                "2,empty-scale,,0,V,false,float64\n",
+                "3,yes-bool,1,0,V,yes,float64\n",
+                "4,integer-bool,1,0,V,1,float64\n",
+            ),
+        )
+        .unwrap();
+
+        let (points, errors) = load_csv_typed_with_errors::<TelemetryPoint, _>(&path).unwrap();
+        assert_eq!(points.len(), 1);
+        assert_eq!(points[0].scale, 0.0, "explicit CSV zero is preserved");
+        assert_eq!(points[0].offset, -1.5);
+        assert!(points[0].reverse);
+        assert_eq!(errors.len(), 3, "empty/yes/integer forms must fail closed");
+        assert_eq!(
+            errors
+                .iter()
+                .map(|error| error.row_number)
+                .collect::<Vec<_>>(),
+            vec![2, 3, 4]
+        );
     }
 }

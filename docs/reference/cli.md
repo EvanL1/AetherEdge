@@ -6,7 +6,7 @@ updated: 2026-08-02
 
 # CLI Reference
 
-`aether` (version 0.5.0) is the unified management tool for Aether. It covers
+`aether` (version 0.0.2) is the unified management tool for Aether. It covers
 configuration management (`setup`, `sync`, `status`, `init`, `export`) and service
 operations (`channels`, `models`, `rules`, `services`, `logs`, and more).
 Every section below is generated from the binary's own `--help` output.
@@ -623,18 +623,6 @@ Usage: aether models products list [OPTIONS]
 aether models products list --json
 ```
 
-### models products available
-
-List product definitions in the `products/` directory.
-
-```
-Usage: aether models products available [OPTIONS]
-```
-
-```bash
-aether models products available
-```
-
 ### models products get
 
 Show detailed information about a selected product.
@@ -665,19 +653,26 @@ aether models instances list --product battery
 
 ### models instances create
 
-Create a new device instance from a product template. Positional arguments:
-`<PRODUCT>` `<NAME>`.
+Create a new device instance from a product template. Positional arguments are
+the canonical product and instance names. Read the current compare-and-set value
+from `GET /api/instances/revision`; the CLI never guesses or fetches it during a
+mutation.
 
 ```
-Usage: aether models instances create [OPTIONS] <PRODUCT> <NAME>
+Usage: aether models instances create [OPTIONS] --expected-revision <EXPECTED_REVISION> <PRODUCT_NAME> <INSTANCE_NAME>
 ```
 
 | Flag | Description |
 |------|-------------|
-| `-p, --props <PROPS>` | Properties in `key=value` format |
+| `--instance-id <INSTANCE_ID>` | Optional explicit numeric identity; omit to allocate one |
+| `-p, --props <PROPS>` | Property in `key=<JSON literal>` form; repeat for multiple properties and quote JSON strings |
+| `--expected-revision <EXPECTED_REVISION>` | Required `instances` compare-and-set revision |
+| `--confirmed` | Required explicit confirmation |
 
 ```bash
-aether models instances create battery bat-01 --props capacity=100
+aether models instances create battery bat-01 \
+  --props capacity=100 --props 'owner="ops"' \
+  --expected-revision 7 --confirmed
 ```
 
 ### models instances get
@@ -685,27 +680,32 @@ aether models instances create battery bat-01 --props capacity=100
 Show detailed information about an instance.
 
 ```
-Usage: aether models instances get [OPTIONS] <NAME>
+Usage: aether models instances get <INSTANCE_ID>
 ```
 
 ```bash
-aether models instances get bat-01
+aether models instances get 9
 ```
 
 ### models instances update
 
-Update instance properties.
+Update an instance name and/or replace its properties. Property values are
+strict JSON literals; an unquoted text value is rejected.
 
 ```
-Usage: aether models instances update [OPTIONS] <NAME>
+Usage: aether models instances update [OPTIONS] --expected-revision <EXPECTED_REVISION> <INSTANCE_ID>
 ```
 
 | Flag | Description |
 |------|-------------|
-| `-p, --props <PROPS>` | Properties to update in `key=value` format |
+| `--instance-name <INSTANCE_NAME>` | Optional new instance name |
+| `-p, --props <PROPS>` | Replacement property in `key=<JSON literal>` form; repeat for multiple properties |
+| `--expected-revision <EXPECTED_REVISION>` | Required `instances` compare-and-set revision |
+| `--confirmed` | Required explicit confirmation |
 
 ```bash
-aether models instances update bat-01 --props capacity=120
+aether models instances update 9 --props capacity=120 \
+  --expected-revision 8 --confirmed
 ```
 
 ### models instances delete
@@ -716,15 +716,17 @@ The command fails closed while the instance owns a physical action route;
 delete or migrate that route with the governed routing command first.
 
 ```
-Usage: aether models instances delete [OPTIONS] <NAME>
+Usage: aether models instances delete [OPTIONS] --expected-revision <EXPECTED_REVISION> <INSTANCE_ID>
 ```
 
 | Flag | Description |
 |------|-------------|
-| `-f, --force` | Force deletion without confirmation |
+| `-f, --force` | Skip only the interactive prompt |
+| `--expected-revision <EXPECTED_REVISION>` | Required `instances` compare-and-set revision |
+| `--confirmed` | Required explicit confirmation; `--force` does not replace it |
 
 ```bash
-aether models instances delete bat-01 --force
+aether models instances delete 9 --force --expected-revision 9 --confirmed
 ```
 
 ### models instances data
@@ -737,10 +739,10 @@ Usage: aether models instances data [OPTIONS] <INSTANCE_ID>
 
 | Flag | Description |
 |------|-------------|
-| `-t, --point-type <POINT_TYPE>` | Point type filter (M for measurements, A for actions, both if not specified) |
+| `-t, --point-type <POINT_TYPE>` | Point type filter (`measurement` or `action`; both if not specified) |
 
 ```bash
-aether models instances data 9 --point-type M
+aether models instances data 9 --point-type measurement
 ```
 
 ### models instances action
@@ -1349,7 +1351,7 @@ The self-contained page refreshes once per second and displays authority
 status, publication epoch, both writer heartbeats, exact plane sizes and
 generations, point-quality distribution, a bounded typed live-point preview,
 and stable-code findings. Its JSON source is the same-origin read-only endpoint
-`/api/v1/observation`. The server rejects `0.0.0.0`, LAN, and public bind
+`/api/observation`. The server rejects `0.0.0.0`, LAN, and public bind
 addresses; it has no mutation route, external asset, CORS grant, or persistent
 state. The point preview is available when `--db-path` resolves the SQLite
 manifest that matches the live SHM layout; plane observability remains
@@ -1667,122 +1669,6 @@ AETHER_ACCESS_TOKEN='<signed access JWT>' \
   aether alarms rule-disable 7 --confirmed
 ```
 
-## aether net
-
-Manage MQTT connection, uplink config, and TLS certificates. Two subcommand
-groups: `mqtt` and `cert`.
-
-```
-Usage: aether net [OPTIONS] <COMMAND>
-```
-
-### net mqtt status
-
-Show MQTT connection status.
-
-```
-Usage: aether net mqtt status [OPTIONS]
-```
-
-```bash
-aether net mqtt status --json
-```
-
-### net mqtt config
-
-Show the current uplink configuration.
-
-```
-Usage: aether net mqtt config [OPTIONS]
-```
-
-```bash
-aether net mqtt config
-```
-
-### net mqtt config-set
-
-Replace uplink configuration from a JSON file (full `NetConfig` object).
-
-```
-Usage: aether net mqtt config-set [OPTIONS] --file <FILE>
-```
-
-| Flag | Description |
-|------|-------------|
-| `--file <FILE>` | Path to a JSON file containing the complete `NetConfig` object |
-
-```bash
-aether net mqtt config-set --file netconfig.json
-```
-
-### net mqtt reconnect
-
-Reconnect the MQTT client.
-
-```
-Usage: aether net mqtt reconnect [OPTIONS]
-```
-
-```bash
-aether net mqtt reconnect
-```
-
-### net mqtt disconnect
-
-Disconnect the MQTT client.
-
-```
-Usage: aether net mqtt disconnect [OPTIONS]
-```
-
-```bash
-aether net mqtt disconnect
-```
-
-### net cert info
-
-Show installed TLS certificate info.
-
-```
-Usage: aether net cert info [OPTIONS]
-```
-
-```bash
-aether net cert info
-```
-
-### net cert delete
-
-Delete a TLS certificate by type.
-
-```
-Usage: aether net cert delete [OPTIONS] <CERT_TYPE>
-```
-
-`<CERT_TYPE>` possible values: `ca_cert`, `client_cert`, `client_key`.
-
-```bash
-aether net cert delete client_cert
-```
-
-### net cert upload
-
-Upload a TLS certificate file (max 1 MB). Accepted extensions: `.pem` `.crt`
-`.key` `.cer` `.p12` `.pfx`.
-
-```
-Usage: aether net cert upload [OPTIONS] --type <CERT_TYPE> <FILE>
-```
-
-| Flag | Description |
-|------|-------------|
-| `--type <CERT_TYPE>` | Certificate role [possible values: `ca_cert`, `client_cert`, `client_key`] |
-
-```bash
-aether net cert upload ca.pem --type ca_cert
-```
-
 ## aether history
 
 Query historical sensor data (latest values, time-range queries).
@@ -1934,7 +1820,7 @@ See [AI Assistants](../guides/ai-assistants.md) for connecting MCP clients.
 
 ## Exit codes and JSON mode
 
-Observed behavior of `aether` 0.4.0:
+Observed behavior of `aether` 0.0.2:
 
 - **Exit 0** — the operation succeeded.
 - **Exit 1** — the operation failed (for example, a target service is

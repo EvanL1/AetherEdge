@@ -103,7 +103,8 @@ context file automatically. Without that context, Aether never adopts an old
 installation directory merely because it exists.
 
 For a fresh manual Compose deployment, create a private environment file and
-fill both first-start secrets before validating the composition. Packaged
+fill the two independent runtime credentials plus the first-start admin
+password before validating the composition. Packaged
 installers do this automatically; repository setup deliberately keeps secrets
 out of configuration templates.
 
@@ -119,6 +120,7 @@ random_hex_32() {
   fi
 }
 export JWT_SECRET_KEY="$(random_hex_32)"
+export AETHER_ALARM_BROADCAST_TOKEN="$(random_hex_32)"
 export AETHER_BOOTSTRAP_ADMIN_PASSWORD="$(random_hex_32)"
 
 env_tmp="$(mktemp ./.env.tmp.XXXXXX)"
@@ -126,6 +128,9 @@ chmod 600 "$env_tmp"
 awk '
   /^JWT_SECRET_KEY=/ {
     print "JWT_SECRET_KEY=" ENVIRON["JWT_SECRET_KEY"]; next
+  }
+  /^AETHER_ALARM_BROADCAST_TOKEN=/ {
+    print "AETHER_ALARM_BROADCAST_TOKEN=" ENVIRON["AETHER_ALARM_BROADCAST_TOKEN"]; next
   }
   /^AETHER_BOOTSTRAP_ADMIN_PASSWORD=/ {
     print "AETHER_BOOTSTRAP_ADMIN_PASSWORD=" ENVIRON["AETHER_BOOTSTRAP_ADMIN_PASSWORD"]; next
@@ -135,13 +140,15 @@ awk '
 mv "$env_tmp" .env
 
 JWT_SECRET_KEY="$JWT_SECRET_KEY" \
+  AETHER_ALARM_BROADCAST_TOKEN="$AETHER_ALARM_BROADCAST_TOKEN" \
   AETHER_BOOTSTRAP_ADMIN_PASSWORD="$AETHER_BOOTSTRAP_ADMIN_PASSWORD" \
   docker compose config --quiet
-unset JWT_SECRET_KEY AETHER_BOOTSTRAP_ADMIN_PASSWORD
+unset JWT_SECRET_KEY AETHER_ALARM_BROADCAST_TOKEN \
+  AETHER_BOOTSTRAP_ADMIN_PASSWORD
 ```
 
-Keep `JWT_SECRET_KEY` stable. Sign in as `admin` with the generated bootstrap
-value, change the password immediately, then remove
+Keep both runtime credentials stable and distinct. Sign in as `admin` with the
+generated bootstrap value, change the password immediately, then remove
 `AETHER_BOOTSTRAP_ADMIN_PASSWORD` from `.env`. Public registration stays off
 because the example sets `AETHER_ALLOW_PUBLIC_REGISTRATION=false`.
 
@@ -203,7 +210,7 @@ the login API expects the hex MD5 digest of the password, not the plaintext:
 # The bootstrap value was unset from the shell above; read it back from .env
 bootstrap_password="$(grep '^AETHER_BOOTSTRAP_ADMIN_PASSWORD=' .env | cut -d= -f2-)"
 digest="$(printf '%s' "$bootstrap_password" | md5sum | cut -d' ' -f1)"
-export AETHER_ACCESS_TOKEN="$(curl -s http://localhost:6005/api/v1/auth/login \
+export AETHER_ACCESS_TOKEN="$(curl -s http://localhost:6005/api/auth/login \
   -H 'content-type: application/json' \
   -d "{\"username\":\"admin\",\"password\":\"$digest\"}" | jq -r '.data.access_token')"
 unset bootstrap_password digest

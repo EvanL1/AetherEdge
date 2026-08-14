@@ -13,7 +13,7 @@ provides authoritative live state, a device-command dispatcher, and the
 mandatory audit sink. This keeps Redis, PostgreSQL, SQLx, web frameworks, and
 protocol drivers out of the SDK's default dependency graph.
 
-The `aether_sdk::pack` facade exposes the versioned, fail-closed domain-pack
+The `aether_sdk::pack` facade exposes the fail-closed domain-pack
 manifest loader. Loading a pack validates compatibility and confined asset
 directories; it never installs or commissions the pack.
 
@@ -28,7 +28,7 @@ cargo add aether-edge-sdk --features local-runtime
 
 ```toml
 [dependencies]
-aether-sdk = { package = "aether-edge-sdk", version = "0.0.1", features = ["local-runtime"] }
+aether-sdk = { package = "aether-edge-sdk", version = "0.0.2", features = ["local-runtime"] }
 ```
 
 To build against an exact signed release commit instead of the registry, use
@@ -36,7 +36,7 @@ the matching release tag:
 
 ```toml
 [dependencies]
-aether-sdk = { package = "aether-edge-sdk", git = "https://github.com/EvanL1/AetherEdge.git", tag = "v0.0.1", features = ["local-runtime"] }
+aether-sdk = { package = "aether-edge-sdk", git = "https://github.com/EvanL1/AetherEdge.git", tag = "v0.0.2", features = ["local-runtime"] }
 ```
 
 For a runnable zero-external-service composition, see the repository's

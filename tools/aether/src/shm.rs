@@ -130,7 +130,7 @@ pub(crate) fn parse_key(key: &str) -> Result<ShmKey> {
         ["inst", id, role, point_id] => {
             let instance_id: u32 = id.parse().context("Invalid instance ID")?;
             let point_id: u32 = point_id.parse().context("Invalid point ID")?;
-            let point_type = match role.to_uppercase().as_str() {
+            let point_type = match *role {
                 "M" => 0,
                 "A" => 1,
                 _ => bail!("Invalid role '{}'. Use M (Measurement) or A (Action)", role),
@@ -144,7 +144,7 @@ pub(crate) fn parse_key(key: &str) -> Result<ShmKey> {
         ["ch", id, ptype, point_id] => {
             let channel_id: u32 = id.parse().context("Invalid channel ID")?;
             let point_id: u32 = point_id.parse().context("Invalid point ID")?;
-            let point_type = match ptype.to_uppercase().as_str() {
+            let point_type = match *ptype {
                 "T" => PointType::Telemetry,
                 "S" => PointType::Signal,
                 "C" => PointType::Control,
@@ -747,7 +747,6 @@ fn plane_json(plane: &ShmPlaneObservation) -> serde_json::Value {
     });
     serde_json::json!({
         "path": plane.path.display().to_string(),
-        "version": plane.version,
         "slot_count": plane.slot_count,
         "file_size": plane.file_size,
         "layout_hash": format!("0x{:016x}", plane.layout_hash),
@@ -1379,15 +1378,8 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_key_instance_lowercase() {
-        // Test case insensitivity
-        let key = parse_key("inst:1:m:2").unwrap();
-        match key {
-            ShmKey::Instance { point_type, .. } => {
-                assert_eq!(point_type, 0); // Measurement
-            },
-            _ => panic!("Expected Instance key"),
-        }
+    fn test_parse_key_instance_lowercase_is_rejected() {
+        assert!(parse_key("inst:1:m:2").is_err());
     }
 
     #[test]
@@ -1447,14 +1439,8 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_key_channel_lowercase() {
-        let key = parse_key("ch:1:t:2").unwrap();
-        match key {
-            ShmKey::Channel { point_type, .. } => {
-                assert_eq!(point_type, PointType::Telemetry);
-            },
-            _ => panic!("Expected Channel key"),
-        }
+    fn test_parse_key_channel_lowercase_is_rejected() {
+        assert!(parse_key("ch:1:t:2").is_err());
     }
 
     #[test]

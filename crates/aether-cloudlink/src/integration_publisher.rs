@@ -138,10 +138,16 @@ impl CloudLinkIntegrationPublisher {
                     .validate_session(&self.session)
                     .map_err(codec_error)?;
                 let spool = self
-                    .spool_for_stream(request.stream_id(), request.stream_epoch())
+                    .spool_for_stream(
+                        request.stream_id(),
+                        request.stream_epoch().map_err(codec_error)?,
+                    )
                     .await?;
                 let offered = self
-                    .offer_from(spool.as_ref(), request.from_position())
+                    .offer_from(
+                        spool.as_ref(),
+                        request.from_position().map_err(codec_error)?,
+                    )
                     .await?;
                 Ok(CloudLinkIntegrationPublishEvent::Replay { offered })
             },

@@ -1,7 +1,7 @@
 ---
 title: Deployment
 description: Run with Docker Compose or build a self-contained installer for edge devices
-updated: 2026-07-17
+updated: 2026-08-14
 ---
 
 # Deployment
@@ -32,14 +32,14 @@ browser client. The EMS operator console, Energy Pack, and Load-Forecasting
 processor belong to the independent
 [AetherEMS](https://github.com/EvanL1/AetherEMS) distribution.
 
-| Container | Image | Role |
+| Compose service | Image | Role |
 |-----------|-------|------|
-| aether-timescaledb | timescale/timescaledb:2.25.2-pg17 | Optional PostgreSQL history backend (`postgres-storage` profile) |
+| timescaledb | timescale/timescaledb:2.25.2-pg17 | Optional PostgreSQL history backend (`postgres-storage` profile; container name `aether-timescaledb`) |
 | aether-io | aetherems:latest | Communication service (privileged, mounts `/dev` for field buses) |
 | aether-automation | aetherems:latest | Model service and rule engine |
 | aether-history | aetherems:latest | SHM sampler with embedded SQLite history by default |
 | aether-api | aetherems:latest | REST API, WebSocket, JWT auth |
-| aether-uplink | aetherems:latest | MQTT cloud uplink, TLS certificates |
+| aether-uplink | aetherems:latest | CloudLink session, durable delivery, ACK, and replay |
 | aether-alarm | aetherems:latest | Alarm rules and notifications |
 
 The generic Data Processing application remains disabled by default. A
@@ -65,7 +65,7 @@ so the documented production Data Processing route is blocked until a site
 override provides and verifies that separation. SQLite `mode=ro` and
 `query_only=ON` alone are not sufficient containment.
 
-The `/api/v1/data-processing/process` call is non-idempotent and writes a
+The `/api/data-processing/process` call is non-idempotent and writes a
 mandatory audit record even when work is rejected. The current API does not
 provide an actor/IP request-rate limiter or an audit retention quota. A
 production ingress must therefore enforce authenticated actor and source-IP
@@ -81,10 +81,16 @@ complete, bounded `ProcessingFrame` over the processor port. The downstream
 composition must also enforce egress policy and measured CPU, memory, and PID
 limits so processor load cannot starve deterministic services.
 
-The six Rust services share one `aetherems:latest` compatibility image, each
-started with its own command. The image name is retained while downstream
-release consumers migrate; it does not imply that this repository owns the EMS
-product or Console.
+The six Rust services currently share one runtime image named
+`aetherems:latest`, each started with its own command. The packaging label does
+not imply that this repository owns the EMS product or Console.
+
+CloudLink is the only Uplink cloud protocol compiled into the service and is
+disabled by default. There is no generic MQTT fallback. Enabling it requires
+the complete claimed Gateway identity, Cloud credential binding, verification
+key, broker, and TLS settings;
+invalid or partial settings fail process composition before any connection is
+started.
 
 Host networking does not make the unauthenticated process APIs public: IO,
 automation, history, uplink, and alarm bind only to `127.0.0.1`. Remote clients
@@ -370,18 +376,22 @@ The shared-memory segment path is resolved in this order
 4. `/tmp/aether-live-state.shm` elsewhere (macOS development)
 
 Inside containers, `/shm/aether` is the host's `/dev/shm`, so both views name
-the same file. Docker also places the aether-automation command socket and PointWatch
-socket in this directory through `AETHER_M2C_SOCKET` and
-`AETHER_AUTOMATION_POINT_WATCH_SOCKET`; native deployments keep the `/tmp`
-defaults. Peripheral PointWatch socket names are derived from the resolved
-SHM path, so each process binds a distinct endpoint.
+the same file. Docker also places the aether-automation command socket and
+PointWatch socket in this directory through `AETHER_M2C_SOCKET` and
+`AETHER_AUTOMATION_POINT_WATCH_SOCKET`. Native deployments keep the `/tmp`
+defaults. The command socket is pre-bound mode 0600 before io starts device runtimes.
+Peripheral PointWatch socket names are derived from the resolved SHM path, so
+each process binds a distinct endpoint.
 
 Other state:
 
 - **SQLite** — `aether.db` lives in the data directory:
   `/opt/AetherEdge/data` on an installed device, `./data` in a compose
   checkout (`AETHER_BASE_PATH`); containers see it as
-  `/app/data/aether.db` (`AETHER_DB_PATH`).
+  `/app/data/aether.db` (`AETHER_DB_PATH`). In addition to configuration and
+  audit data, io stores its bounded command admission/outcome ledger there.
+  Preserve the database across restarts: recovery classifies ambiguous
+  admitted/dispatching commands as `possibly_applied` and never replays them.
 - **Embedded history** — aether-history writes `aether-history.db` in the same data
   directory by default (`AETHER_HISTORY_DB_PATH`). PostgreSQL/TimescaleDB is
   an opt-in storage adapter, not a base-runtime prerequisite.

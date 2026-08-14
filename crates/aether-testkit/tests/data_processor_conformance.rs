@@ -12,7 +12,7 @@ use aether_ports::{
 use aether_testkit::{ScriptedDataProcessor, assert_data_processor_correlation};
 use async_trait::async_trait;
 
-const CONTRACT: &str = "aether.data-processing.forecast.v1";
+const CONTRACT: &str = "aether.data-processing.forecast";
 
 fn request() -> DataProcessingRequest {
     let definition =

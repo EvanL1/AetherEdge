@@ -5,7 +5,8 @@ use std::sync::Arc;
 use aether_sdk::application::{EdgeApplication, SafetyPolicy};
 use aether_sdk::domain::{ControlCommand, PointSample};
 use aether_sdk::ports::{
-    CommandDispatcher, CommandReceipt, LiveStateWriter, PortError, PortErrorKind, PortResult,
+    CommandDispatcher, CommandReceipt, CommandTopologyFence, LiveStateWriter, PortError,
+    PortErrorKind, PortResult,
 };
 use aether_sdk::{AetherBuilder, BuildError};
 use aether_store_local::{MemoryAuditSink, MemoryLiveState};
@@ -20,6 +21,14 @@ impl CommandDispatcher for NoDeviceDispatcher {
             PortErrorKind::Rejected,
             "no device driver is configured in the minimal gateway",
         ))
+    }
+
+    async fn dispatch_fenced(
+        &self,
+        command: ControlCommand,
+        _fence: CommandTopologyFence,
+    ) -> PortResult<CommandReceipt> {
+        self.dispatch(command).await
     }
 }
 

@@ -400,12 +400,12 @@ const FUTURE_FEATURES: [ExpectedFeature; 4] = [
 impl LoadForecastTaskAsset {
     fn into_contract(self) -> Result<LoadForecastContract, EnergyGatewayError> {
         require(
-            self.schema == "aether.data-processing-task.v1"
+            self.schema == "aether.data-processing-task"
                 && self.id == "energy.site-load-forecast"
                 && self.revision == 1
                 && !self.enabled
                 && self.kind == "forecast"
-                && self.processor_contract == "aether.data-processing.forecast.v1"
+                && self.processor_contract == "aether.data-processing.forecast"
                 && !self.description.trim().is_empty(),
             "load task identity, schema, or safe disabled default is invalid",
         )?;
@@ -512,7 +512,7 @@ impl LoadForecastTaskAsset {
             "load forecast governance defaults are unsafe",
         )?;
         require(
-            self.output.schema == "aether.data-processing.output.forecast.v1"
+            self.output.schema == "aether.data-processing.output.forecast"
                 && self.output.value_type == "number"
                 && self.output.unit == self.target.unit
                 && self.output.sign_convention == self.target.sign_convention

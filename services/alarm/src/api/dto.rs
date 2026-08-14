@@ -5,8 +5,14 @@ use utoipa::{IntoParams, ToSchema};
 
 use crate::models;
 
-fn decoded_snapshot(raw: &str) -> serde_json::Value {
-    serde_json::from_str(raw).unwrap_or_else(|_| serde_json::Value::String(raw.to_string()))
+fn decoded_snapshot(raw: &str) -> anyhow::Result<serde_json::Value> {
+    let snapshot: serde_json::Value = serde_json::from_str(raw)
+        .map_err(|error| anyhow::anyhow!("invalid rule snapshot: {error}"))?;
+    anyhow::ensure!(
+        snapshot.is_object(),
+        "invalid rule snapshot: expected a JSON object"
+    );
+    Ok(snapshot)
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -50,6 +56,7 @@ impl From<models::AlertRule> for AlertRule {
 pub struct Alert {
     pub id: i64,
     pub rule_id: i64,
+    #[schema(value_type = Object)]
     pub rule_snapshot: serde_json::Value,
     pub service_type: String,
     pub channel_id: i64,
@@ -64,12 +71,15 @@ pub struct Alert {
     pub triggered_at: i64,
 }
 
-impl From<models::Alert> for Alert {
-    fn from(value: models::Alert) -> Self {
-        Self {
+impl TryFrom<models::Alert> for Alert {
+    type Error = anyhow::Error;
+
+    fn try_from(value: models::Alert) -> Result<Self, Self::Error> {
+        let rule_snapshot = decoded_snapshot(&value.rule_snapshot)?;
+        Ok(Self {
             id: value.id,
             rule_id: value.rule_id,
-            rule_snapshot: decoded_snapshot(&value.rule_snapshot),
+            rule_snapshot,
             service_type: value.service_type,
             channel_id: value.channel_id,
             data_type: value.data_type,
@@ -81,7 +91,7 @@ impl From<models::Alert> for Alert {
             current_value: value.current_value,
             status: value.status,
             triggered_at: value.triggered_at,
-        }
+        })
     }
 }
 
@@ -89,6 +99,7 @@ impl From<models::Alert> for Alert {
 pub struct AlertEvent {
     pub id: i64,
     pub rule_id: i64,
+    #[schema(value_type = Object)]
     pub rule_snapshot: serde_json::Value,
     pub service_type: String,
     pub channel_id: i64,
@@ -106,12 +117,15 @@ pub struct AlertEvent {
     pub duration: Option<i64>,
 }
 
-impl From<models::AlertEvent> for AlertEvent {
-    fn from(value: models::AlertEvent) -> Self {
-        Self {
+impl TryFrom<models::AlertEvent> for AlertEvent {
+    type Error = anyhow::Error;
+
+    fn try_from(value: models::AlertEvent) -> Result<Self, Self::Error> {
+        let rule_snapshot = decoded_snapshot(&value.rule_snapshot)?;
+        Ok(Self {
             id: value.id,
             rule_id: value.rule_id,
-            rule_snapshot: decoded_snapshot(&value.rule_snapshot),
+            rule_snapshot,
             service_type: value.service_type,
             channel_id: value.channel_id,
             data_type: value.data_type,
@@ -126,7 +140,7 @@ impl From<models::AlertEvent> for AlertEvent {
             triggered_at: value.triggered_at,
             recovered_at: value.recovered_at,
             duration: value.duration,
-        }
+        })
     }
 }
 
@@ -161,6 +175,7 @@ pub struct UpdateRuleRequest {
 }
 
 #[derive(Debug, Deserialize, Default, IntoParams)]
+#[serde(deny_unknown_fields)]
 pub struct RuleQueryParams {
     pub keyword: Option<String>,
     pub service_type: Option<String>,
@@ -170,10 +185,6 @@ pub struct RuleQueryParams {
     pub warning_level: Option<i64>,
     pub page: Option<i64>,
     pub page_size: Option<i64>,
-    #[serde(default)]
-    pub skip: i64,
-    #[serde(default = "default_limit")]
-    pub limit: i64,
 }
 
 impl From<RuleQueryParams> for models::RuleFilter {
@@ -185,17 +196,13 @@ impl From<RuleQueryParams> for models::RuleFilter {
             data_type: value.data_type,
             enabled: value.enabled,
             warning_level: value.warning_level,
-            page: models::PageRequest::resolve(
-                value.page,
-                value.page_size,
-                value.skip,
-                value.limit,
-            ),
+            page: models::PageRequest::resolve(value.page, value.page_size),
         }
     }
 }
 
 #[derive(Debug, Deserialize, Default, IntoParams)]
+#[serde(deny_unknown_fields)]
 pub struct AlertQueryParams {
     pub warning_level: Option<i64>,
     pub service_type: Option<String>,
@@ -203,10 +210,6 @@ pub struct AlertQueryParams {
     pub keyword: Option<String>,
     pub page: Option<i64>,
     pub page_size: Option<i64>,
-    #[serde(default)]
-    pub skip: i64,
-    #[serde(default = "default_limit")]
-    pub limit: i64,
 }
 
 impl From<AlertQueryParams> for models::AlertFilter {
@@ -216,17 +219,13 @@ impl From<AlertQueryParams> for models::AlertFilter {
             service_type: value.service_type,
             channel_id: value.channel_id,
             keyword: value.keyword,
-            page: models::PageRequest::resolve(
-                value.page,
-                value.page_size,
-                value.skip,
-                value.limit,
-            ),
+            page: models::PageRequest::resolve(value.page, value.page_size),
         }
     }
 }
 
 #[derive(Debug, Deserialize, Default, IntoParams)]
+#[serde(deny_unknown_fields)]
 pub struct EventQueryParams {
     pub keyword: Option<String>,
     pub rule_id: Option<i64>,
@@ -237,10 +236,6 @@ pub struct EventQueryParams {
     pub end_time: Option<i64>,
     pub page: Option<i64>,
     pub page_size: Option<i64>,
-    #[serde(default)]
-    pub skip: i64,
-    #[serde(default = "default_limit")]
-    pub limit: i64,
 }
 
 impl From<EventQueryParams> for models::EventFilter {
@@ -253,12 +248,7 @@ impl From<EventQueryParams> for models::EventFilter {
             warning_level: value.warning_level,
             start_time: value.start_time,
             end_time: value.end_time,
-            page: models::PageRequest::resolve(
-                value.page,
-                value.page_size,
-                value.skip,
-                value.limit,
-            ),
+            page: models::PageRequest::resolve(value.page, value.page_size),
         }
     }
 }
@@ -290,12 +280,6 @@ pub struct CreateRuleData {
     pub rule: Option<AlertRule>,
     pub request_id: String,
     pub audit: CompletionAuditData,
-}
-
-#[derive(Debug, Serialize, ToSchema)]
-pub struct SingleItemData<T: Serialize> {
-    pub total: i64,
-    pub list: Vec<T>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -342,6 +326,23 @@ impl<T: Serialize> PagedData<T> {
             page_size: value.page_size,
         }
     }
+
+    pub fn try_from_page<U, E>(value: models::Page<U>) -> Result<Self, E>
+    where
+        T: TryFrom<U, Error = E>,
+    {
+        let list = value
+            .list
+            .into_iter()
+            .map(T::try_from)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self {
+            total: value.total,
+            list,
+            page: value.page,
+            page_size: value.page_size,
+        })
+    }
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -349,14 +350,31 @@ pub struct MonitorStatus {
     pub running: bool,
     pub last_check_time: Option<i64>,
     pub check_interval: u64,
+    pub notification_outbox: NotificationOutboxStatus,
 }
 
-impl From<&models::MonitorStatus> for MonitorStatus {
-    fn from(value: &models::MonitorStatus) -> Self {
+#[derive(Debug, Serialize, ToSchema)]
+pub struct NotificationOutboxStatus {
+    pub pending: i64,
+    pub failed: i64,
+    /// Unix epoch milliseconds for the oldest still-pending destination row.
+    pub oldest_pending_at: Option<i64>,
+}
+
+impl MonitorStatus {
+    pub fn from_status(
+        value: &models::MonitorStatus,
+        outbox: crate::notification_outbox::NotificationOutboxStats,
+    ) -> Self {
         Self {
             running: value.running,
             last_check_time: value.last_check_time,
             check_interval: value.check_interval,
+            notification_outbox: NotificationOutboxStatus {
+                pending: outbox.pending,
+                failed: outbox.failed,
+                oldest_pending_at: outbox.oldest_pending_at,
+            },
         }
     }
 }
@@ -369,23 +387,37 @@ fn default_true() -> bool {
     true
 }
 
-fn default_limit() -> i64 {
-    20
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn legacy_pagination_is_normalized_before_database_access() {
+    fn page_pagination_is_normalized_before_database_access() {
         let filter = models::RuleFilter::from(RuleQueryParams {
-            skip: 40,
-            limit: 20,
+            page: Some(3),
+            page_size: Some(20),
             ..RuleQueryParams::default()
         });
         assert_eq!(filter.page.offset, 40);
         assert_eq!(filter.page.limit, 20);
         assert_eq!(filter.page.page, 3);
+    }
+
+    #[test]
+    fn retired_offset_pagination_fields_are_rejected() {
+        assert!(
+            serde_json::from_value::<RuleQueryParams>(serde_json::json!({
+                "skip": 40,
+                "limit": 20
+            }))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn stored_rule_snapshots_must_be_json_objects() {
+        assert!(decoded_snapshot(r#"{"rule_name":"temperature"}"#).is_ok());
+        assert!(decoded_snapshot("not-json").is_err());
+        assert!(decoded_snapshot(r#""old string snapshot""#).is_err());
     }
 }

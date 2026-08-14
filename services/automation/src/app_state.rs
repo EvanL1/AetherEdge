@@ -2,7 +2,7 @@
 //!
 //! Central application state that is shared across all API handlers
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use aether_application::{
     ActionRoutingApplication, ControlApplication, MeasurementRoutingApplication,
@@ -12,7 +12,9 @@ use crate::config::AutomationConfig;
 use crate::infra::application_control::ControlAuthenticator;
 use crate::instance_configuration::InstanceConfigurationApplication;
 use crate::instance_manager::InstanceManager;
+use aether_rules::RuleScheduler;
 use aether_shm_bridge::ShmDeviceCommandSink;
+use tokio::sync::Semaphore;
 
 /// Application state containing shared resources
 pub struct AppState {
@@ -42,6 +44,14 @@ pub struct AppState {
 
     /// Configuration database, which also holds this service's audit trail.
     pub sqlite_pool: sqlx::SqlitePool,
+
+    /// Installed after rule composition and before HTTP readiness is exposed.
+    /// `OnceLock` lets the base routes share one state object without creating
+    /// a second mutable service container.
+    pub rule_scheduler: OnceLock<Arc<RuleScheduler>>,
+
+    /// Prevents timed-out blocking SHM readiness probes from accumulating.
+    pub(crate) io_topology_probe_gate: Arc<Semaphore>,
 }
 
 impl AppState {
@@ -68,6 +78,15 @@ impl AppState {
             control_authenticator,
             shm_dispatch,
             sqlite_pool,
+            rule_scheduler: OnceLock::new(),
+            io_topology_probe_gate: Arc::new(Semaphore::new(1)),
         }
+    }
+
+    pub fn install_rule_scheduler(
+        &self,
+        scheduler: Arc<RuleScheduler>,
+    ) -> std::result::Result<(), Arc<RuleScheduler>> {
+        self.rule_scheduler.set(scheduler)
     }
 }

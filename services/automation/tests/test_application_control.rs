@@ -7,11 +7,11 @@ use axum::http::{HeaderMap, HeaderValue};
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use serde::Serialize;
 
+use aether_automation::AutomationError;
 use aether_automation::api::http_boundary::command_invocation_from_headers;
 use aether_automation::infra::application_control::ControlAuthenticator;
 
 const JWT_SECRET: &str = "0123456789abcdef0123456789abcdef";
-const UPLINK_TOKEN: &str = "abcdef0123456789abcdef0123456789";
 
 #[derive(Serialize)]
 struct AccessClaims<'a> {
@@ -44,7 +44,7 @@ fn access_token(role: &str, expires_in_seconds: i64) -> String {
 }
 
 fn authenticator() -> ControlAuthenticator {
-    ControlAuthenticator::new(JWT_SECRET, Some(UPLINK_TOKEN)).expect("valid test credentials")
+    ControlAuthenticator::new(JWT_SECRET).expect("valid test credentials")
 }
 
 #[tokio::test]
@@ -122,7 +122,8 @@ fn forged_identity_headers_are_rejected() {
     );
 
     let invocation =
-        command_invocation_from_headers(&authenticator(), &headers, true, TimestampMs::new(2_000));
+        command_invocation_from_headers(&authenticator(), &headers, true, TimestampMs::new(2_000))
+            .expect("valid request id");
 
     assert_eq!(invocation.context().actor().id(), "unauthenticated");
     assert!(
@@ -152,7 +153,8 @@ fn signed_admin_and_engineer_tokens_receive_all_shared_command_permissions() {
             &headers,
             true,
             TimestampMs::new(2_000_000),
-        );
+        )
+        .expect("valid request id");
 
         assert_eq!(invocation.context().actor().id(), "user:7");
         for permission in [
@@ -190,7 +192,8 @@ fn viewer_and_expired_access_tokens_cannot_control_devices() {
         &viewer_headers,
         true,
         TimestampMs::new(2_000_000),
-    );
+    )
+    .expect("generated request id");
     assert!(!viewer.context().actor().has_permission("device.control"));
 
     let mut expired_headers = HeaderMap::new();
@@ -204,13 +207,14 @@ fn viewer_and_expired_access_tokens_cannot_control_devices() {
         &expired_headers,
         true,
         TimestampMs::new(2_000_000),
-    );
+    )
+    .expect("generated request id");
     assert_eq!(expired.context().actor().id(), "unauthenticated");
     assert!(!expired.context().actor().has_permission("device.control"));
 }
 
 #[test]
-fn authenticated_uplink_gets_a_fixed_identity() {
+fn retired_service_credential_scheme_is_not_an_authorization_path() {
     let mut headers = HeaderMap::new();
     headers.insert(
         "authorization",
@@ -220,36 +224,45 @@ fn authenticated_uplink_gets_a_fixed_identity() {
     headers.insert("x-aether-actor-role", HeaderValue::from_static("Admin"));
 
     let invocation =
-        command_invocation_from_headers(&authenticator(), &headers, true, TimestampMs::new(2_000));
+        command_invocation_from_headers(&authenticator(), &headers, true, TimestampMs::new(2_000))
+            .expect("generated request id");
 
-    assert_eq!(invocation.context().actor().id(), "local:aether-uplink");
+    assert_eq!(invocation.context().actor().id(), "unauthenticated");
     assert!(
-        invocation
+        !invocation
             .context()
             .actor()
             .has_permission("device.control")
     );
-    for permission in [
-        "automation.rule.execute",
-        "automation.rule.manage",
-        "automation.routing.manage",
-        "automation.instance.manage",
-        "alarm.rule.manage",
-        "alarm.alert.resolve",
-    ] {
-        assert!(
-            !invocation.context().actor().has_permission(permission),
-            "uplink service credential unexpectedly gained {permission}"
-        );
-    }
     assert!(invocation.context().confirmed());
+}
 
-    headers.insert(
-        "authorization",
-        HeaderValue::from_static("AetherService wrong-token"),
-    );
-    let invalid =
+#[test]
+fn malformed_explicit_request_id_is_rejected_instead_of_replaced() {
+    let mut headers = HeaderMap::new();
+    headers.insert("x-request-id", HeaderValue::from_static("not-a-uuid"));
+
+    let result =
         command_invocation_from_headers(&authenticator(), &headers, true, TimestampMs::new(2_000));
-    assert_eq!(invalid.context().actor().id(), "unauthenticated");
-    assert!(!invalid.context().actor().has_permission("device.control"));
+
+    assert!(matches!(result, Err(AutomationError::InvalidData(_))));
+
+    let mut duplicated = HeaderMap::new();
+    duplicated.append(
+        "x-request-id",
+        HeaderValue::from_static("018f0000-0000-7000-8000-000000000001"),
+    );
+    duplicated.append(
+        "x-request-id",
+        HeaderValue::from_static("018f0000-0000-7000-8000-000000000002"),
+    );
+    assert!(matches!(
+        command_invocation_from_headers(
+            &authenticator(),
+            &duplicated,
+            true,
+            TimestampMs::new(2_000),
+        ),
+        Err(AutomationError::InvalidData(_))
+    ));
 }

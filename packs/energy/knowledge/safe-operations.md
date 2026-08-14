@@ -10,8 +10,8 @@ Aether controls real equipment: PCS inverters, battery stacks, diesel generators
 
 ## The write surface
 
-The production MCP catalog has 44 tools: 23 read-only tools that are always
-registered and 21 governed write tools that exist only when the server is
+The production MCP catalog has 42 tools: 20 read-only tools that are always
+registered and 22 governed write tools that exist only when the server is
 started with `--allow-write`. The static `MCP_WRITE_CAPABILITY_MAPPING` in
 `tools/aether/src/mcp.rs` maps those tools to the transport-neutral application
 capability catalog.
@@ -28,7 +28,9 @@ read-back verification.
 | `models_instances_action` | `device.write_point` | The local command plane accepted the command |
 | `rules_execute` | `automation.rule.execute` | The rule was evaluated and selected commands were accepted or rejected locally |
 
-(T/S/C/A are the four channel point types — telemetry, signal, control, adjustment; M denotes an instance measurement point — see [Data Model](../concepts/data-model.md).)
+(T/S/C/A are the four channel point types — telemetry, signal, control,
+adjustment; M denotes an instance measurement point — see
+[Data Model](../../../docs/concepts/data-model.md).)
 
 `models_instances_action` is the only external point-control tool. It addresses
 a device instance action, which the routing layer resolves to a channel point
@@ -100,37 +102,28 @@ live-state writer to recreate either path. Protocol simulations run as
 external tooling and enter through a real composed IO adapter so production
 acquisition semantics remain intact.
 
-### Remaining configuration mutations stay excluded from MCP
+### Unmapped configuration mutations stay excluded from MCP
 
-These remaining compatibility operations change live-state inputs or
-persisted configuration. Channel point batches can reshape acquired data,
-while MQTT or certificate changes can disconnect or redirect cloud traffic.
-They are not made safe merely by being configuration rather than immediate
-device commands.
-
-| Area | Existing compatibility operations (not MCP tools) |
-|------|-------|
-| Channel point batch | `channels_points_batch` |
-| Cloud connectivity (MQTT, certificates) | `net_mqtt_config_set`, `net_mqtt_reconnect`, `net_mqtt_disconnect`, `net_cert_upload`, `net_cert_delete` |
-
-Channel point-batch and uplink operations remain outside MCP until both their
-application boundary and explicit capability mapping have been reviewed.
-Channel lifecycle, rule and alarm-rule mutations, and alert resolution are
-exposed only through the exact governed mappings above. `--allow-write` never
-promotes a wrapper automatically.
+The channel point-batch HTTP operation can reshape acquired data and remains
+outside MCP until its application boundary and explicit capability mapping
+have been reviewed. It is not made safe merely by being configuration rather
+than an immediate device command. Channel lifecycle, rule and alarm-rule
+mutations, and alert resolution are exposed only through the exact governed
+mappings above. `--allow-write` never promotes an HTTP operation
+automatically.
 
 ## How write gating works
 
-`aether mcp` starts the server with only the 23 read-only tools registered.
+`aether mcp` starts the server with only the 20 read-only tools registered.
 `aether mcp --allow-write` additionally merges a `ToolRouter` containing only
-the 21 governed writes. This is registration-time gating, decided once at
+the 22 governed writes. This is registration-time gating, decided once at
 startup in `AetherMcp::new` (`tools/aether/src/mcp.rs`). It is not confirmation:
 each invocation must independently send `confirmed: true`.
 
 The consequence: when `--allow-write` is off, the write tools are **absent from the `tools/list` response** — not present-but-flagged, absent. An AI client cannot call what it cannot see, so the safety property holds regardless of how capable or how misaligned the model is, and regardless of how the client is configured.
 
 Contrast this with MCP's `readOnlyHint` annotation. In the implementation,
-read-only tools carry no annotation; the 21 write tools are marked
+read-only tools carry no annotation; the 22 write tools are marked
 `annotations(read_only_hint = false)`. The hint is advisory and does not
 replace signed authorization, per-call confirmation, or audit. The generated
 public surface is listed in [MCP Tools Reference](../../../docs/reference/mcp-tools.md).
@@ -171,7 +164,10 @@ Redis and PostgreSQL are not involved. See
 
 ## Reading state correctly
 
-Three properties of Aether's data model routinely mislead agents that assume a conventional "device object with a status field" design. Misreading any of them can turn a well-intentioned write into a harmful one. See [Data Model](../concepts/data-model.md) for the full picture.
+Three properties of Aether's data model routinely mislead agents that assume a
+conventional "device object with a status field" design. Misreading any of them
+can turn a well-intentioned write into a harmful one. See
+[Data Model](../../../docs/concepts/data-model.md) for the full picture.
 
 **1. NaN means "temporarily unavailable" — never zero, never "off".** Measurement slots in shared memory initialize to an IEEE-754 quiet NaN sentinel (`SLOT_UNWRITTEN_BITS` in `crates/aether-dataplane/src/core/slot.rs`), the explicit "no data has ever been written here" marker. The source is explicit about why: it "avoids the historical 0.0 ambiguity where a default-initialised slot was indistinguishable from a real device reading of zero." If a battery's power reading is NaN, the battery is not idle and not off — the value is unknown, most likely because the channel has not delivered data yet. Any computation that coerces NaN to 0 (a sum of feeder powers, a state-of-charge average) produces a plausible-looking wrong number. HTTP and MCP readers resolve the same SHM state, so they must preserve that unavailable outcome rather than inventing a value.
 
@@ -193,7 +189,7 @@ An AI agent operating Aether follows these rules verbatim:
 
 ## Related pages
 
-- [System Architecture](../concepts/architecture.md) — the services these tools talk to
-- [Data Model](../concepts/data-model.md) — instances, channels, points, and why they are orthogonal
-- [Using Aether with AI Assistants](../guides/ai-assistants.md) — setting up the MCP server
-- [CLI Reference](../reference/cli.md) — the `aether` commands behind each tool
+- [System Architecture](../../../docs/concepts/architecture.md) — the services these tools talk to
+- [Data Model](../../../docs/concepts/data-model.md) — instances, channels, points, and why they are orthogonal
+- [Using Aether with AI Assistants](../../../docs/guides/ai-assistants.md) — setting up the MCP server
+- [CLI Reference](../../../docs/reference/cli.md) — the `aether` commands behind each tool

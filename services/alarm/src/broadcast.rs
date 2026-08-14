@@ -5,25 +5,34 @@ use reqwest::Client;
 use serde_json::{Value, json};
 use tracing::{debug, warn};
 
-use crate::notification::{AlarmCountSnapshot, AlarmNotification, AlarmNotifier};
+use crate::notification::{
+    AlarmCountSnapshot, AlarmNotification, AlarmNotificationDestination, AlarmNotifier,
+};
 
 #[derive(Clone)]
 pub struct HttpAlarmNotifier {
     client: Client,
     api_url: String,
     uplink_url: String,
+    api_broadcast_token: String,
 }
 
 impl HttpAlarmNotifier {
-    pub fn new(client: Client, api_url: String, uplink_url: String) -> Self {
+    pub fn new(
+        client: Client,
+        api_url: String,
+        uplink_url: String,
+        api_broadcast_token: String,
+    ) -> Self {
         Self {
             client,
             api_url,
             uplink_url,
+            api_broadcast_token,
         }
     }
 
-    fn alarm_payload(notification: AlarmNotification) -> Value {
+    fn alarm_payload(notification: &AlarmNotification) -> Value {
         let event_suffix = if notification.status == 0 {
             "_recovery"
         } else {
@@ -32,9 +41,11 @@ impl HttpAlarmNotifier {
         json!({
             "type": "alarm",
             "id": format!("alarm_{:03}{event_suffix}", notification.alert_id),
+            "event_id": notification.event_id,
             "timestamp": notification.timestamp,
             "data": {
                 "alarm_id": notification.alert_id.to_string(),
+                "event_id": notification.event_id,
                 "service_type": notification.service_type,
                 "source": notification.service_type,
                 "device": notification.channel_id.to_string(),
@@ -49,18 +60,55 @@ impl HttpAlarmNotifier {
         })
     }
 
+    async fn send_alarm(
+        &self,
+        destination: AlarmNotificationDestination,
+        notification: &AlarmNotification,
+    ) -> anyhow::Result<()> {
+        let url = match destination {
+            AlarmNotificationDestination::Api => {
+                format!("{}/api/internal/alarm-events", self.api_url)
+            },
+            AlarmNotificationDestination::Uplink => {
+                format!("{}/api/internal/alarm-events", self.uplink_url)
+            },
+        };
+        let request = self
+            .client
+            .post(&url)
+            .header("Idempotency-Key", &notification.event_id)
+            .header("X-Aether-Event-ID", &notification.event_id)
+            .json(&Self::alarm_payload(notification));
+        let response = request
+            .bearer_auth(&self.api_broadcast_token)
+            .timeout(std::time::Duration::from_secs(3))
+            .send()
+            .await
+            .map_err(|error| anyhow::anyhow!("alarm delivery to {url} failed: {error}"))?;
+        if !response.status().is_success() {
+            anyhow::bail!(
+                "alarm delivery to {url} returned HTTP {}",
+                response.status()
+            );
+        }
+        debug!(
+            event_id = notification.event_id,
+            destination = destination.as_str(),
+            "Alarm transition delivered"
+        );
+        Ok(())
+    }
+
     async fn broadcast_all(&self, payload: &Value) {
-        let urls = [
-            format!("{}/api/v1/broadcast", self.api_url),
-            format!("{}/netApi/alarm/broadcast", self.uplink_url),
-        ];
-        futures::future::join_all(urls.into_iter().map(|url| {
+        let destinations = [format!("{}/api/internal/alarm-events", self.api_url)];
+        futures::future::join_all(destinations.into_iter().map(|url| {
             let client = self.client.clone();
             let payload = payload.clone();
+            let api_broadcast_token = self.api_broadcast_token.clone();
             async move {
-                match client
-                    .post(&url)
-                    .json(&payload)
+                let request = client.post(&url).json(&payload);
+                let request = request.bearer_auth(api_broadcast_token);
+                match request
                     .timeout(std::time::Duration::from_secs(3))
                     .send()
                     .await
@@ -79,30 +127,16 @@ impl HttpAlarmNotifier {
         }))
         .await;
     }
-
-    async fn send_uplink(&self, payload: &Value) {
-        let url = format!("{}/netApi/alarm/broadcast", self.uplink_url);
-        if let Err(error) = self
-            .client
-            .post(&url)
-            .json(payload)
-            .timeout(std::time::Duration::from_secs(3))
-            .send()
-            .await
-        {
-            warn!("Alarm replay broadcast error: {} err={}", url, error);
-        }
-    }
 }
 
 #[async_trait]
 impl AlarmNotifier for HttpAlarmNotifier {
-    async fn publish_alarm(&self, notification: AlarmNotification) {
-        self.broadcast_all(&Self::alarm_payload(notification)).await;
-    }
-
-    async fn replay_alarm(&self, notification: AlarmNotification) {
-        self.send_uplink(&Self::alarm_payload(notification)).await;
+    async fn deliver_alarm(
+        &self,
+        destination: AlarmNotificationDestination,
+        notification: &AlarmNotification,
+    ) -> anyhow::Result<()> {
+        self.send_alarm(destination, notification).await
     }
 
     async fn publish_counts(&self, counts: AlarmCountSnapshot) {

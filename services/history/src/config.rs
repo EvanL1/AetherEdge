@@ -53,3 +53,36 @@ impl Default for EnvConfig {
         }
     }
 }
+
+impl EnvConfig {
+    pub fn api_bind_address(&self) -> anyhow::Result<std::net::SocketAddr> {
+        common::loopback_bind_address(&self.api_host, self.api_port)
+            .map_err(|error| anyhow::anyhow!("invalid internal history API bind address: {error}"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::EnvConfig;
+
+    #[test]
+    fn internal_api_bind_accepts_ipv4_and_ipv6_loopback() {
+        let mut config = EnvConfig::default();
+        for host in ["127.0.0.1", "127.88.1.3", "::1"] {
+            config.api_host = host.to_owned();
+            assert!(config.api_bind_address().is_ok(), "{host} must be accepted");
+        }
+    }
+
+    #[test]
+    fn internal_api_bind_rejects_unspecified_addresses() {
+        let mut config = EnvConfig::default();
+        for host in ["0.0.0.0", "::"] {
+            config.api_host = host.to_owned();
+            assert!(
+                config.api_bind_address().is_err(),
+                "{host} must not expose aether-history"
+            );
+        }
+    }
+}

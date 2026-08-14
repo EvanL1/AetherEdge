@@ -3,7 +3,7 @@
 [![Code Check](https://github.com/EvanL1/AetherEdge/actions/workflows/rust-check.yml/badge.svg)](https://github.com/EvanL1/AetherEdge/actions/workflows/rust-check.yml)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 [![Rust](https://img.shields.io/badge/rust-1.90%2B-orange.svg)](https://www.rust-lang.org/)
-[![Version](https://img.shields.io/badge/version-0.0.1-yellow.svg)](https://github.com/EvanL1/AetherEdge/releases)
+[![Version](https://img.shields.io/badge/version-0.0.2-yellow.svg)](https://github.com/EvanL1/AetherEdge/releases)
 [![Status](https://img.shields.io/badge/status-beta-orange.svg)](https://github.com/EvanL1/AetherEdge/releases)
 
 **Product site:** [aetheriot.ai](https://aetheriot.ai/) ·
@@ -222,7 +222,7 @@ reference energy-domain implementation of this model.
 | `aether-alarm` | Alarm evaluation and lifecycle |
 | `aether-history` | Embedded history and optional history adapters |
 | `aether-api` | Authenticated remote application API and WebSocket |
-| `aether-uplink` | Durable legacy Cloud/MQTT delivery and experimental CloudLink foundation |
+| `aether-uplink` | Durable CloudLink MQTT delivery, acknowledgement, and replay |
 
 ```text
 Devices -> aether-io -> authoritative SHM
@@ -236,7 +236,7 @@ Devices -> aether-io -> authoritative SHM
 ```
 
 AetherEdge currently delivers the integrator-grade runtime, application
-contracts, governed commands, MCP foundations, Pack v1, and SDK facade. The
+contracts, governed commands, MCP foundations, Pack, and SDK facade. The
 complete conversational intent compiler, simulation, temporary behavior, and
 continuous outcome evaluation remain product direction. See the
 [platform status](docs/roadmap/status.md) for the exact delivery boundary.

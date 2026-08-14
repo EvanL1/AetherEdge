@@ -1,0 +1,71 @@
+{
+  "schema": "aether.cloudlink.envelope",
+  "protocol": "aether.cloudlink",
+  "message_kind": "runtime-manifest-report",
+  "gateway_id": "33333333-3333-4333-8333-333333333333",
+  "session_id": "44444444-4444-4444-8444-444444444444",
+  "session_epoch": "7",
+  "credential_generation": "3",
+  "sent_at_ms": "1721000000200",
+  "delivery": {
+    "stream_id": "manifest",
+    "stream_epoch": "2",
+    "position": "1",
+    "batch_id": "manifest-75643d71",
+    "digest": "sha256:9abded3b4684c436451c48d2bb86f2e5746e42ed2f1f63c058752068193b6bd1"
+  },
+  "payload": {
+    "observed_at_ms": "1721000000123",
+    "manifest": {
+      "composition": "aether-edge-six-service",
+      "aether_version": "0.5.0",
+      "target_triple": "aarch64-unknown-linux-musl",
+      "target_os": "linux",
+      "services": [
+        "aether-alarm",
+        "aether-api",
+        "aether-automation",
+        "aether-history",
+        "aether-io",
+        "aether-uplink"
+      ],
+      "cargo_features": [
+        "aether-io/aether_485",
+        "aether-io/can",
+        "aether-io/gpio",
+        "aether-io/iec61850",
+        "aether-io/modbus"
+      ],
+      "capabilities": [
+        "alarm.alert.resolve",
+        "alarm.rule.manage",
+        "automation.instance.manage",
+        "automation.routing.manage",
+        "automation.rule.execute",
+        "automation.rule.manage",
+        "data_processing.process",
+        "data_processing.processors.health",
+        "data_processing.tasks.list",
+        "device.read_point",
+        "device.write_point",
+        "io.channel.manage",
+        "io.channel.reconcile"
+      ],
+      "protocols": [
+        "aether_485",
+        "can",
+        "di_do",
+        "iec61850",
+        "modbus_rtu",
+        "modbus_tcp",
+        "sunspec_rtu",
+        "sunspec_tcp",
+        "virtual"
+      ],
+      "checksum": {
+        "algorithm": "sha256",
+        "digest": "ab40f254ba36a350ef2b25d94ffaa41cbed9bc83bfe88601c4f8213111ae0383"
+      }
+    }
+  }
+}

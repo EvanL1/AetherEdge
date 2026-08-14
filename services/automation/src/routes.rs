@@ -25,7 +25,7 @@ use crate::api::instance_management_handlers::{
 };
 use crate::api::instance_query_handlers::{
     get_instance, get_instance_children, get_instance_data, get_instance_points, get_topology_tree,
-    list_instances, list_instances_slim, search_instances,
+    list_instances, search_instances,
 };
 
 // New global routing handlers (work with unified database)
@@ -52,7 +52,6 @@ use common::admin_api::{get_log_level, list_log_files, set_log_level, view_log_f
     paths(
         crate::api::health_handlers::health_check,
         crate::api::instance_query_handlers::list_instances,
-        crate::api::instance_query_handlers::list_instances_slim,
         crate::api::instance_query_handlers::search_instances,
         crate::api::instance_management_handlers::create_instance,
         crate::api::instance_query_handlers::get_instance,
@@ -108,13 +107,10 @@ use common::admin_api::{get_log_level, list_log_files, set_log_level, view_log_f
             crate::api::dto::InstanceSummaryDto,
             crate::api::dto::InstanceSearchResponseDto,
             crate::api::dto::InstanceListResponseDto,
-            crate::api::dto::InstancePickerItemDto,
-            crate::api::dto::InstancePickerResponseDto,
             crate::api::dto::InstanceDataType,
             crate::api::dto::DataTypeQuery,
             crate::api::dto::InstanceDetailResponseDto,
             crate::api::dto::InstanceLiveSampleDto,
-            crate::api::dto::InstanceLiveDataDto,
             crate::api::dto::InstanceDataResponseDto,
             crate::config::Product,
             crate::config::MeasurementPoint,
@@ -135,7 +131,7 @@ use common::admin_api::{get_log_level, list_log_files, set_log_level, view_log_f
     info(
         title = "Aether Automation Service API",
         version = env!("CARGO_PKG_VERSION"),
-        description = "Internal loopback API for instances, rules, routing, and device-action dispatch. Device actions require either a Bearer JWT or an AetherService credential; use an authenticated ingress or an on-device commissioning workflow for remote operations."
+        description = "Internal loopback API for instances, rules, routing, and device-action dispatch. Device actions require a Bearer JWT; use an authenticated ingress through the gateway or an on-device commissioning workflow for remote operations."
     )
 )]
 pub struct AutomationApiDoc;
@@ -155,17 +151,6 @@ impl utoipa::Modify for SecurityAddon {
                         .bearer_format("JWT")
                         .description(Some("Signed Aether access token"))
                         .build(),
-                ),
-            );
-            components.add_security_scheme(
-                "aether_service_auth",
-                utoipa::openapi::security::SecurityScheme::ApiKey(
-                    utoipa::openapi::security::ApiKey::Header(
-                        utoipa::openapi::security::ApiKeyValue::with_description(
-                            "Authorization",
-                            "Dedicated uplink credential. Enter the complete value: AetherService <token>",
-                        ),
-                    ),
                 ),
             );
         }
@@ -193,7 +178,6 @@ pub fn create_routes(state: Arc<AppState>) -> Router {
             "/api/instances/revision",
             get(get_instance_configuration_revision),
         )
-        .route("/api/instances/list", get(list_instances_slim))
         .route("/api/instances/search", get(search_instances))
         .route(
             "/api/instances/{id}",
@@ -293,7 +277,7 @@ mod openapi_tests {
             .and_then(|value| value.as_str())
             .expect("OpenAPI description should be present");
         assert!(description.contains("Internal loopback API"));
-        assert!(description.contains("Bearer JWT or an AetherService credential"));
+        assert!(description.contains("require a Bearer JWT"));
         assert!(description.contains("authenticated ingress"));
 
         let bearer_auth = document
@@ -302,17 +286,11 @@ mod openapi_tests {
         assert_eq!(bearer_auth["type"], "http");
         assert_eq!(bearer_auth["scheme"], "bearer");
 
-        let service_auth = document
-            .pointer("/components/securitySchemes/aether_service_auth")
-            .expect("service security scheme should be present");
-        assert_eq!(service_auth["type"], "apiKey");
-        assert_eq!(service_auth["in"], "header");
-        assert_eq!(service_auth["name"], "Authorization");
         assert!(
             document
-                .pointer("/components/securitySchemes/aether_service_auth/description")
-                .and_then(|value| value.as_str())
-                .is_some_and(|value| value.contains("AetherService <token>"))
+                .pointer("/components/securitySchemes/aether_service_auth")
+                .is_none(),
+            "retired service credential must not remain in OpenAPI"
         );
 
         let tags = document
@@ -404,11 +382,12 @@ mod openapi_tests {
 
         assert!(!paths.contains_key("/api/instances/{id}/sync"));
         assert!(!paths.contains_key("/api/instances/sync/all"));
+        assert!(!paths.contains_key("/api/instances/list"));
         assert!(!paths.contains_key("/api/routing/instances/{id}"));
 
         assert_eq!(
             common::openapi_operation_count(&document),
-            44,
+            43,
             "OpenAPI operation count changed; re-audit Router parity before updating this contract"
         );
     }
@@ -457,7 +436,7 @@ mod openapi_tests {
             .pointer("/paths/~1api~1instances~1{id}~1action/post")
             .expect("action POST operation should be documented");
 
-        for status in ["403", "422", "503"] {
+        for status in ["400", "403", "422", "503"] {
             assert!(
                 operation.pointer(&format!("/responses/{status}")).is_some(),
                 "missing action response: {status}"
@@ -468,16 +447,9 @@ mod openapi_tests {
             .pointer("/security")
             .and_then(|value| value.as_array())
             .expect("action security should be an array");
-        assert!(
-            security
-                .iter()
-                .any(|entry| entry.get("bearer_auth").is_some())
-        );
-        assert!(
-            security
-                .iter()
-                .any(|entry| entry.get("aether_service_auth").is_some())
-        );
+        assert_eq!(security.len(), 1, "device actions accept only access JWTs");
+        assert!(security[0].get("bearer_auth").is_some());
+        assert!(security[0].get("aether_service_auth").is_none());
 
         let request_schema = operation
             .pointer("/requestBody/content/application~1json/schema/$ref")
@@ -488,9 +460,11 @@ mod openapi_tests {
             operation["parameters"]
                 .as_array()
                 .is_some_and(|parameters| parameters.iter().any(|parameter| {
-                    parameter["name"] == "x-request-id" && parameter["in"] == "header"
+                    parameter["name"] == "x-request-id"
+                        && parameter["in"] == "header"
+                        && parameter["required"] == true
                 })),
-            "device action must document its optional audit correlation header"
+            "device action must require its caller-owned durable identity header"
         );
         assert_eq!(
             document
@@ -505,18 +479,48 @@ mod openapi_tests {
                 .is_some_and(|required| required.iter().any(|field| field == "confirmed")),
             "high-risk action confirmation must be required in Swagger"
         );
+        let request_properties = document
+            .pointer("/components/schemas/ActionRequest/properties")
+            .and_then(|value| value.as_object())
+            .expect("action request properties");
+        assert!(request_properties.contains_key("point_id"));
+        assert!(!request_properties.contains_key("id"));
+        assert!(!request_properties.contains_key("action_id"));
 
         let success_description = operation
             .pointer("/responses/200/description")
             .and_then(|value| value.as_str())
             .expect("action success semantics should be documented");
         assert!(success_description.contains("accepted by the local command plane"));
+        assert!(success_description.contains("accepted_at_ms"));
+        assert!(!success_description.contains("completed_at_ms"));
         assert!(success_description.contains("not a device completion time"));
         assert!(success_description.contains("audit.status=incomplete"));
         assert!(success_description.contains("retryable=false"));
         let lower = success_description.to_ascii_lowercase();
         assert!(!lower.contains("action executed"));
         assert!(!lower.contains("delivered to device"));
+    }
+
+    #[test]
+    fn action_request_rejects_retired_point_identifier_names() {
+        for retired in [
+            serde_json::json!({"id": "1", "value": 1.0, "confirmed": true}),
+            serde_json::json!({"action_id": "1", "value": 1.0, "confirmed": true}),
+            serde_json::json!({
+                "point_id": "1",
+                "action_id": "1",
+                "value": 1.0,
+                "confirmed": true
+            }),
+        ] {
+            assert!(serde_json::from_value::<crate::api::dto::ActionRequest>(retired).is_err());
+        }
+        let canonical = serde_json::from_value::<crate::api::dto::ActionRequest>(
+            serde_json::json!({"point_id": "1", "value": 1.0, "confirmed": true}),
+        )
+        .expect("canonical action request");
+        assert_eq!(canonical.point_id, "1");
     }
 
     #[test]

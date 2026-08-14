@@ -55,7 +55,7 @@ channels:
     enabled: false  # 默认禁用，待硬件就绪后启用
     parameters:
       driver: "sysfs"
-      gpio_base_path: "/sys/class/gpio"
+      sysfs_base_path: "/sys/class/gpio"
       di_poll_interval_ms: 200
     logging:
       enabled: true

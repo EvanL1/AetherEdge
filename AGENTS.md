@@ -27,7 +27,7 @@ crates/       domain, ports, application, SDK, Pack and testkit APIs
 libs/         shared kernel implementation (SHM, local storage, config, sim)
 services/     io, automation, history, api, uplink and alarm processes
 tools/        aether CLI/MCP and the protocol simulator
-examples/     minimal generic and compatibility composition proofs
+examples/     minimal generic composition proofs
 packs/        Pack manifests
 contracts/    pinned AetherContracts release
 docs/         current concepts, guides and references
@@ -180,5 +180,16 @@ CI runs; retrieve detailed logs only for failures or when the user asks.
 - Do not mix frontend work into edge-kernel changes.
 - Do not edit generated files; regenerate them through the documented command.
 - Changes to dependency direction or data authority must update this file.
-- Keep compatibility shims during staged migration and state their removal
-  criteria alongside the shim.
+- AetherEdge-owned runtime contracts expose one current interface. Do not add
+  `/vN` routes, numbered first-party schema or topic identifiers, parallel
+  sockets, field aliases, dual decoders, or fallback response shapes. A
+  breaking first-party change updates the canonical contract and rejects the
+  retired shape fail-closed.
+- Software and Pack release versions, SQLite schema migrations, and versions
+  required by externally governed protocols or pinned third-party contracts
+  are not runtime-interface aliases. Preserve those identities at their
+  owning boundary.
+- Existing identities required by an externally governed boundary remain at
+  that boundary. Do not add staged compatibility shims for AetherEdge-owned
+  contracts; replace the canonical contract directly and reject the retired
+  shape fail-closed.

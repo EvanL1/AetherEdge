@@ -5,13 +5,13 @@ use std::collections::HashSet;
 use aether_ports::CloudLinkSessionBinding;
 use serde::{Deserialize, Serialize};
 
-use crate::validation::{canonical_u64, identifier, positive_u64, protocol_version, schema, uuid};
-use crate::{CLOUDLINK_PROTOCOL, CLOUDLINK_PROTOCOL_VERSION, CloudLinkCodecError};
+use crate::validation::{canonical_u64, identifier, positive_u64, schema, uuid};
+use crate::{CLOUDLINK_PROTOCOL, CloudLinkCodecError};
 
-const HELLO_SCHEMA: &str = "aether.cloudlink.session-hello.v1";
-const ACCEPTED_SCHEMA: &str = "aether.cloudlink.session-accepted.v1";
-const CHALLENGE_SCHEMA: &str = "aether.cloudlink.session-challenge.v1";
-const CHALLENGE_REQUEST_SCHEMA: &str = "aether.cloudlink.session-challenge-request.v1";
+const HELLO_SCHEMA: &str = "aether.cloudlink.session-hello";
+const ACCEPTED_SCHEMA: &str = "aether.cloudlink.session-accepted";
+const CHALLENGE_SCHEMA: &str = "aether.cloudlink.session-challenge";
+const CHALLENGE_REQUEST_SCHEMA: &str = "aether.cloudlink.session-challenge-request";
 
 /// One client/server cursor claim used during resume negotiation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -51,16 +51,14 @@ impl ResumeCursor {
         &self.stream_id
     }
 
-    /// Returns the parsed stream epoch.
-    #[must_use]
-    pub fn stream_epoch(&self) -> u64 {
-        self.stream_epoch.parse().unwrap_or_default()
+    /// Returns the strictly parsed stream epoch.
+    pub fn stream_epoch(&self) -> Result<u64, CloudLinkCodecError> {
+        positive_u64(&self.stream_epoch, "resume.stream_epoch")
     }
 
-    /// Returns the parsed durable server cursor.
-    #[must_use]
-    pub fn acknowledged_position(&self) -> u64 {
-        self.acknowledged_position.parse().unwrap_or_default()
+    /// Returns the strictly parsed durable server cursor.
+    pub fn acknowledged_position(&self) -> Result<u64, CloudLinkCodecError> {
+        canonical_u64(&self.acknowledged_position, "resume.acknowledged_position")
     }
 }
 
@@ -207,16 +205,14 @@ impl SessionChallenge {
         &self.challenge_id
     }
 
-    /// Returns the challenge issue time.
-    #[must_use]
-    pub fn issued_at_ms(&self) -> u64 {
-        self.issued_at_ms.parse().unwrap_or_default()
+    /// Returns the strictly parsed challenge issue time.
+    pub fn issued_at_ms(&self) -> Result<u64, CloudLinkCodecError> {
+        canonical_u64(&self.issued_at_ms, "issued_at_ms")
     }
 
-    /// Returns the challenge expiry time.
-    #[must_use]
-    pub fn expires_at_ms(&self) -> u64 {
-        self.expires_at_ms.parse().unwrap_or_default()
+    /// Returns the strictly parsed challenge expiry time.
+    pub fn expires_at_ms(&self) -> Result<u64, CloudLinkCodecError> {
+        canonical_u64(&self.expires_at_ms, "expires_at_ms")
     }
 
     pub(crate) fn cloud_nonce(&self) -> &str {
@@ -253,7 +249,6 @@ pub struct SessionChallengeRequest {
     message_kind: String,
     gateway_id: String,
     credential_binding: ChallengeCredentialBinding,
-    offered_protocol_versions: Vec<String>,
     client_nonce: String,
     resume: Vec<ResumeCursor>,
 }
@@ -263,10 +258,6 @@ impl core::fmt::Debug for SessionChallengeRequest {
         formatter
             .debug_struct("SessionChallengeRequest")
             .field("authentication_transcript", &"[REDACTED]")
-            .field(
-                "offered_version_count",
-                &self.offered_protocol_versions.len(),
-            )
             .field("resume_cursor_count", &self.resume.len())
             .finish()
     }
@@ -278,7 +269,6 @@ impl SessionChallengeRequest {
         gateway_id: impl Into<String>,
         credential_id: impl Into<String>,
         credential_generation: u64,
-        offered_protocol_versions: Vec<String>,
         client_nonce: impl Into<String>,
         resume: Vec<ResumeCursor>,
     ) -> Result<Self, CloudLinkCodecError> {
@@ -291,7 +281,6 @@ impl SessionChallengeRequest {
                 credential_id: credential_id.into(),
                 generation: credential_generation.to_string(),
             },
-            offered_protocol_versions,
             client_nonce: client_nonce.into(),
             resume,
         };
@@ -316,7 +305,6 @@ impl SessionChallengeRequest {
             &self.credential_binding.generation,
             "credential_binding.generation",
         )?;
-        validate_offered_versions(&self.offered_protocol_versions)?;
         validate_nonce(&self.client_nonce, "client_nonce")?;
         validate_cursors(&self.resume)
     }
@@ -331,19 +319,15 @@ impl SessionChallengeRequest {
         &self.credential_binding.credential_id
     }
 
-    pub(crate) fn credential_generation(&self) -> u64 {
-        self.credential_binding
-            .generation
-            .parse()
-            .unwrap_or_default()
+    pub(crate) fn credential_generation(&self) -> Result<u64, CloudLinkCodecError> {
+        positive_u64(
+            &self.credential_binding.generation,
+            "credential_binding.generation",
+        )
     }
 
     pub(crate) fn credential_generation_wire(&self) -> &str {
         &self.credential_binding.generation
-    }
-
-    pub(crate) fn offered_protocol_versions(&self) -> &[String] {
-        &self.offered_protocol_versions
     }
 
     pub(crate) fn client_nonce(&self) -> &str {
@@ -378,7 +362,6 @@ pub struct SessionHello {
     gateway_key_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     gateway_signature: Option<MessageAuthentication>,
-    offered_protocol_versions: Vec<String>,
     client_nonce: String,
     resume: Vec<ResumeCursor>,
 }
@@ -403,7 +386,6 @@ impl SessionHello {
         challenge_id: impl Into<String>,
         gateway_key_id: impl Into<String>,
         gateway_signature: MessageAuthentication,
-        offered_protocol_versions: Vec<String>,
         client_nonce: impl Into<String>,
         resume: Vec<ResumeCursor>,
     ) -> Result<Self, CloudLinkCodecError> {
@@ -420,7 +402,6 @@ impl SessionHello {
             challenge_id: challenge_id.into(),
             gateway_key_id: Some(gateway_key_id.into()),
             gateway_signature: Some(gateway_signature),
-            offered_protocol_versions,
             client_nonce: client_nonce.into(),
             resume,
         };
@@ -438,7 +419,6 @@ impl SessionHello {
         credential_id: impl Into<String>,
         credential_generation: u64,
         challenge_id: impl Into<String>,
-        offered_protocol_versions: Vec<String>,
         client_nonce: impl Into<String>,
         resume: Vec<ResumeCursor>,
     ) -> Result<Self, CloudLinkCodecError> {
@@ -455,7 +435,6 @@ impl SessionHello {
             challenge_id: challenge_id.into(),
             gateway_key_id: None,
             gateway_signature: None,
-            offered_protocol_versions,
             client_nonce: client_nonce.into(),
             resume,
         };
@@ -515,7 +494,6 @@ impl SessionHello {
                 }
             },
         }
-        validate_offered_versions(&self.offered_protocol_versions)?;
         validate_nonce(&self.client_nonce, "client_nonce")?;
         validate_cursors(&self.resume)?;
         Ok(())
@@ -536,7 +514,6 @@ pub struct SessionAccepted {
     protocol: String,
     message_kind: String,
     gateway_id: String,
-    selected_protocol_version: String,
     session_id: String,
     session_epoch: String,
     credential_generation: String,
@@ -554,7 +531,6 @@ impl SessionAccepted {
             });
         }
         uuid(&self.gateway_id, "gateway_id")?;
-        protocol_version(&self.selected_protocol_version)?;
         uuid(&self.session_id, "session_id")?;
         positive_u64(&self.session_epoch, "session_epoch")?;
         positive_u64(&self.credential_generation, "credential_generation")?;
@@ -569,15 +545,11 @@ impl SessionAccepted {
         &self,
         expected_gateway_id: &str,
         expected_credential_generation: u64,
-        offered_versions: &[&str],
         previous_session_epoch: u64,
     ) -> Result<SessionBinding, CloudLinkCodecError> {
         self.validate()?;
         if self.gateway_id != expected_gateway_id {
             return Err(CloudLinkCodecError::SessionMismatch);
-        }
-        if !offered_versions.contains(&self.selected_protocol_version.as_str()) {
-            return Err(CloudLinkCodecError::VersionNegotiationFailed);
         }
         let session_epoch = positive_u64(&self.session_epoch, "session_epoch")?;
         let credential_generation =
@@ -589,7 +561,6 @@ impl SessionAccepted {
         }
         Ok(SessionBinding {
             gateway_id: self.gateway_id.clone(),
-            protocol_version: self.selected_protocol_version.clone(),
             session_id: self.session_id.clone(),
             session_epoch,
             credential_generation,
@@ -602,10 +573,9 @@ impl SessionAccepted {
         &self.resume
     }
 
-    /// Returns the negotiated heartbeat interval in milliseconds.
-    #[must_use]
-    pub fn heartbeat_interval_ms(&self) -> u64 {
-        self.heartbeat_interval_ms.parse().unwrap_or_default()
+    /// Returns the strictly parsed negotiated heartbeat interval in milliseconds.
+    pub fn heartbeat_interval_ms(&self) -> Result<u64, CloudLinkCodecError> {
+        positive_u64(&self.heartbeat_interval_ms, "heartbeat_interval_ms")
     }
 }
 
@@ -613,7 +583,6 @@ impl SessionAccepted {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionBinding {
     gateway_id: String,
-    protocol_version: String,
     session_id: String,
     session_epoch: u64,
     credential_generation: u64,
@@ -629,7 +598,6 @@ impl SessionBinding {
     ) -> Result<Self, CloudLinkCodecError> {
         let value = Self {
             gateway_id: gateway_id.into(),
-            protocol_version: CLOUDLINK_PROTOCOL_VERSION.to_string(),
             session_id: session_id.into(),
             session_epoch,
             credential_generation,
@@ -646,12 +614,6 @@ impl SessionBinding {
     #[must_use]
     pub fn gateway_id(&self) -> &str {
         &self.gateway_id
-    }
-
-    /// Returns the negotiated protocol version.
-    #[must_use]
-    pub fn protocol_version(&self) -> &str {
-        &self.protocol_version
     }
 
     /// Returns the opaque session ID.
@@ -693,26 +655,6 @@ fn validate_cursors(cursors: &[ResumeCursor]) -> Result<(), CloudLinkCodecError>
             return Err(CloudLinkCodecError::InvalidField {
                 field: "resume",
                 message: "must contain unique stream and epoch identities",
-            });
-        }
-    }
-    Ok(())
-}
-
-fn validate_offered_versions(versions: &[String]) -> Result<(), CloudLinkCodecError> {
-    if versions.is_empty() || versions.len() > 8 {
-        return Err(CloudLinkCodecError::InvalidField {
-            field: "offered_protocol_versions",
-            message: "must contain between one and eight versions",
-        });
-    }
-    let mut unique = HashSet::new();
-    for version in versions {
-        protocol_version(version)?;
-        if !unique.insert(version) {
-            return Err(CloudLinkCodecError::InvalidField {
-                field: "offered_protocol_versions",
-                message: "must contain unique versions",
             });
         }
     }

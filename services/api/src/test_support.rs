@@ -59,6 +59,13 @@ pub(crate) async fn app_state_with_public_registration(
         .connect("sqlite::memory:")
         .await
         .expect("open isolated API test database");
+    app_state_with_database(database, allow_public_registration).await
+}
+
+pub(crate) async fn app_state_with_database(
+    database: sqlx::SqlitePool,
+    allow_public_registration: bool,
+) -> Arc<AppState> {
     db::create_tables(&database)
         .await
         .expect("create API test schema");
@@ -74,6 +81,7 @@ pub(crate) async fn app_state_with_public_registration(
     let closed = "http://127.0.0.1:1".to_owned();
     let config = GatewayConfig {
         jwt_secret: TEST_JWT_SECRET.to_owned(),
+        alarm_broadcast_token: "test-alarm-broadcast-token-0123456789abcdef".to_owned(),
         allow_public_registration,
         io_service_url: closed.clone(),
         automation_service_url: closed.clone(),

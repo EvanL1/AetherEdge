@@ -204,17 +204,9 @@ fn print_latest(data: &Value, series_key: &str, point_id: &str) {
 }
 
 fn print_query_result(data: &Value) {
-    let records = data.get("data").and_then(|d| d.as_array()).or_else(|| {
-        data.get("data")
-            .and_then(|d| d.get("data"))
-            .and_then(|d| d.as_array())
-    });
+    let records = history_query_records(data);
 
-    let total = data
-        .get("total")
-        .or_else(|| data.get("data").and_then(|d| d.get("total")))
-        .and_then(|v| v.as_i64())
-        .unwrap_or(0);
+    let total = data.get("total").and_then(|v| v.as_i64()).unwrap_or(0);
 
     match records {
         None => {
@@ -249,28 +241,16 @@ fn print_query_result(data: &Value) {
 }
 
 fn print_channels(data: &Value) {
-    let channels = data
-        .get("data")
-        .and_then(|d| d.as_array())
-        .or_else(|| data.as_array());
+    let channels = history_channels(data);
 
     match channels {
         None => println!("No channels found."),
         Some(items) if items.is_empty() => println!("No channels found."),
         Some(items) => {
-            println!("{:<20} Point Count", "Series Key");
-            println!("{}", "-".repeat(40));
+            println!("Series Key");
+            println!("{}", "-".repeat(20));
             for item in items {
-                let key = item
-                    .get("series_key")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or_else(|| item.as_str().unwrap_or("-"));
-                let count = item
-                    .get("point_count")
-                    .and_then(|v| v.as_i64())
-                    .map(|n| n.to_string())
-                    .unwrap_or_else(|| "-".to_string());
-                println!("{:<20} {}", key, count);
+                println!("{}", item.as_str().unwrap_or("-"));
             }
             println!("\nTotal: {} channel(s)", items.len());
         },
@@ -280,12 +260,7 @@ fn print_channels(data: &Value) {
 // ── HTTP client ───────────────────────────────────────────────────────────────
 
 fn print_batch_result(data: &Value) {
-    let series = data
-        .get("data")
-        .and_then(|d| d.get("data"))
-        .and_then(|d| d.get("series"))
-        .or_else(|| data.get("data").and_then(|d| d.get("series")))
-        .and_then(|s| s.as_array());
+    let series = history_batch_series(data);
 
     match series {
         None => println!("No batch result returned."),
@@ -328,6 +303,21 @@ fn print_batch_result(data: &Value) {
             println!();
         },
     }
+}
+
+fn history_query_records(response: &Value) -> Option<&Vec<Value>> {
+    response.get("data").and_then(Value::as_array)
+}
+
+fn history_channels(response: &Value) -> Option<&Vec<Value>> {
+    response.get("data").and_then(Value::as_array)
+}
+
+fn history_batch_series(response: &Value) -> Option<&Vec<Value>> {
+    response
+        .get("data")
+        .and_then(|data| data.get("series"))
+        .and_then(Value::as_array)
 }
 
 pub(crate) struct HistoryClient {
@@ -511,7 +501,7 @@ impl HistoryClient {
 
 #[cfg(test)]
 mod tests {
-    use super::HistoryClient;
+    use super::{HistoryClient, history_batch_series, history_channels, history_query_records};
     use reqwest::Client;
     use wiremock::matchers::{header, method, path, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -522,6 +512,20 @@ mod tests {
             base_url: base_url.to_string(),
             access_token: None,
         }
+    }
+
+    #[test]
+    fn history_printers_accept_only_the_service_wire_shape() {
+        assert!(history_query_records(&serde_json::json!({"data": []})).is_some());
+        assert!(history_query_records(&serde_json::json!({"data": {"data": []}})).is_none());
+
+        assert!(history_channels(&serde_json::json!({"data": ["inst:1:M"]})).is_some());
+        assert!(history_channels(&serde_json::json!(["inst:1:M"])).is_none());
+
+        assert!(history_batch_series(&serde_json::json!({"data": {"series": []}})).is_some());
+        assert!(
+            history_batch_series(&serde_json::json!({"data": {"data": {"series": []}}})).is_none()
+        );
     }
 
     #[tokio::test]

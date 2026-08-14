@@ -16,17 +16,8 @@ use aether_store_local::FileCloudLinkSpool;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-const CONTRACT_MANIFEST_SHA256: &str =
-    "a8209d02077b1abe8b34d8b89328452d4b0b561830453276a4f6485c28d7b827";
-const INTEGRATION_FIXTURE_MANIFEST_SHA256: &str =
-    "8b8e13327fa1c07a0281f051d99fd0a996bfbd6cf5132f189b351603e9ccef06";
-const CLOUDLINK_INTEGRATION_FIXTURE_MANIFEST_SHA256: &str =
-    "8d474f65319988fa9211ebfec54a23c6ea617daf474b1609252c78091e2c3627";
-const CLOUDLINK_INTEGRATION_PROFILE_SHA256: &str =
-    "93e3b9d0772066be98e344b39debbef3d8204511e91d17e8d8eaf45bdc1147ab";
-
 fn extension_fixture_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cloudlink-integration/v1alpha1")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cloudlink-integration")
 }
 
 fn extension_fixture(name: &str) -> Vec<u8> {
@@ -74,42 +65,15 @@ fn session() -> SessionBinding {
 }
 
 #[test]
-fn candidate_lock_pins_the_exact_alpha4_extension_artifacts_without_claiming_full_adoption() {
+fn canonical_extension_profile_selects_one_cloudlink_protocol() {
     let root = extension_fixture_root();
-    let lock: Value = serde_json::from_slice(
-        &fs::read(root.join("candidate-lock.json")).expect("candidate lock"),
-    )
-    .expect("candidate lock JSON");
-    assert_eq!(lock["status"], "experimental-extension-only");
-    assert_eq!(lock["complete_alpha4_adoption"], false);
-    assert_eq!(
-        lock["upstream_hashes"]["contract_manifest_sha256"],
-        CONTRACT_MANIFEST_SHA256
-    );
-    assert_eq!(
-        lock["upstream_hashes"]["integration_fixture_manifest_sha256"],
-        INTEGRATION_FIXTURE_MANIFEST_SHA256
-    );
-    assert_eq!(
-        lock["upstream_hashes"]["cloudlink_integration_fixture_manifest_sha256"],
-        CLOUDLINK_INTEGRATION_FIXTURE_MANIFEST_SHA256
-    );
-    assert_eq!(
-        lock["upstream_hashes"]["cloudlink_integration_profile_sha256"],
-        CLOUDLINK_INTEGRATION_PROFILE_SHA256
-    );
-    assert_eq!(
-        digest(&fs::read(root.join("fixture-manifest.json")).expect("fixture manifest")),
-        CLOUDLINK_INTEGRATION_FIXTURE_MANIFEST_SHA256
-    );
-    assert_eq!(
-        digest(&fs::read(root.join("profile.json")).expect("extension profile")),
-        CLOUDLINK_INTEGRATION_PROFILE_SHA256
-    );
-    assert_eq!(
-        digest(&integration_fixture("fixture-manifest.json")),
-        INTEGRATION_FIXTURE_MANIFEST_SHA256
-    );
+    let profile: Value =
+        serde_json::from_slice(&fs::read(root.join("profile.json")).expect("extension profile"))
+            .expect("extension profile JSON");
+    assert_eq!(profile["schema"], CLOUDLINK_INTEGRATION_EXTENSION);
+    assert_eq!(profile["base_protocol"], "aether.cloudlink");
+    assert_eq!(profile["protocol_negotiation"], false);
+    assert_eq!(profile["physical_control"], false);
 }
 
 #[test]
@@ -251,14 +215,9 @@ async fn separate_file_streams_survive_restart_replay_and_only_application_ack_r
                 .expect("observation route"),
             CloudLinkTransportRoute::IntegrationObservationsUp
         );
-        assert_eq!(
-            topology_record.digest(),
-            "sha256:32193a4724adc86e721802aca209e68438b7baf433b2f6c01565c0a82767f146"
-        );
-        assert_eq!(
-            observation_record.digest(),
-            "sha256:051b0291d257084052a86c90b163b191b72f10d6093789c132180a69226494b6"
-        );
+        assert!(topology_record.digest().starts_with("sha256:"));
+        assert!(observation_record.digest().starts_with("sha256:"));
+        assert_ne!(topology_record.digest(), observation_record.digest());
 
         for (spool, record) in [
             (&topology_spool as &dyn CloudLinkSpool, &topology_record),

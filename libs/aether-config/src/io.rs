@@ -2,7 +2,6 @@
 
 mod stored_channel_config;
 
-use common::serde_helpers::deserialize_bool_flexible;
 use common::validation::CsvFields;
 use common::{
     ApiConfig, BaseServiceConfig, ConfigValidator, LoggingConfig, ValidationLevel, ValidationResult,
@@ -186,7 +185,7 @@ pub struct Point {
     pub protocol_mappings: Option<String>,
 }
 
-use common::serde_helpers::{deserialize_offset, deserialize_scale, scale_one, step_one};
+use common::serde_helpers::{scale_one, step_one};
 
 /// Telemetry point (T)
 /// For analog measurements like voltage, current, temperature
@@ -198,11 +197,11 @@ pub struct TelemetryPoint {
     pub base: Point,
 
     /// Scale factor for value conversion
-    #[serde(default = "scale_one", deserialize_with = "deserialize_scale")]
+    #[serde(default = "scale_one")]
     pub scale: f64,
 
     /// Offset for value conversion
-    #[serde(default, deserialize_with = "deserialize_offset")]
+    #[serde(default)]
     pub offset: f64,
 
     /// Data type (float32, float64, int16, int32, etc.)
@@ -212,8 +211,8 @@ pub struct TelemetryPoint {
     /// Whether to reverse signal logic (not used for telemetry values)
     /// Note: Byte order/endian for multi-byte values is controlled via protocol mappings
     /// using the `byte_order` field, not this flag.
-    /// Supports: 1/0, true/false, yes/no in CSV files
-    #[serde(default, deserialize_with = "deserialize_bool_flexible")]
+    /// CSV and JSON/YAML inputs use the canonical `true`/`false` representation.
+    #[serde(default)]
     pub reverse: bool,
 }
 
@@ -227,8 +226,8 @@ pub struct SignalPoint {
     pub base: Point,
 
     /// Whether to reverse the signal logic
-    /// Supports: 1/0, true/false, yes/no in CSV files
-    #[serde(default, deserialize_with = "deserialize_bool_flexible")]
+    /// CSV and JSON/YAML inputs use the canonical `true`/`false` representation.
+    #[serde(default)]
     pub reverse: bool,
 }
 
@@ -242,8 +241,8 @@ pub struct ControlPoint {
     pub base: Point,
 
     /// Whether to reverse the control logic (like SignalPoint)
-    /// Supports: 1/0, true/false, yes/no in CSV files
-    #[serde(default, deserialize_with = "deserialize_bool_flexible")]
+    /// CSV and JSON/YAML inputs use the canonical `true`/`false` representation.
+    #[serde(default)]
     pub reverse: bool,
 
     /// Control type (momentary, latching, etc.)
@@ -286,11 +285,11 @@ pub struct AdjustmentPoint {
     pub data_type: String,
 
     /// Scale factor for value conversion
-    #[serde(default = "scale_one", deserialize_with = "deserialize_scale")]
+    #[serde(default = "scale_one")]
     pub scale: f64,
 
     /// Offset for value conversion
-    #[serde(default, deserialize_with = "deserialize_offset")]
+    #[serde(default)]
     pub offset: f64,
 }
 
@@ -678,6 +677,46 @@ channels:
             )
             .is_valid
         );
+    }
+
+    #[test]
+    fn point_scalars_accept_only_native_config_types() {
+        let canonical: TelemetryPoint = serde_json::from_value(serde_json::json!({
+            "point_id": 1,
+            "signal_name": "voltage",
+            "scale": 0.0,
+            "offset": -1.5,
+            "reverse": true
+        }))
+        .expect("native JSON point scalars");
+        assert_eq!(canonical.scale, 0.0, "explicit zero scale is not a default");
+        assert_eq!(canonical.offset, -1.5);
+        assert!(canonical.reverse);
+
+        for retired in [
+            serde_json::json!({"point_id":1,"signal_name":"x","scale":"1.0"}),
+            serde_json::json!({"point_id":1,"signal_name":"x","scale":""}),
+            serde_json::json!({"point_id":1,"signal_name":"x","offset":"-1.5"}),
+            serde_json::json!({"point_id":1,"signal_name":"x","reverse":"yes"}),
+            serde_json::json!({"point_id":1,"signal_name":"x","reverse":1}),
+        ] {
+            assert!(
+                serde_json::from_value::<TelemetryPoint>(retired).is_err(),
+                "retired JSON scalar shape was accepted"
+            );
+        }
+
+        for retired in [
+            "point_id: 1\nsignal_name: x\nscale: \"1.0\"\n",
+            "point_id: 1\nsignal_name: x\nscale: \"\"\n",
+            "point_id: 1\nsignal_name: x\nreverse: \"yes\"\n",
+            "point_id: 1\nsignal_name: x\nreverse: 1\n",
+        ] {
+            assert!(
+                serde_yml::from_str::<TelemetryPoint>(retired).is_err(),
+                "retired YAML scalar shape was accepted: {retired:?}"
+            );
+        }
     }
 
     #[test]

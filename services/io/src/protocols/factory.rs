@@ -32,7 +32,6 @@ type RuntimeBuilder = fn(&RuntimeChannelConfig) -> Result<Box<dyn ChannelRuntime
 pub(crate) struct ProtocolFactory {
     metadata: ProtocolMetadata,
     default_poll_interval_ms: u64,
-    numeric_mapping_fields: &'static [&'static str],
     validate_parameters: ParameterValidator,
     validate_mapping: MappingValidator,
     build_runtime: RuntimeBuilder,
@@ -42,7 +41,6 @@ impl ProtocolFactory {
     fn new(
         mut metadata: ProtocolMetadata,
         default_poll_interval_ms: u64,
-        numeric_mapping_fields: &'static [&'static str],
         validate_parameters: ParameterValidator,
         validate_mapping: MappingValidator,
         build_runtime: RuntimeBuilder,
@@ -60,7 +58,6 @@ impl ProtocolFactory {
         Self {
             metadata,
             default_poll_interval_ms,
-            numeric_mapping_fields,
             validate_parameters,
             validate_mapping,
             build_runtime,
@@ -73,10 +70,6 @@ impl ProtocolFactory {
 
     pub(crate) fn default_poll_interval_ms(&self) -> u64 {
         self.default_poll_interval_ms
-    }
-
-    pub(crate) fn numeric_mapping_fields(&self) -> &'static [&'static str] {
-        self.numeric_mapping_fields
     }
 
     pub(crate) fn validate_channel(&self, config: &ChannelConfig) -> Result<()> {
@@ -258,16 +251,38 @@ fn reject_mapped_points<'a>(
 fn validate_modbus_tcp_parameters(config: &ChannelConfig) -> Result<()> {
     required_string_parameter(&config.parameters, "host")?;
     required_u16_parameter(&config.parameters, "port")?;
+    timing_parameter(&config.parameters, "connect_timeout_ms")?;
     timing_parameter(&config.parameters, "read_timeout_ms")?;
-    reject_unknown_parameters(config, &["host", "port", "read_timeout_ms"])
+    timing_parameter(&config.parameters, "write_timeout_ms")?;
+    reject_unknown_parameters(
+        config,
+        &[
+            "host",
+            "port",
+            "connect_timeout_ms",
+            "read_timeout_ms",
+            "write_timeout_ms",
+        ],
+    )
 }
 
 #[cfg(feature = "modbus")]
 fn validate_modbus_rtu_parameters(config: &ChannelConfig) -> Result<()> {
     required_string_parameter(&config.parameters, "device")?;
     required_u32_parameter(&config.parameters, "baud_rate")?;
+    timing_parameter(&config.parameters, "connect_timeout_ms")?;
     timing_parameter(&config.parameters, "read_timeout_ms")?;
-    reject_unknown_parameters(config, &["device", "baud_rate", "read_timeout_ms"])
+    timing_parameter(&config.parameters, "write_timeout_ms")?;
+    reject_unknown_parameters(
+        config,
+        &[
+            "device",
+            "baud_rate",
+            "connect_timeout_ms",
+            "read_timeout_ms",
+            "write_timeout_ms",
+        ],
+    )
 }
 
 fn reject_unknown_parameters(config: &ChannelConfig, adapter_keys: &[&str]) -> Result<()> {
@@ -396,45 +411,85 @@ fn validate_iec61850_parameters(config: &ChannelConfig) -> Result<()> {
 
 #[cfg(feature = "modbus")]
 fn build_modbus_tcp(config: &RuntimeChannelConfig) -> Result<Box<dyn ChannelRuntime>> {
+    use crate::protocols::adapters::modbus::ModbusChannel;
+
+    Ok(Box::new(ModbusChannel::new(
+        build_modbus_tcp_config(config)?,
+        config.id(),
+    )))
+}
+
+#[cfg(feature = "modbus")]
+fn build_modbus_tcp_config(
+    config: &RuntimeChannelConfig,
+) -> Result<crate::protocols::adapters::modbus::ModbusChannelConfig> {
     use std::time::Duration;
 
     use crate::core::channels::converters::convert_to_modbus_point_configs;
-    use crate::protocols::adapters::modbus::{ModbusChannel, ModbusChannelConfig, ReconnectConfig};
+    use crate::protocols::adapters::modbus::{ModbusChannelConfig, ReconnectConfig};
 
     validate_modbus_tcp_parameters(config.channel_config())?;
     let parameters = &config.channel_config().parameters;
     let host = required_string_parameter(parameters, "host")?;
     let port = required_u16_parameter(parameters, "port")?;
-    let timeout = timing_parameter(parameters, "read_timeout_ms")?;
+    let connect_timeout = timing_parameter(parameters, "connect_timeout_ms")?;
+    let read_timeout = timing_parameter(parameters, "read_timeout_ms")?;
+    let write_timeout = timing_parameter(parameters, "write_timeout_ms")?;
     let address = format!("{host}:{port}");
     let mut channel_config = ModbusChannelConfig::tcp(&address)
         .with_points(convert_to_modbus_point_configs(config)?)
         .with_reconnect(ReconnectConfig::default());
-    if let Some(timeout) = timeout {
-        channel_config = channel_config.with_io_timeout(Duration::from_millis(timeout));
+    if let Some(timeout) = connect_timeout {
+        channel_config = channel_config.with_connect_timeout(Duration::from_millis(timeout));
     }
-    Ok(Box::new(ModbusChannel::new(channel_config, config.id())))
+    if let Some(timeout) = read_timeout {
+        channel_config = channel_config.with_read_timeout(Duration::from_millis(timeout));
+    }
+    if let Some(timeout) = write_timeout {
+        channel_config = channel_config.with_write_timeout(Duration::from_millis(timeout));
+    }
+    Ok(channel_config)
 }
 
 #[cfg(feature = "modbus")]
 fn build_modbus_rtu(config: &RuntimeChannelConfig) -> Result<Box<dyn ChannelRuntime>> {
+    use crate::protocols::adapters::modbus::ModbusChannel;
+
+    Ok(Box::new(ModbusChannel::new(
+        build_modbus_rtu_config(config)?,
+        config.id(),
+    )))
+}
+
+#[cfg(feature = "modbus")]
+fn build_modbus_rtu_config(
+    config: &RuntimeChannelConfig,
+) -> Result<crate::protocols::adapters::modbus::ModbusChannelConfig> {
     use std::time::Duration;
 
     use crate::core::channels::converters::convert_to_modbus_point_configs;
-    use crate::protocols::adapters::modbus::{ModbusChannel, ModbusChannelConfig, ReconnectConfig};
+    use crate::protocols::adapters::modbus::{ModbusChannelConfig, ReconnectConfig};
 
     validate_modbus_rtu_parameters(config.channel_config())?;
     let parameters = &config.channel_config().parameters;
     let device = required_string_parameter(parameters, "device")?;
     let baud_rate = required_u32_parameter(parameters, "baud_rate")?;
-    let timeout = timing_parameter(parameters, "read_timeout_ms")?;
+    let connect_timeout = timing_parameter(parameters, "connect_timeout_ms")?;
+    let read_timeout = timing_parameter(parameters, "read_timeout_ms")?;
+    let write_timeout = timing_parameter(parameters, "write_timeout_ms")?;
     let mut channel_config = ModbusChannelConfig::rtu(device, baud_rate)
         .with_points(convert_to_modbus_point_configs(config)?)
         .with_reconnect(ReconnectConfig::default());
-    if let Some(timeout) = timeout {
-        channel_config = channel_config.with_io_timeout(Duration::from_millis(timeout));
+    if let Some(timeout) = connect_timeout {
+        channel_config = channel_config.with_connect_timeout(Duration::from_millis(timeout));
     }
-    Ok(Box::new(ModbusChannel::new(channel_config, config.id())))
+    if let Some(timeout) = read_timeout {
+        channel_config = channel_config.with_read_timeout(Duration::from_millis(timeout));
+    }
+    if let Some(timeout) = write_timeout {
+        channel_config = channel_config.with_write_timeout(Duration::from_millis(timeout));
+    }
+    Ok(channel_config)
 }
 
 #[cfg(feature = "mqtt")]
@@ -885,8 +940,9 @@ fn build_can(config: &RuntimeChannelConfig) -> Result<Box<dyn ChannelRuntime>> {
     let parameters: CanChannelParamsConfig =
         decode_parameters(&config.channel_config().parameters, "CAN")?;
     parameters.validate()?;
-    let mut client = CanClient::new(parameters.into_config());
-    client.add_points(convert_to_can_point_configs(config)?)?;
+    let points = convert_to_can_point_configs(config)?;
+    let mut client = CanClient::new_with_point_capacity(parameters.into_config(), points.len());
+    client.add_points(points)?;
     Ok(Box::new(client))
 }
 
@@ -1257,12 +1313,6 @@ fn build_registry() -> ProtocolRegistry {
                 supports_points: true,
             },
             1_000,
-            &[
-                "slave_id",
-                "function_code",
-                "register_address",
-                "bit_position",
-            ],
             validate_modbus_tcp_parameters,
             validate_modbus_mapping,
             build_modbus_tcp,
@@ -1277,12 +1327,6 @@ fn build_registry() -> ProtocolRegistry {
                 supports_points: true,
             },
             1_000,
-            &[
-                "slave_id",
-                "function_code",
-                "register_address",
-                "bit_position",
-            ],
             validate_modbus_rtu_parameters,
             validate_modbus_mapping,
             build_modbus_rtu,
@@ -1302,7 +1346,6 @@ fn build_registry() -> ProtocolRegistry {
                 supports_points: true,
             },
             200,
-            &["gpio_number"],
             validate_gpio_parameters,
             validate_gpio_mapping,
             build_gpio,
@@ -1322,7 +1365,6 @@ fn build_registry() -> ProtocolRegistry {
                 supports_points: true,
             },
             100,
-            &["ioa", "type_id"],
             validate_iec104_parameters,
             validate_iec104_mapping,
             build_iec104,
@@ -1342,7 +1384,6 @@ fn build_registry() -> ProtocolRegistry {
                 supports_points: true,
             },
             1_000,
-            &["namespace_index"],
             validate_opcua_parameters,
             validate_opcua_mapping,
             build_opcua,
@@ -1362,15 +1403,6 @@ fn build_registry() -> ProtocolRegistry {
                 supports_points: true,
             },
             200,
-            &[
-                "can_id",
-                "start_bit",
-                "byte_offset",
-                "bit_position",
-                "bit_length",
-                "scale",
-                "offset",
-            ],
             validate_can_parameters,
             validate_can_mapping,
             build_can,
@@ -1390,7 +1422,6 @@ fn build_registry() -> ProtocolRegistry {
                 supports_points: true,
             },
             1_000,
-            &["spn", "active_raw_value"],
             validate_j1939_parameters,
             validate_j1939_mapping,
             build_j1939,
@@ -1410,7 +1441,6 @@ fn build_registry() -> ProtocolRegistry {
                 supports_points: true,
             },
             1_000,
-            &[],
             validate_dl645_parameters,
             reject_inline_mapping,
             build_dl645,
@@ -1430,12 +1460,6 @@ fn build_registry() -> ProtocolRegistry {
                 supports_points: true,
             },
             1_000,
-            &[
-                "object_type",
-                "object_instance",
-                "property_id",
-                "array_index",
-            ],
             validate_bacnet_parameters,
             validate_bacnet_mapping,
             build_bacnet,
@@ -1455,7 +1479,6 @@ fn build_registry() -> ProtocolRegistry {
                 supports_points: true,
             },
             5_000,
-            &["data_id", "byte_offset", "byte_length"],
             validate_cjt188_parameters,
             validate_cjt188_mapping,
             build_cjt188,
@@ -1475,7 +1498,6 @@ fn build_registry() -> ProtocolRegistry {
                 supports_points: true,
             },
             5_000,
-            &["ioa", "type_id"],
             validate_iec101_parameters,
             validate_iec101_mapping,
             build_iec101,
@@ -1495,7 +1517,6 @@ fn build_registry() -> ProtocolRegistry {
                 supports_points: true,
             },
             1_000,
-            &["motor_index"],
             validate_gb32960_parameters,
             validate_gb32960_mapping,
             build_gb32960,
@@ -1515,7 +1536,6 @@ fn build_registry() -> ProtocolRegistry {
                 supports_points: true,
             },
             1_000,
-            &[],
             validate_jt808_parameters,
             validate_jt808_mapping,
             build_jt808,
@@ -1535,7 +1555,6 @@ fn build_registry() -> ProtocolRegistry {
                 supports_points: true,
             },
             1_000,
-            &[],
             validate_mqtt_parameters,
             validate_json_mapping,
             build_mqtt,
@@ -1555,7 +1574,6 @@ fn build_registry() -> ProtocolRegistry {
                 supports_points: true,
             },
             5_000,
-            &[],
             validate_http_parameters,
             validate_json_mapping,
             build_http,
@@ -1575,7 +1593,6 @@ fn build_registry() -> ProtocolRegistry {
                 supports_points: true,
             },
             1_000,
-            &[],
             validate_ble_parameters,
             validate_ble_mapping,
             build_ble,
@@ -1595,7 +1612,6 @@ fn build_registry() -> ProtocolRegistry {
                 supports_points: true,
             },
             1_000,
-            &[],
             validate_zigbee_parameters,
             validate_zigbee_mapping,
             build_zigbee,
@@ -1615,7 +1631,6 @@ fn build_registry() -> ProtocolRegistry {
                 supports_points: true,
             },
             1_000,
-            &["ctrl_model"],
             validate_iec61850_parameters,
             validate_iec61850_mapping,
             build_iec61850,
@@ -1636,14 +1651,29 @@ pub fn get_protocol_registry() -> &'static ProtocolRegistry {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
-    #[cfg(any(feature = "dl645", feature = "iec104", feature = "opcua"))]
+    #[cfg(any(
+        feature = "modbus",
+        feature = "dl645",
+        feature = "iec104",
+        feature = "opcua"
+    ))]
     use std::collections::HashMap;
 
     use super::*;
-    #[cfg(any(feature = "dl645", feature = "iec104", feature = "opcua"))]
+    #[cfg(any(
+        feature = "modbus",
+        feature = "dl645",
+        feature = "iec104",
+        feature = "opcua"
+    ))]
     use crate::core::config::{ChannelCore, ChannelLoggingConfig};
 
-    #[cfg(any(feature = "dl645", feature = "iec104", feature = "opcua"))]
+    #[cfg(any(
+        feature = "modbus",
+        feature = "dl645",
+        feature = "iec104",
+        feature = "opcua"
+    ))]
     fn config(protocol: &str, parameters: HashMap<String, Value>) -> ChannelConfig {
         ChannelConfig {
             core: ChannelCore {
@@ -1656,6 +1686,60 @@ mod tests {
             parameters,
             logging: ChannelLoggingConfig::default(),
         }
+    }
+
+    #[cfg(feature = "modbus")]
+    #[test]
+    fn modbus_factory_keeps_connect_read_and_write_timeouts_independent() {
+        let tcp = RuntimeChannelConfig::from_base(config(
+            "modbus_tcp",
+            HashMap::from([
+                ("host".to_owned(), Value::String("127.0.0.1".to_owned())),
+                ("port".to_owned(), Value::from(502)),
+                ("connect_timeout_ms".to_owned(), Value::from(123)),
+                ("read_timeout_ms".to_owned(), Value::from(456)),
+                ("write_timeout_ms".to_owned(), Value::from(789)),
+            ]),
+        ));
+        let tcp = build_modbus_tcp_config(&tcp).expect("compile Modbus TCP config");
+        assert_eq!(tcp.connect_timeout, std::time::Duration::from_millis(123));
+        assert_eq!(tcp.read_timeout, std::time::Duration::from_millis(456));
+        assert_eq!(tcp.write_timeout, std::time::Duration::from_millis(789));
+
+        let rtu = RuntimeChannelConfig::from_base(config(
+            "modbus_rtu",
+            HashMap::from([
+                ("device".to_owned(), Value::String("/dev/null".to_owned())),
+                ("baud_rate".to_owned(), Value::from(9_600)),
+                ("connect_timeout_ms".to_owned(), Value::from(234)),
+                ("read_timeout_ms".to_owned(), Value::from(567)),
+                ("write_timeout_ms".to_owned(), Value::from(890)),
+            ]),
+        ));
+        let rtu = build_modbus_rtu_config(&rtu).expect("compile Modbus RTU config");
+        assert_eq!(rtu.connect_timeout, std::time::Duration::from_millis(234));
+        assert_eq!(rtu.read_timeout, std::time::Duration::from_millis(567));
+        assert_eq!(rtu.write_timeout, std::time::Duration::from_millis(890));
+
+        let read_only = RuntimeChannelConfig::from_base(config(
+            "modbus_tcp",
+            HashMap::from([
+                ("host".to_owned(), Value::String("127.0.0.1".to_owned())),
+                ("port".to_owned(), Value::from(502)),
+                ("read_timeout_ms".to_owned(), Value::from(345)),
+            ]),
+        ));
+        let read_only =
+            build_modbus_tcp_config(&read_only).expect("compile independent timeout defaults");
+        assert_eq!(
+            read_only.read_timeout,
+            std::time::Duration::from_millis(345)
+        );
+        assert_eq!(
+            read_only.write_timeout,
+            std::time::Duration::from_millis(3_000),
+            "omitting write_timeout_ms must use its own default"
+        );
     }
 
     #[test]

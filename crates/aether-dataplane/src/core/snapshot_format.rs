@@ -5,9 +5,6 @@ use crate::{DataplaneError, DataplaneResult};
 /// Snapshot file magic (`AETHSNAP` as an ASCII big-endian integer).
 pub const SNAPSHOT_MAGIC: u64 = u64::from_be_bytes(*b"AETHSNAP");
 
-/// Current snapshot file format version.
-pub const SNAPSHOT_VERSION: u32 = 1;
-
 /// Serialized snapshot header size.
 pub(crate) const SNAPSHOT_HEADER_SIZE: usize = 24;
 
@@ -28,8 +25,6 @@ pub(crate) const SLOT_PAYLOAD_SIZE: usize = 28;
 pub struct SnapshotHeader {
     /// Snapshot format magic.
     pub magic: u64,
-    /// Snapshot format version.
-    pub version: u32,
     /// Number of physical slots represented by the image.
     pub slot_count: u32,
     /// Composition-provided slot-layout fingerprint.
@@ -40,7 +35,6 @@ impl SnapshotHeader {
     pub(crate) fn new(slot_count: u32, layout_hash: u64) -> Self {
         Self {
             magic: SNAPSHOT_MAGIC,
-            version: SNAPSHOT_VERSION,
             slot_count,
             layout_hash,
         }
@@ -49,7 +43,6 @@ impl SnapshotHeader {
     pub(crate) fn encode(self) -> [u8; SNAPSHOT_HEADER_SIZE] {
         let mut bytes = [0_u8; SNAPSHOT_HEADER_SIZE];
         bytes[0..8].copy_from_slice(&self.magic.to_be_bytes());
-        bytes[8..12].copy_from_slice(&self.version.to_le_bytes());
         bytes[12..16].copy_from_slice(&self.slot_count.to_le_bytes());
         bytes[16..24].copy_from_slice(&self.layout_hash.to_le_bytes());
         bytes
@@ -63,7 +56,6 @@ impl SnapshotHeader {
         }
         let header = Self {
             magic: u64::from_be_bytes(read_array(bytes, 0, "magic")?),
-            version: u32::from_le_bytes(read_array(bytes, 8, "version")?),
             slot_count: u32::from_le_bytes(read_array(bytes, 12, "slot_count")?),
             layout_hash: u64::from_le_bytes(read_array(bytes, 16, "layout_hash")?),
         };
@@ -73,11 +65,10 @@ impl SnapshotHeader {
                 header.magic
             )));
         }
-        if header.version != SNAPSHOT_VERSION {
-            return Err(DataplaneError::InvalidLayout(format!(
-                "snapshot version mismatch: expected {SNAPSHOT_VERSION}, got {}",
-                header.version
-            )));
+        if bytes[8..12].iter().any(|byte| *byte != 0) {
+            return Err(DataplaneError::InvalidLayout(
+                "snapshot reserved header bytes are non-zero".to_string(),
+            ));
         }
         Ok(header)
     }

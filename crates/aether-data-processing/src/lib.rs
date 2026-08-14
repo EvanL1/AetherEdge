@@ -1,8 +1,8 @@
-//! Strict Data Processing v1 wire codec.
+//! Strict Data Processing wire codec.
 //!
 //! Aether owns frame assembly. This crate only converts complete domain
 //! requests, untrusted processor results, and Aether-accepted derived data at
-//! a versioned JSON boundary. Derived data is deliberately encode-only, so an
+//! a single JSON boundary. Derived data is deliberately encode-only, so an
 //! external payload cannot claim Aether acceptance. This crate contains no
 //! source callback, storage access, or model execution API.
 
@@ -15,20 +15,20 @@ pub use codec::{
 };
 pub use dto::{DataProcessingRequestDto, DerivedDataDto, ProcessingResultDto};
 
-/// Version 1 vendor media type used by processor HTTP adapters.
-pub const MEDIA_TYPE: &str = "application/vnd.aether.data-processing+json;version=1";
+/// Vendor media type used by processor HTTP adapters.
+pub const MEDIA_TYPE: &str = "application/vnd.aether.data-processing+json";
 
-/// Version 1 complete-frame schema identifier.
-pub const FRAME_SCHEMA: &str = "aether.processing-frame.v1";
+/// Complete-frame schema identifier.
+pub const FRAME_SCHEMA: &str = "aether.processing-frame";
 
-/// Version 1 processor-request schema identifier.
-pub const REQUEST_SCHEMA: &str = "aether.data-processing.request.v1";
+/// Processor-request schema identifier.
+pub const REQUEST_SCHEMA: &str = "aether.data-processing.request";
 
-/// Version 1 processor-result schema identifier.
-pub const RESULT_SCHEMA: &str = "aether.data-processing.result.v1";
+/// Processor-result schema identifier.
+pub const RESULT_SCHEMA: &str = "aether.data-processing.result";
 
-/// Version 1 Aether-accepted derived-data schema identifier.
-pub const DERIVED_DATA_SCHEMA: &str = "aether.derived-data.v1";
+/// Aether-accepted derived-data schema identifier.
+pub const DERIVED_DATA_SCHEMA: &str = "aether.derived-data";
 
-/// Version 1 typed forecast-output schema identifier.
-pub const FORECAST_OUTPUT_SCHEMA: &str = "aether.data-processing.output.forecast.v1";
+/// Typed forecast-output schema identifier.
+pub const FORECAST_OUTPUT_SCHEMA: &str = "aether.data-processing.output.forecast";

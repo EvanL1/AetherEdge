@@ -1,5 +1,5 @@
 {
-  "schema": "aether.pack.rule.v1",
+  "schema": "aether.pack.rule",
   "id": "energy.battery-soc-management",
   "name": "Battery SOC Management Rule",
   "description": "Automatic battery state of charge management with diesel generator backup and PV curtailment",

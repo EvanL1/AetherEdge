@@ -112,9 +112,10 @@ Docker Compose runtime and fails if that composition is not present.
 |---------|-------------|
 | `aether models products list` | List active Pack and site product types |
 | `aether models instances list` | List device instances |
-| `aether models instances create <product> <name>` | Create device instance |
-| `aether models instances get <name>` | Instance details |
-| `aether models instances delete <name>` | Delete instance |
+| `aether models instances create <product_name> <instance_name> --expected-revision <rev> --confirmed` | Create an instance with optional `--instance-id` and strict JSON-literal properties |
+| `aether models instances get <instance_id>` | Instance details by numeric identity |
+| `aether models instances update <instance_id> ... --expected-revision <rev> --confirmed` | Rename an instance and/or replace strict JSON-literal properties |
+| `aether models instances delete <instance_id> --expected-revision <rev> --confirmed` | Delete an instance subtree; `--force` only skips the prompt |
 
 ### Rules (aether-automation)
 
@@ -131,7 +132,7 @@ Docker Compose runtime and fails if that composition is not present.
 | `aether routing measurement upsert/delete/enable/disable ... --expected-revision <REV> --confirmed` | Govern one T/S measurement route; requires `AETHER_ACCESS_TOKEN` |
 | `aether routing action upsert/delete/enable/disable ... --expected-revision <REV> --confirmed` | Govern one physical C/A command route; requires `AETHER_ACCESS_TOKEN` |
 
-The production MCP catalog contains 45 tools: 23 read-only tools are always
+The production MCP catalog contains 42 tools: 20 read-only tools are always
 registered, while `aether mcp --allow-write` adds exactly 22 governed writes:
 
 - channel commissioning: `channels_create`, `channels_update`,

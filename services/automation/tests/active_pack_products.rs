@@ -38,8 +38,7 @@ fn write_model_pack(root: &Path, id: &str, declared: &str, actual: &str) {
     fs::write(
         root.join("pack.yaml"),
         format!(
-            r#"schema_version: 1
-id: {id}
+            r#"id: {id}
 name: Test Pack
 version: 0.0.1
 status: test

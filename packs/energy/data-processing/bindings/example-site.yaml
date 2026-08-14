@@ -1,4 +1,4 @@
-schema: aether.data-processing-binding.v1
+schema: aether.data-processing-binding
 id: energy.example-site
 revision: 1
 enabled: false

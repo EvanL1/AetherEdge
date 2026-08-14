@@ -12,9 +12,9 @@ Local adapters for a gateway that must run without external services.
 | `MemoryAuditSink` | process-local | tests and host-managed persistence |
 | `SqliteAuditSink` (`sqlite-audit`) | embedded SQLite | mandatory command audit without an external service |
 | `MemoryOutbox` | process-local | conformance tests and ephemeral workloads |
-| `FileOutbox` | crash-recoverable file | production offline store-and-forward |
+| `FileOutbox` | crash-recoverable file | generic downstream store-and-forward compositions; not `aether-uplink` |
 | `MemoryCloudLinkSpool` | process-local | deterministic application-ACK/replay conformance |
-| `FileCloudLinkSpool` | crash-recoverable file | experimental CloudLink positions, replay, and loss evidence |
+| `FileCloudLinkSpool` | crash-recoverable file | production Uplink CloudLink positions, replay, loss evidence, and lossless-event receipts |
 | `FileIntegrationTopologyGenerationStore` | atomically replaced private file | restart-stable per-integration topology generations |
 
 `MemoryHistoryQuery` and `MemoryCovariateSource` are keyed by the complete
@@ -60,7 +60,7 @@ reference for every nondeterministic feature.
 
 ```json
 {
-  "schema": "aether.covariate-snapshot.v1",
+  "schema": "aether.covariate-snapshot",
   "bindings": [
     {
       "id": "example-site",
@@ -98,7 +98,7 @@ must also be at or before `as_of`. The requested half-open window and sample
 count define an exact regular grid; missing, extra, or off-grid valid times are
 an `InvalidData` outcome rather than a truncated response.
 
-For a v1 interval-end forecast with cadence `c`, that future grid begins at
+For an interval-end forecast with cadence `c`, that future grid begins at
 `as_of+c`. The current energy load/PV tasks require `issued_at` for every
 non-calendar future covariate.
 
@@ -124,8 +124,11 @@ use aether_domain::TimestampMs;
 use aether_store_local::FileOutbox;
 
 # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-let outbox: Arc<dyn DurableOutbox> =
-    Arc::new(FileOutbox::open("./data/uplink.outbox", 10_000)?);
+let outbox: Arc<dyn DurableOutbox> = Arc::new(FileOutbox::open_with_limits(
+    "./data/example.outbox",
+    10_000,
+    256 * 1024 * 1024,
+)?);
 outbox
     .enqueue(OutboxMessage::new(
         "telemetry/site-a",
@@ -141,15 +144,21 @@ Each successful mutation has been synchronized to the journal. Recovery
 replays complete checksum-valid records and treats an incomplete or
 checksum-invalid final record as a crash-torn tail. Corruption before a later
 committed record fails closed instead of discarding the later data. The journal
-permits one process writer, is bounded by entry count, and can be reclaimed
-with `FileOutbox::compact()`.
+permits one process writer, and is bounded by both entry count and accounted
+live bytes. Live-byte accounting includes the complete ENQUEUE record framing,
+metadata, destination, and payload. ACK records release live quota immediately;
+the append-only file compacts automatically before its fixed physical
+high-watermark and can also be reclaimed explicitly with
+`FileOutbox::compact()`.
 
-Long-running hosts should invoke compaction periodically; the compatibility
-`uplink` does so at startup and hourly. Capacity bounds live entries, while
-compaction bounds obsolete acknowledged records in the journal.
+Long-running generic compositions may still invoke compaction periodically to
+reclaim obsolete records earlier in addition to the enforced physical
+high-watermark. The production `aether-uplink` does not select this adapter.
 
-Disk durability does not define network delivery. The selected
-`UplinkPublisher` decides when an entry may be acknowledged.
+Disk durability does not define a network delivery boundary. A composition
+using `DurableOutbox` must acknowledge entries only after its owning contract
+has established the required terminal condition. Production CloudLink uses the
+separate `CloudLinkSpool` contract below.
 
 ## Integration topology generations
 
@@ -169,12 +178,26 @@ capacity-overflow data-loss evidence. A transport publish never removes a
 record. Stale-session, wrong-stream, wrong-batch, and wrong-digest ACKs fail
 closed; an exact duplicate ACK is idempotent.
 
+All facts admitted through `admit_lossless` are protected from pending-record
+eviction. Only `CloudLinkReceiptRetention::RetainForIdempotency` additionally
+reserves a protected acknowledged receipt. The production Uplink selects that
+policy for alarm transitions and `DiscardAfterAck` for manifest, telemetry,
+Integration, and data-loss traffic, so ordinary periodic facts neither consume
+the receipt ledger nor block cumulative ACK progress when the ledger is full.
+Receipt capacity is reserved before retained admission, persisted across ACK,
+compaction, restart, and stream rotation, and never silently evicted. Health
+reports acknowledged receipts and pending reservations separately. Operators
+must size and monitor this deployment-lifetime ledger. Exhaustion rejects new
+alarm admission without losing prior identity evidence; clearing it is allowed
+only as part of decommissioning the Gateway identity after the Alarm outbox is
+empty and archived, never as an online space-reclamation action.
+
 The file adapter owns an exclusive process lock and synchronizes every state
 transition in an incremental journal. Recovery truncates only an incomplete
 tail; a checksum or semantic failure is corruption and fails closed even in the
 last complete record. `FileCloudLinkSpool::compact()` atomically rewrites cursor
 metadata plus live records, and the adapter compacts before accepting more work
-after 256 mutations. Its file format is independent of legacy `FileOutbox` and
+after 256 mutations. Its file format is independent of the generic `FileOutbox` and
 cannot be opened through the generic outbox port.
 
 ## CloudLink challenge replay ledger

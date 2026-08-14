@@ -12,7 +12,7 @@ evaluate conditions, and write action points (A). They execute inside automation
 through a downstream product console. This guide covers the authoring
 mechanics; for how the engine schedules and executes rules, see
 [Rule Engine](../concepts/rule-engine.md), and for a worked control
-strategy, see [Control Strategies](../domain/control-strategies.md).
+strategy, see [Control Strategies](../../packs/energy/knowledge/control-strategies.md).
 
 ## Anatomy of a rule
 
@@ -23,7 +23,7 @@ A rule row in the SQLite `rules` table carries:
 - **`enabled`** — new rules start disabled; the scheduler skips disabled
   rules entirely.
 - **`priority`** — orders evaluation when several rules are due; see
-  [Control Strategies](../domain/control-strategies.md) for how priority
+  [Control Strategies](../../packs/energy/knowledge/control-strategies.md) for how priority
   combines with mutually exclusive conditions to arbitrate between rules
   that write the same actuator.
 - **`cooldown_ms`** — a minimum gap after a successful execution that
@@ -76,7 +76,7 @@ drift (see [Rule Engine](../concepts/rule-engine.md) for the invariant).
 
 automation serves the rule API (`services/automation/src/api/rule_routes.rs`);
 applications reach it through the authenticated gateway under
-`/api/v1/automation`. The gateway Swagger selector at
+`/api/automation`. The gateway Swagger selector at
 `http://<edge-host>:6005/docs` exposes the Automation OpenAPI document; the
 loopback source remains `http://127.0.0.1:6002/openapi.json` for host-local
 contract tooling. Every mutation below accepts only a Bearer Admin/Engineer actor, requires
@@ -104,7 +104,7 @@ document, disabled. The flow content only lands via `PUT /api/rules/{id}`:
 
 ```bash
 # 1. Create the stub; the response carries the assigned id
-curl -X POST http://localhost:6005/api/v1/automation/api/rules \
+curl -X POST http://localhost:6005/api/automation/api/rules \
   -H "Authorization: Bearer $AETHER_ACCESS_TOKEN" \
   -H 'x-aether-confirmed: true' \
   -H 'Content-Type: application/json' \
@@ -112,14 +112,14 @@ curl -X POST http://localhost:6005/api/v1/automation/api/rules \
 # → {"success": true, "data": {"id": 3, "name": "Battery SOC Protection", "status": "created"}}
 
 # 2. Write the flow and trigger
-curl -X PUT http://localhost:6005/api/v1/automation/api/rules/3 \
+curl -X PUT http://localhost:6005/api/automation/api/rules/3 \
   -H "Authorization: Bearer $AETHER_ACCESS_TOKEN" \
   -H 'x-aether-confirmed: true' \
   -H 'Content-Type: application/json' \
   -d @rule.json
 
 # 3. Enable it
-curl -X POST http://localhost:6005/api/v1/automation/api/rules/3/enable \
+curl -X POST http://localhost:6005/api/automation/api/rules/3/enable \
   -H "Authorization: Bearer $AETHER_ACCESS_TOKEN" \
   -H 'x-aether-confirmed: true' \
   -H 'Content-Type: application/json' \
@@ -263,5 +263,5 @@ subscriptions atomically. `GET /api/scheduler/status` confirms the result —
 ## Related pages
 
 - [Rule Engine](../concepts/rule-engine.md) — dual-column storage, scheduling, execution, hot reload
-- [Control Strategies as Rules](../domain/control-strategies.md) — expressing SOC management and peak shaving as flows
+- [Control Strategies as Rules](../../packs/energy/knowledge/control-strategies.md) — expressing SOC management and peak shaving as flows
 - [Connect Devices](connect-devices.md) — channels, protocol simulator, point mapping

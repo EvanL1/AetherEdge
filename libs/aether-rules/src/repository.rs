@@ -4,6 +4,7 @@
 
 use crate::error::{Result, RuleError};
 use crate::parser::flow_column_values;
+use crate::scheduler::TriggerConfig;
 use crate::types::{Rule, RuleFlow};
 use serde_json::Value;
 use sqlx::{Row, SqlitePool, sqlite::SqliteRow};
@@ -177,19 +178,38 @@ pub async fn upsert_rule(pool: &SqlitePool, rule_id: i64, rule: &Value) -> Resul
         .unwrap_or("vue-flow")
         .to_string();
 
-    // Both flow columns come from the single sanctioned producer
-    // (parser::flow_column_values) so they can never diverge. The source is
-    // the "flow_json" field, or the entire rule object for legacy
-    // compact-only rules — those keep storing NULL flow_json.
-    let flow_json_value = rule.get("flow_json");
-    let columns = flow_column_values(flow_json_value.unwrap_or(rule))?;
-    let flow_json_str = flow_json_value.map(|_| columns.flow_json);
+    // Both flow columns come from the single canonical `flow_json` producer so
+    // they can never diverge.
+    let flow_json_value = rule
+        .get("flow_json")
+        .ok_or_else(|| RuleError::InvalidFormat("rule flow_json is required".to_string()))?;
+    let columns = flow_column_values(flow_json_value)?;
+    let flow_json_str = columns.flow_json;
     let nodes_json = columns.nodes_json;
+
+    let trigger_config = match rule.get("trigger_config") {
+        None | Some(Value::Null) if enabled => {
+            return Err(RuleError::InvalidFormat(
+                "enabled rule trigger_config is required".to_string(),
+            ));
+        },
+        None | Some(Value::Null) => None,
+        Some(value) => {
+            let trigger: TriggerConfig =
+                serde_json::from_value(value.clone()).map_err(|error| {
+                    RuleError::InvalidFormat(format!("invalid trigger_config: {error}"))
+                })?;
+            trigger.validate()?;
+            Some(serde_json::to_string(&trigger).map_err(|error| {
+                RuleError::SerializationError(format!("trigger_config: {error}"))
+            })?)
+        },
+    };
 
     sqlx::query(
         r#"
-        INSERT INTO rules (id, name, description, nodes_json, flow_json, format, enabled, priority, cooldown_ms)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO rules (id, name, description, nodes_json, flow_json, format, enabled, priority, cooldown_ms, trigger_config)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             name = excluded.name,
             description = excluded.description,
@@ -199,6 +219,7 @@ pub async fn upsert_rule(pool: &SqlitePool, rule_id: i64, rule: &Value) -> Resul
             enabled = excluded.enabled,
             priority = excluded.priority,
             cooldown_ms = excluded.cooldown_ms,
+            trigger_config = excluded.trigger_config,
             updated_at = CURRENT_TIMESTAMP
         "#,
     )
@@ -206,11 +227,12 @@ pub async fn upsert_rule(pool: &SqlitePool, rule_id: i64, rule: &Value) -> Resul
     .bind(&name)
     .bind(description)
     .bind(&nodes_json)
-    .bind(flow_json_str)
+    .bind(&flow_json_str)
     .bind(&format)
     .bind(enabled)
     .bind(priority as i64)
     .bind(cooldown_ms as i64)
+    .bind(trigger_config)
     .execute(pool)
     .await?;
 
@@ -314,13 +336,27 @@ fn hydrate_rule(row: SqliteRow) -> Result<Rule> {
     let flow: RuleFlow = serde_json::from_str(&nodes_json_str)
         .map_err(|e| RuleError::SerializationError(format!("nodes_json: {}", e)))?;
 
+    if !matches!(enabled, 0 | 1) {
+        return Err(RuleError::InvalidFormat(format!(
+            "rule {id} enabled must be stored as 0 or 1"
+        )));
+    }
+    let priority = u32::try_from(priority).map_err(|_| {
+        RuleError::InvalidFormat(format!(
+            "rule {id} priority is outside the supported u32 range"
+        ))
+    })?;
+    let cooldown_ms = u64::try_from(cooldown_ms).map_err(|_| {
+        RuleError::InvalidFormat(format!("rule {id} cooldown_ms must not be negative"))
+    })?;
+
     Ok(Rule {
         id,
         name,
         description,
-        enabled: enabled != 0,
-        priority: u32::try_from(priority).unwrap_or(0),
-        cooldown_ms: u64::try_from(cooldown_ms).unwrap_or(0),
+        enabled: enabled == 1,
+        priority,
+        cooldown_ms,
         trigger_config,
         flow,
     })

@@ -6,8 +6,7 @@
 use std::time::Duration;
 
 use aether_core::PointType;
-use serde::de::{self, Visitor};
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::protocols::core::error::{GatewayError, Result};
@@ -163,23 +162,20 @@ pub enum ConnectionMode {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ModbusMappingConfig {
-    #[serde(deserialize_with = "deserialize_u8")]
     pub slave_id: u8,
 
-    #[serde(deserialize_with = "deserialize_u8")]
     pub function_code: u8,
 
     /// Register address (0-based). **Required field**.
-    #[serde(deserialize_with = "deserialize_u16")]
     pub register_address: u16,
 
     #[serde(default)]
     pub data_type: DataFormat,
 
-    #[serde(default, deserialize_with = "deserialize_byte_order")]
+    #[serde(default)]
     pub byte_order: ByteOrder,
 
-    #[serde(default, deserialize_with = "deserialize_optional_u8")]
+    #[serde(default)]
     pub bit_position: Option<u8>,
 }
 
@@ -246,124 +242,6 @@ fn mapping_error(point_id: u32, reason: &str) -> GatewayError {
     ))
 }
 
-fn deserialize_u8<'de, D>(deserializer: D) -> std::result::Result<u8, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let value = deserialize_unsigned(deserializer)?;
-    u8::try_from(value).map_err(|_| de::Error::custom("expected an integer in 0..=255"))
-}
-
-fn deserialize_u16<'de, D>(deserializer: D) -> std::result::Result<u16, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let value = deserialize_unsigned(deserializer)?;
-    u16::try_from(value).map_err(|_| de::Error::custom("expected an integer in 0..=65535"))
-}
-
-fn deserialize_unsigned<'de, D>(deserializer: D) -> std::result::Result<u64, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    struct UnsignedVisitor;
-
-    impl<'de> Visitor<'de> for UnsignedVisitor {
-        type Value = u64;
-
-        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            formatter.write_str("an unsigned integer or its decimal string representation")
-        }
-
-        fn visit_u64<E>(self, value: u64) -> std::result::Result<Self::Value, E> {
-            Ok(value)
-        }
-
-        fn visit_i64<E>(self, value: i64) -> std::result::Result<Self::Value, E>
-        where
-            E: de::Error,
-        {
-            u64::try_from(value).map_err(|_| E::custom("expected an unsigned integer"))
-        }
-
-        fn visit_str<E>(self, value: &str) -> std::result::Result<Self::Value, E>
-        where
-            E: de::Error,
-        {
-            value
-                .parse()
-                .map_err(|_| E::custom("expected an unsigned decimal integer string"))
-        }
-    }
-
-    deserializer.deserialize_any(UnsignedVisitor)
-}
-
-fn deserialize_optional_u8<'de, D>(deserializer: D) -> std::result::Result<Option<u8>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    struct OptionalU8Visitor;
-
-    impl<'de> Visitor<'de> for OptionalU8Visitor {
-        type Value = Option<u8>;
-
-        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            formatter.write_str("null, an unsigned byte, or its decimal string representation")
-        }
-
-        fn visit_none<E>(self) -> std::result::Result<Self::Value, E> {
-            Ok(None)
-        }
-
-        fn visit_unit<E>(self) -> std::result::Result<Self::Value, E> {
-            Ok(None)
-        }
-
-        fn visit_some<D>(self, deserializer: D) -> std::result::Result<Self::Value, D::Error>
-        where
-            D: Deserializer<'de>,
-        {
-            deserialize_u8(deserializer).map(Some)
-        }
-    }
-
-    deserializer.deserialize_option(OptionalU8Visitor)
-}
-
-fn deserialize_byte_order<'de, D>(deserializer: D) -> std::result::Result<ByteOrder, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let value = <&str>::deserialize(deserializer)?;
-    if ["ABCD", "AB", "BIG_ENDIAN", "BE"]
-        .iter()
-        .any(|alias| value.eq_ignore_ascii_case(alias))
-    {
-        Ok(ByteOrder::Abcd)
-    } else if ["DCBA", "BA", "LITTLE_ENDIAN", "LE"]
-        .iter()
-        .any(|alias| value.eq_ignore_ascii_case(alias))
-    {
-        Ok(ByteOrder::Dcba)
-    } else if ["BADC", "WORD_SWAP"]
-        .iter()
-        .any(|alias| value.eq_ignore_ascii_case(alias))
-    {
-        Ok(ByteOrder::Badc)
-    } else if ["CDAB", "BYTE_SWAP"]
-        .iter()
-        .any(|alias| value.eq_ignore_ascii_case(alias))
-    {
-        Ok(ByteOrder::Cdab)
-    } else {
-        Err(de::Error::unknown_variant(
-            value,
-            &["ABCD", "DCBA", "BADC", "CDAB"],
-        ))
-    }
-}
-
 // ============================================================================
 // ModbusChannelConfig (builder pattern)
 // ============================================================================
@@ -375,10 +253,12 @@ pub struct ModbusChannelConfig {
     pub connection_mode: ConnectionMode,
     /// Target address for TCP (e.g., "192.168.1.100:502")
     pub address: String,
-    /// Connection timeout (TCP only)
+    /// TCP connection or RTU device-open timeout.
     pub connect_timeout: Duration,
-    /// I/O operation timeout
-    pub io_timeout: Duration,
+    /// Complete read-request timeout.
+    pub read_timeout: Duration,
+    /// Complete write-request timeout, including the acknowledgement.
+    pub write_timeout: Duration,
     /// RTU serial device path (e.g., "/dev/ttyUSB0")
     #[cfg(feature = "modbus")]
     pub rtu_device: String,
@@ -402,7 +282,8 @@ impl ModbusChannelConfig {
             connection_mode: ConnectionMode::Tcp,
             address: address.into(),
             connect_timeout: Duration::from_millis(DEFAULT_CONNECT_TIMEOUT_MS),
-            io_timeout: Duration::from_millis(DEFAULT_IO_TIMEOUT_MS),
+            read_timeout: Duration::from_millis(DEFAULT_IO_TIMEOUT_MS),
+            write_timeout: Duration::from_millis(DEFAULT_IO_TIMEOUT_MS),
             #[cfg(feature = "modbus")]
             rtu_device: String::new(),
             #[cfg(feature = "modbus")]
@@ -421,7 +302,8 @@ impl ModbusChannelConfig {
             connection_mode: ConnectionMode::Rtu,
             address: String::new(),
             connect_timeout: Duration::from_millis(DEFAULT_CONNECT_TIMEOUT_MS),
-            io_timeout: Duration::from_millis(DEFAULT_IO_TIMEOUT_MS),
+            read_timeout: Duration::from_millis(DEFAULT_IO_TIMEOUT_MS),
+            write_timeout: Duration::from_millis(DEFAULT_IO_TIMEOUT_MS),
             rtu_device: device.into(),
             baud_rate,
             points: Vec::new(),
@@ -437,9 +319,15 @@ impl ModbusChannelConfig {
         self
     }
 
-    /// Set I/O timeout.
-    pub fn with_io_timeout(mut self, timeout: Duration) -> Self {
-        self.io_timeout = timeout;
+    /// Set the complete read-request timeout.
+    pub fn with_read_timeout(mut self, timeout: Duration) -> Self {
+        self.read_timeout = timeout;
+        self
+    }
+
+    /// Set the complete write-request timeout, including acknowledgement.
+    pub fn with_write_timeout(mut self, timeout: Duration) -> Self {
+        self.write_timeout = timeout;
         self
     }
 
@@ -477,14 +365,14 @@ mod tests {
     use crate::protocols::core::point::{ByteOrder, DataFormat};
 
     #[test]
-    fn point_mapping_codec_preserves_runtime_aliases_without_owning_the_value() {
+    fn point_mapping_codec_accepts_only_numeric_ids() {
         let mapping = json!({
-            "slave_id": "7",
-            "function_code": "3",
-            "register_address": "42",
-            "data_type": "F32",
-            "byte_order": "big_endian",
-            "bit_position": "15"
+            "slave_id": 7,
+            "function_code": 3,
+            "register_address": 42,
+            "data_type": "float32",
+            "byte_order": "ABCD",
+            "bit_position": 15
         });
 
         let address = parse_point_mapping(PointType::Telemetry, 11, &mapping).unwrap();
@@ -495,7 +383,23 @@ mod tests {
         assert_eq!(address.format, DataFormat::Float32);
         assert_eq!(address.byte_order, ByteOrder::Abcd);
         assert_eq!(address.bit_position, Some(15));
-        assert_eq!(mapping["register_address"], "42");
+        assert_eq!(mapping["register_address"], 42);
+
+        for retired in [
+            json!({"slave_id":7,"function_code":3,"register_address":42,"data_type":"F32"}),
+            json!({"slave_id":7,"function_code":3,"register_address":42,"byte_order":"big_endian"}),
+        ] {
+            assert!(parse_point_mapping(PointType::Telemetry, 11, &retired).is_err());
+        }
+
+        for retired in [
+            json!({"slave_id":"7","function_code":3,"register_address":42}),
+            json!({"slave_id":7,"function_code":"3","register_address":42}),
+            json!({"slave_id":7,"function_code":3,"register_address":"42"}),
+            json!({"slave_id":7,"function_code":3,"register_address":42,"bit_position":"15"}),
+        ] {
+            assert!(parse_point_mapping(PointType::Telemetry, 11, &retired).is_err());
+        }
     }
 
     #[test]

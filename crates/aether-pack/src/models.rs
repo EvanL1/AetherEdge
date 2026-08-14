@@ -18,7 +18,7 @@ pub struct ProductPointDefinition {
     /// Unit of measurement, or an empty string when dimensionless.
     #[serde(default)]
     pub unit: String,
-    /// Compatibility value-type identifier.
+    /// Canonical value-type identifier serialized as `type`.
     #[serde(rename = "type", default)]
     pub value_type: String,
 }

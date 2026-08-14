@@ -15,8 +15,8 @@ mod telemetry;
 mod validation;
 
 pub use codec::{
-    CandidateMessage, CloudLinkCodec, DataLossPayload, DeliveryDescriptor, DeliveryEnvelope,
-    DurableAckMessage, HeartbeatMessage, ReplayRequest, RuntimeManifestReport,
+    AlarmEvent, CandidateMessage, CloudLinkCodec, DataLossPayload, DeliveryDescriptor,
+    DeliveryEnvelope, DurableAckMessage, HeartbeatMessage, ReplayRequest, RuntimeManifestReport,
 };
 pub use error::CloudLinkCodecError;
 pub use integration::CloudLinkIntegrationExtension;
@@ -37,11 +37,8 @@ pub const MAX_CLOUDLINK_MESSAGE_BYTES: usize = 256 * 1024;
 /// Maximum number of business point facts in one telemetry batch.
 pub const MAX_POINT_SAMPLES: usize = 256;
 
-/// Candidate application protocol version.
-pub const CLOUDLINK_PROTOCOL_VERSION: &str = "1.0";
-
 /// Stable protocol family marker.
 pub const CLOUDLINK_PROTOCOL: &str = "aether.cloudlink";
 
 /// Exact Runtime Manifest and Cloud-consumer activation token for Integration.
-pub const CLOUDLINK_INTEGRATION_EXTENSION: &str = "aether.cloudlink.integration.v1alpha1";
+pub const CLOUDLINK_INTEGRATION_EXTENSION: &str = "aether.cloudlink.integration";

@@ -90,7 +90,7 @@ pub async fn apply(
         headers,
         confirmed,
         timestamp,
-    );
+    )?;
     let acceptance = state
         .action_routing_application
         .mutate_revisioned(invocation.context(), mutation)

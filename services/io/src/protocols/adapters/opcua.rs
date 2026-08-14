@@ -57,7 +57,8 @@ use crate::protocols::core::error::{GatewayError, Result};
 use crate::protocols::core::point::PointConfig;
 use crate::protocols::core::traits::{
     AdjustmentCommand, ConnectionState, ControlCommand, DataEvent, DataEventReceiver,
-    DataEventSender, Diagnostics, PointFailure, PollResult, WriteResult, data_event_channel,
+    DataEventSink, Diagnostics, PointFailure, PollResult, WriteResult,
+    data_event_channel_with_capacity,
 };
 use crate::protocols::runtime::ChannelRuntime;
 use aether_config::io::MAX_CHANNEL_TIMING_MS;
@@ -742,7 +743,7 @@ pub struct OpcUaChannel {
     /// OPC UA specific: Last data received timestamp (Unix millis, 0 = never).
     diag_last_data_received_ms: Arc<AtomicU64>,
     /// Event sender for the unified channel task.
-    event_tx: DataEventSender,
+    event_tx: DataEventSink,
     /// Sole event receiver, taken once by the unified channel task.
     event_rx: Option<DataEventReceiver>,
     /// Current subscription ID.
@@ -752,7 +753,7 @@ pub struct OpcUaChannel {
 impl OpcUaChannel {
     /// Create a new OPC UA channel.
     pub fn new(config: OpcUaChannelConfig) -> Self {
-        let (event_tx, event_rx) = data_event_channel();
+        let (event_tx, event_rx) = data_event_channel_with_capacity(config.points.len());
 
         Self {
             config,
@@ -952,7 +953,7 @@ fn parse_node_id(identifier: &str, namespace_index: u16) -> NodeId {
 fn handle_data_change(
     config: &OpcUaChannelConfig,
     items: &[(NodeId, DataValue)],
-    event_tx: &DataEventSender,
+    event_tx: &DataEventSink,
     diagnostics: &Arc<AtomicDiagnostics>,
     last_data_received_ms: &Arc<AtomicU64>,
 ) {
@@ -982,7 +983,7 @@ fn handle_data_change(
     }
 
     // Queue the event; the service-layer channel task owns persistence.
-    let _ = event_tx.try_send(DataEvent::DataUpdate(batch));
+    event_tx.publish(DataEvent::DataUpdate(batch));
 
     // Update diagnostics (lock-free)
     diagnostics.inc_read();
@@ -1325,9 +1326,8 @@ impl ChannelRuntime for OpcUaChannel {
         });
 
         // Send connection event
-        let _ = self
-            .event_tx
-            .try_send(DataEvent::ConnectionChanged(ConnectionState::Connected));
+        self.event_tx
+            .publish(DataEvent::ConnectionChanged(ConnectionState::Connected));
 
         Ok(())
     }
@@ -1347,9 +1347,8 @@ impl ChannelRuntime for OpcUaChannel {
         self.set_state(ConnectionState::Disconnected);
 
         // Send disconnect event
-        let _ = self
-            .event_tx
-            .try_send(DataEvent::ConnectionChanged(ConnectionState::Disconnected));
+        self.event_tx
+            .publish(DataEvent::ConnectionChanged(ConnectionState::Disconnected));
 
         Ok(())
     }
@@ -1575,14 +1574,14 @@ mod tests {
         assert_eq!(value.as_i64(), Some(100));
     }
 
-    #[test]
-    fn mixed_subscription_update_keeps_numeric_points_and_diagnoses_non_numeric_values() {
+    #[tokio::test]
+    async fn mixed_subscription_update_keeps_numeric_points_and_diagnoses_non_numeric_values() {
         let config = OpcUaChannelConfig::new("opc.tcp://localhost:4840").with_points(
             (1..=6)
                 .map(|id| PointConfig::telemetry(id, OpcUaAddress::new(format!("i={id}"), 2)))
                 .collect(),
         );
-        let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(4);
+        let (event_tx, mut event_rx) = data_event_channel_with_capacity(config.points.len());
         let diagnostics = Arc::new(AtomicDiagnostics::new());
         let last_data_received_ms = Arc::new(AtomicU64::new(0));
         let items = [
@@ -1617,7 +1616,7 @@ mod tests {
             &last_data_received_ms,
         );
 
-        let DataEvent::DataUpdate(batch) = event_rx.try_recv().expect("numeric update emitted")
+        let DataEvent::DataUpdate(batch) = event_rx.recv().await.expect("numeric update emitted")
         else {
             panic!("expected data update");
         };

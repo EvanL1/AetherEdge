@@ -10,6 +10,7 @@ repository.workspace = true
 readme = "README.md"
 
 [dependencies]
+aether-config = { path = "../aether-config" }
 aether-domain = { path = "../../crates/aether-domain" }
 aether-ports = { path = "../../crates/aether-ports" }
 aether-shm-bridge = { path = "../aether-shm-bridge" }

@@ -58,6 +58,169 @@ pub async fn create_tables(pool: &SqlitePool) -> Result<()> {
         .execute(pool)
         .await?;
 
+    // Alarm transitions are retained permanently as compact event-id/digest
+    // records. Upstream retries have no finite expiry, so expiring this ledger
+    // would silently re-admit an old transition after the retention window.
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS alarm_event_ledger (
+            event_id        TEXT PRIMARY KEY,
+            payload_sha256  TEXT NOT NULL,
+            received_at     INTEGER NOT NULL,
+            last_received_at INTEGER NOT NULL,
+            retry_count     INTEGER NOT NULL DEFAULT 0,
+            delivery_state  TEXT NOT NULL DEFAULT 'pending'
+                CHECK (delivery_state IN ('pending', 'delivered')),
+            delivered_at    INTEGER
+        )",
+    )
+    .execute(pool)
+    .await?;
+    migrate_alarm_event_ledger_delivery_state(pool).await?;
+
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AlarmEventAcceptance {
+    Pending { retry: bool },
+    Delivered,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum AlarmEventAcceptanceError {
+    #[error("alarm event id is already associated with a different payload")]
+    Conflict,
+    #[error("alarm event ledger unavailable: {0}")]
+    Storage(#[from] sqlx::Error),
+}
+
+/// Atomically records a new alarm event or recognizes a same-payload retry.
+///
+/// The conditional conflict update is one SQLite statement, so concurrent
+/// requests cannot both classify themselves as the first acceptance. A key
+/// collision with a different digest performs no update and returns conflict.
+pub async fn accept_alarm_event(
+    pool: &SqlitePool,
+    event_id: &str,
+    payload_sha256: &str,
+    now_ms: i64,
+) -> Result<AlarmEventAcceptance, AlarmEventAcceptanceError> {
+    let acceptance = sqlx::query_as::<_, (i64, String)>(
+        "INSERT INTO alarm_event_ledger
+            (event_id, payload_sha256, received_at, last_received_at,
+             retry_count, delivery_state)
+         VALUES (?, ?, ?, ?, 0, 'pending')
+         ON CONFLICT(event_id) DO UPDATE SET
+            last_received_at = excluded.last_received_at,
+            retry_count = alarm_event_ledger.retry_count + 1
+         WHERE alarm_event_ledger.payload_sha256 = excluded.payload_sha256
+         RETURNING retry_count, delivery_state",
+    )
+    .bind(event_id)
+    .bind(payload_sha256)
+    .bind(now_ms)
+    .bind(now_ms)
+    .fetch_optional(pool)
+    .await?;
+
+    match acceptance {
+        Some((retry_count, state)) if state == "pending" => Ok(AlarmEventAcceptance::Pending {
+            retry: retry_count > 0,
+        }),
+        Some((_, state)) if state == "delivered" => Ok(AlarmEventAcceptance::Delivered),
+        Some((_, state)) => Err(AlarmEventAcceptanceError::Storage(sqlx::Error::Protocol(
+            format!("invalid alarm event delivery state: {state}"),
+        ))),
+        None => Err(AlarmEventAcceptanceError::Conflict),
+    }
+}
+
+pub async fn mark_alarm_event_delivered(
+    pool: &SqlitePool,
+    event_id: &str,
+    payload_sha256: &str,
+    delivered_at_ms: i64,
+) -> Result<(), AlarmEventAcceptanceError> {
+    let result = sqlx::query(
+        "UPDATE alarm_event_ledger
+         SET delivery_state = 'delivered', delivered_at = ?
+         WHERE event_id = ? AND payload_sha256 = ? AND delivery_state = 'pending'",
+    )
+    .bind(delivered_at_ms)
+    .bind(event_id)
+    .bind(payload_sha256)
+    .execute(pool)
+    .await?;
+    if result.rows_affected() == 1 {
+        return Ok(());
+    }
+
+    let state = sqlx::query_as::<_, (String, String)>(
+        "SELECT payload_sha256, delivery_state FROM alarm_event_ledger WHERE event_id = ?",
+    )
+    .bind(event_id)
+    .fetch_optional(pool)
+    .await?;
+    match state {
+        Some((digest, delivery_state))
+            if digest == payload_sha256 && delivery_state == "delivered" =>
+        {
+            Ok(())
+        },
+        Some((digest, _)) if digest != payload_sha256 => Err(AlarmEventAcceptanceError::Conflict),
+        _ => Err(AlarmEventAcceptanceError::Storage(sqlx::Error::Protocol(
+            "alarm event disappeared before delivery acknowledgement".to_owned(),
+        ))),
+    }
+}
+
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+pub struct AlarmEventLedgerStats {
+    pub durable_events: i64,
+    pub pending_events: i64,
+    pub delivered_events: i64,
+    pub duplicate_requests: i64,
+    pub oldest_received_at: Option<i64>,
+}
+
+pub async fn alarm_event_ledger_stats(pool: &SqlitePool) -> Result<AlarmEventLedgerStats> {
+    let (durable_events, pending_events, delivered_events, duplicate_requests, oldest_received_at) =
+        sqlx::query_as::<_, (i64, i64, i64, i64, Option<i64>)>(
+            "SELECT COUNT(*),
+                    COALESCE(SUM(CASE WHEN delivery_state = 'pending' THEN 1 ELSE 0 END), 0),
+                    COALESCE(SUM(CASE WHEN delivery_state = 'delivered' THEN 1 ELSE 0 END), 0),
+                    COALESCE(SUM(retry_count), 0), MIN(received_at)
+             FROM alarm_event_ledger",
+        )
+        .fetch_one(pool)
+        .await?;
+    Ok(AlarmEventLedgerStats {
+        durable_events,
+        pending_events,
+        delivered_events,
+        duplicate_requests,
+        oldest_received_at,
+    })
+}
+
+async fn migrate_alarm_event_ledger_delivery_state(pool: &SqlitePool) -> Result<()> {
+    let columns: Vec<String> =
+        sqlx::query_scalar("SELECT name FROM pragma_table_info('alarm_event_ledger') ORDER BY cid")
+            .fetch_all(pool)
+            .await?;
+    if !columns.iter().any(|column| column == "delivery_state") {
+        sqlx::query(
+            "ALTER TABLE alarm_event_ledger
+             ADD COLUMN delivery_state TEXT NOT NULL DEFAULT 'pending'",
+        )
+        .execute(pool)
+        .await?;
+    }
+    if !columns.iter().any(|column| column == "delivered_at") {
+        sqlx::query("ALTER TABLE alarm_event_ledger ADD COLUMN delivered_at INTEGER")
+            .execute(pool)
+            .await?;
+    }
     Ok(())
 }
 

@@ -73,7 +73,7 @@ fn create_publishes_a_canonical_writer_and_roundtrips_health() {
         .expect("read channel health")
         .expect("observed channel health");
     assert!(sample.online());
-    assert_eq!(sample.timestamp_ms(), now_ms);
+    assert_eq!(sample.observed_at().get(), now_ms);
 
     let error = handle
         .set_online(4, true, now_ms + 1)
@@ -99,7 +99,7 @@ fn rebuild_migrates_only_intersection_state_and_timestamp() {
         .set_online(11, true, now_ms + 2)
         .expect("write removed channel");
     handle
-        .update_heartbeat(now_ms + 3)
+        .update_heartbeat(now_ms)
         .expect("refresh initial heartbeat");
     let first_generation = handle.generation().expect("initial generation");
 
@@ -109,7 +109,7 @@ fn rebuild_migrates_only_intersection_state_and_timestamp() {
         .expect("publish replacement health writer");
 
     assert_ne!(handle.generation(), Some(first_generation));
-    assert_eq!(handle.writer_heartbeat(), Some(now_ms + 3));
+    assert_eq!(handle.writer_heartbeat(), Some(now_ms));
     assert_eq!(
         handle
             .manifest()
@@ -125,13 +125,13 @@ fn rebuild_migrates_only_intersection_state_and_timestamp() {
         .expect("read retained channel")
         .expect("retained state");
     assert!(retained.online());
-    assert_eq!(retained.timestamp_ms(), now_ms);
+    assert_eq!(retained.observed_at().get(), now_ms);
     let retained_offline = replacement_reader
         .read_channel(9)
         .expect("read retained offline channel")
         .expect("retained offline state");
     assert!(!retained_offline.online());
-    assert_eq!(retained_offline.timestamp_ms(), now_ms + 1);
+    assert_eq!(retained_offline.observed_at().get(), now_ms + 1);
     assert_eq!(
         replacement_reader
             .read_channel(10)
@@ -227,7 +227,7 @@ fn health_writer_restart_immediately_fences_a_retained_reader_without_inode_poll
     match retained_reader.read_channel(3) {
         Ok(Some(replacement)) => panic!(
             "the retained reader returned a pre-restart health observation at {}",
-            replacement.timestamp_ms()
+            replacement.observed_at().get()
         ),
         Ok(None) => {},
         Err(error) => assert!(error.is_retryable(), "unexpected reader error: {error}"),
@@ -245,9 +245,7 @@ fn identical_manifest_new_epoch_replaces_generation_and_preserves_state() {
     handle
         .set_online(3, true, now_ms)
         .expect("write retained state");
-    handle
-        .update_heartbeat(now_ms + 1)
-        .expect("write heartbeat");
+    handle.update_heartbeat(now_ms).expect("write heartbeat");
     let generation = handle.generation();
     #[cfg(unix)]
     let metadata = std::fs::metadata(&path).expect("canonical metadata");
@@ -257,7 +255,7 @@ fn identical_manifest_new_epoch_replaces_generation_and_preserves_state() {
         .expect("identical manifest publication");
 
     assert_ne!(handle.generation(), generation);
-    assert_eq!(handle.writer_heartbeat(), Some(now_ms + 1));
+    assert_eq!(handle.writer_heartbeat(), Some(now_ms));
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
@@ -269,7 +267,7 @@ fn identical_manifest_new_epoch_replaces_generation_and_preserves_state() {
         .expect("read state after no-op")
         .expect("retained state after no-op");
     assert!(sample.online());
-    assert_eq!(sample.timestamp_ms(), now_ms);
+    assert_eq!(sample.observed_at().get(), now_ms);
 }
 
 #[test]

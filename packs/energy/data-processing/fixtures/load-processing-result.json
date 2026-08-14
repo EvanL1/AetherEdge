@@ -1,5 +1,5 @@
 {
-  "schema": "aether.data-processing.result.v1",
+  "schema": "aether.data-processing.result",
   "request_id": "0190aee6-2139-7a87-8448-806f1b843201",
   "task": {
     "id": "energy.site-load-forecast",
@@ -10,7 +10,7 @@
     "id": "energy.example-site",
     "revision": 1
   },
-  "input_digest": "sha256:98967bdedc60b8ab555e596516eb272063c139ccf3a3112fb29a46ab0610f270",
+  "input_digest": "sha256:cf7ec152201164e4a1aaa035b44313ef2ba62af2fff6529bd1cbb8076cb15afe",
   "status": "produced",
   "issued_at": "2026-07-11T12:00:02Z",
   "expires_at": "2026-07-11T13:00:00Z",
@@ -18,7 +18,7 @@
   "processor": {
     "id": "load-forecasting-edge",
     "version": "0.1.0",
-    "contract": "aether.data-processing.forecast.v1"
+    "contract": "aether.data-processing.forecast"
   },
   "artifact": {
     "kind": "model",
@@ -27,7 +27,7 @@
     "artifact_digest": "sha256:ef62e1a3a0ce324b21774617c1424e1fa113270e30ccc01e7f6b8766d80ce7cc"
   },
   "output": {
-    "schema": "aether.data-processing.output.forecast.v1",
+    "schema": "aether.data-processing.output.forecast",
     "kind": "forecast",
     "target": "load",
     "unit": "kW",

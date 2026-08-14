@@ -1,7 +1,7 @@
 //! Opt-in real MQTT broker vertical-slice harness.
 //!
 //! The default opt-in test uses a fake Cloud peer to isolate the Edge binding.
-//! Separate phase tests are driven by AetherCloud's real-ingress dual harness;
+//! Separate phase tests are driven by AetherCloud's real-ingress conformance harness;
 //! neither path claims production authentication or crash durability.
 
 use std::collections::BTreeSet;
@@ -37,6 +37,7 @@ use rumqttc::{AsyncClient, Event, Incoming, MqttOptions, Transport};
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 use tokio::time::{Instant, timeout};
+use tokio_util::sync::CancellationToken;
 
 const WAIT: Duration = Duration::from_secs(15);
 const TEST_CREDENTIAL_GENERATION: u64 = 1;
@@ -45,7 +46,7 @@ const TEST_CLOUD_KEY_ID: &str = "development-cloud-key";
 const TEST_GATEWAY_KEY_ID: &str = "development-integration-key";
 const CHALLENGE_ISSUED_AT_MS: u64 = 1_721_000_000_000;
 const CHALLENGE_EXPIRES_AT_MS: u64 = 1_721_000_060_000;
-// The AetherCloud dual worker's deterministic clock is 2024-07-14T23:33:20.400Z.
+// The AetherCloud conformance worker's deterministic clock is 2024-07-14T23:33:20.400Z.
 const CHALLENGE_EVALUATION_AT_MS: u64 = CHALLENGE_ISSUED_AT_MS + 401;
 
 fn test_session_authenticator() -> GatewaySessionAuthenticator {
@@ -62,6 +63,19 @@ fn test_session_authenticator() -> GatewaySessionAuthenticator {
 
 fn test_uplink_authentication() -> UplinkAuthentication {
     test_session_authenticator().uplink_authentication()
+}
+
+fn start_transport(
+    config: CloudLinkMqttConfig,
+    topics: TopicNamespace,
+    security: DeploymentSecurity,
+) -> Arc<MqttCloudLinkTransport> {
+    let (transport, manager) = MqttCloudLinkTransport::new(config, topics, security)
+        .expect("CloudLink transport composition");
+    tokio::spawn(async move {
+        let _ = manager.run(CancellationToken::new()).await;
+    });
+    transport
 }
 
 async fn commissioned_session_authenticator() -> GatewaySessionAuthenticator {
@@ -153,8 +167,7 @@ async fn shared_broker_session_manifest_telemetry_ack_and_replay() {
     .await;
 
     let spool = Arc::new(MemoryCloudLinkSpool::new("business", 16).expect("spool"));
-    let first_transport = MqttCloudLinkTransport::connect(config.clone(), topics.clone(), security)
-        .expect("edge transport");
+    let first_transport = start_transport(config.clone(), topics.clone(), security);
     wait_connected(&first_transport).await;
     send_hello(&first_transport, &gateway_id, 0).await;
     let first_session = wait_session(&first_transport, &gateway_id, 0).await;
@@ -246,8 +259,7 @@ async fn shared_broker_session_manifest_telemetry_ack_and_replay() {
 
     drop(first_transport);
     tokio::time::sleep(Duration::from_millis(250)).await;
-    let resumed_transport =
-        MqttCloudLinkTransport::connect(config, topics, security).expect("resumed edge transport");
+    let resumed_transport = start_transport(config, topics, security);
     wait_connected(&resumed_transport).await;
     send_hello(&resumed_transport, &gateway_id, 1).await;
     let resumed_session = wait_session(&resumed_transport, &gateway_id, 1).await;
@@ -281,21 +293,22 @@ async fn shared_broker_session_manifest_telemetry_ack_and_replay() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn external_cloud_dual_harness() {
+async fn external_cloud_conformance_harness() {
     if env::var("AETHER_CLOUDLINK_EXTERNAL_CLOUD").as_deref() != Ok("1") {
         return;
     }
 
-    let gateway_id = env::var("AETHER_CLOUDLINK_GATEWAY_ID").expect("dual Gateway ID");
-    let topic_prefix = env::var("AETHER_CLOUDLINK_TOPIC_PREFIX").expect("dual topic prefix");
+    let gateway_id = env::var("AETHER_CLOUDLINK_GATEWAY_ID").expect("conformance Gateway ID");
+    let topic_prefix = env::var("AETHER_CLOUDLINK_TOPIC_PREFIX").expect("conformance topic prefix");
     let evidence_path = env::var("AETHER_CLOUDLINK_EDGE_EVIDENCE").expect("edge evidence path");
-    let topics = TopicNamespace::new(&topic_prefix, &gateway_id).expect("dual topic namespace");
+    let topics =
+        TopicNamespace::new(&topic_prefix, &gateway_id).expect("conformance topic namespace");
     let config = integration_config(&gateway_id);
     config
         .validate(DeploymentSecurity::Development)
-        .expect("dual development configuration");
+        .expect("conformance development configuration");
 
-    let spool_root = tempfile::tempdir().expect("dual spool directory");
+    let spool_root = tempfile::tempdir().expect("conformance spool directory");
     let manifest_path = spool_root.path().join("manifest.spool");
     let telemetry_path = spool_root.path().join("telemetry.spool");
     let manifest_spool =
@@ -303,12 +316,11 @@ async fn external_cloud_dual_harness() {
     let telemetry_spool =
         FileCloudLinkSpool::open(&telemetry_path, "telemetry", 8).expect("telemetry spool");
 
-    let first_transport = MqttCloudLinkTransport::connect(
+    let first_transport = start_transport(
         config.clone(),
         topics.clone(),
         DeploymentSecurity::Development,
-    )
-    .expect("first Edge transport");
+    );
     wait_connected(&first_transport).await;
     send_hello(&first_transport, &gateway_id, 0).await;
     let first_session = wait_session(&first_transport, &gateway_id, 0).await;
@@ -343,7 +355,7 @@ async fn external_cloud_dual_harness() {
         .enqueue(
             CloudLinkCodec::prepare(
                 CloudLinkMessageKind::RuntimeManifestReport,
-                "manifest-dual",
+                "manifest-conformance",
                 &manifest_payload,
                 TimestampMs::new(1_721_000_000_123),
                 None,
@@ -390,7 +402,7 @@ async fn external_cloud_dual_harness() {
         .enqueue(
             CloudLinkCodec::prepare(
                 CloudLinkMessageKind::TelemetryBatch,
-                "telemetry-dual",
+                "telemetry-conformance",
                 &telemetry_payload,
                 TimestampMs::new(1_721_000_000_123),
                 Some(TimestampMs::new(1_721_003_600_000)),
@@ -431,9 +443,7 @@ async fn external_cloud_dual_harness() {
     tokio::time::sleep(Duration::from_secs(1)).await;
     let telemetry_spool =
         FileCloudLinkSpool::open(&telemetry_path, "telemetry", 8).expect("reopened Edge spool");
-    let resumed_transport =
-        MqttCloudLinkTransport::connect(config, topics, DeploymentSecurity::Development)
-            .expect("resumed Edge transport");
+    let resumed_transport = start_transport(config, topics, DeploymentSecurity::Development);
     wait_connected(&resumed_transport).await;
     send_hello(&resumed_transport, &gateway_id, 1).await;
     let resumed_session = wait_session(
@@ -622,7 +632,7 @@ async fn external_cloud_dual_harness() {
         .enqueue(
             CloudLinkCodec::prepare(
                 CloudLinkMessageKind::DataLoss,
-                "loss-dual",
+                "loss-conformance",
                 &loss_payload,
                 TimestampMs::new(1_721_000_000_300),
                 None,
@@ -681,31 +691,30 @@ async fn external_cloud_dual_harness() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn external_cloud_dual_phase1_before_edge_restart() {
+async fn external_cloud_conformance_phase1_before_edge_restart() {
     if env::var("AETHER_CLOUDLINK_EDGE_PHASE").as_deref() != Ok("before-restart") {
         return;
     }
 
-    let gateway_id = env::var("AETHER_CLOUDLINK_GATEWAY_ID").expect("dual Gateway ID");
-    let topic_prefix = env::var("AETHER_CLOUDLINK_TOPIC_PREFIX").expect("dual topic prefix");
-    let spool_root = env::var("AETHER_CLOUDLINK_SPOOL_ROOT").expect("dual spool root");
+    let gateway_id = env::var("AETHER_CLOUDLINK_GATEWAY_ID").expect("conformance Gateway ID");
+    let topic_prefix = env::var("AETHER_CLOUDLINK_TOPIC_PREFIX").expect("conformance topic prefix");
+    let spool_root = env::var("AETHER_CLOUDLINK_SPOOL_ROOT").expect("conformance spool root");
     let evidence_path = env::var("AETHER_CLOUDLINK_EDGE_EVIDENCE").expect("edge evidence path");
     std::fs::create_dir_all(&spool_root).expect("create spool root");
     let manifest_path = Path::new(&spool_root).join("manifest.spool");
     let telemetry_path = Path::new(&spool_root).join("telemetry.spool");
-    let topics = TopicNamespace::new(&topic_prefix, &gateway_id).expect("dual topic namespace");
+    let topics =
+        TopicNamespace::new(&topic_prefix, &gateway_id).expect("conformance topic namespace");
     let config = integration_config(&gateway_id);
     config
         .validate(DeploymentSecurity::Development)
-        .expect("dual development configuration");
+        .expect("conformance development configuration");
     let manifest_spool =
         FileCloudLinkSpool::open(&manifest_path, "manifest", 8).expect("manifest spool");
     let telemetry_spool =
         FileCloudLinkSpool::open(&telemetry_path, "telemetry", 8).expect("telemetry spool");
 
-    let transport =
-        MqttCloudLinkTransport::connect(config, topics, DeploymentSecurity::Development)
-            .expect("first Edge transport");
+    let transport = start_transport(config, topics, DeploymentSecurity::Development);
     wait_connected(&transport).await;
     send_hello_with_nonce(&transport, &gateway_id, 0, 1).await;
     let session = wait_session(&transport, &gateway_id, 0).await;
@@ -740,7 +749,7 @@ async fn external_cloud_dual_phase1_before_edge_restart() {
         .enqueue(
             CloudLinkCodec::prepare(
                 CloudLinkMessageKind::RuntimeManifestReport,
-                "manifest-dual",
+                "manifest-conformance",
                 &manifest_payload,
                 TimestampMs::new(1_721_000_000_500),
                 None,
@@ -831,21 +840,22 @@ async fn external_cloud_dual_phase1_before_edge_restart() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn external_cloud_dual_phase2_after_edge_restart() {
+async fn external_cloud_conformance_phase2_after_edge_restart() {
     if env::var("AETHER_CLOUDLINK_EDGE_PHASE").as_deref() != Ok("after-restart") {
         return;
     }
 
-    let gateway_id = env::var("AETHER_CLOUDLINK_GATEWAY_ID").expect("dual Gateway ID");
-    let topic_prefix = env::var("AETHER_CLOUDLINK_TOPIC_PREFIX").expect("dual topic prefix");
-    let spool_root = env::var("AETHER_CLOUDLINK_SPOOL_ROOT").expect("dual spool root");
+    let gateway_id = env::var("AETHER_CLOUDLINK_GATEWAY_ID").expect("conformance Gateway ID");
+    let topic_prefix = env::var("AETHER_CLOUDLINK_TOPIC_PREFIX").expect("conformance topic prefix");
+    let spool_root = env::var("AETHER_CLOUDLINK_SPOOL_ROOT").expect("conformance spool root");
     let evidence_path = env::var("AETHER_CLOUDLINK_EDGE_EVIDENCE").expect("edge evidence path");
     let telemetry_path = Path::new(&spool_root).join("telemetry.spool");
-    let topics = TopicNamespace::new(&topic_prefix, &gateway_id).expect("dual topic namespace");
+    let topics =
+        TopicNamespace::new(&topic_prefix, &gateway_id).expect("conformance topic namespace");
     let config = integration_config(&gateway_id);
     config
         .validate(DeploymentSecurity::Development)
-        .expect("dual development configuration");
+        .expect("conformance development configuration");
     let telemetry_spool =
         FileCloudLinkSpool::open(&telemetry_path, "telemetry", 8).expect("recovered Edge spool");
     assert_eq!(
@@ -858,17 +868,18 @@ async fn external_cloud_dual_phase2_after_edge_restart() {
         "the application-unacknowledged fact must survive the Edge process restart"
     );
 
-    let transport =
-        MqttCloudLinkTransport::connect(config, topics, DeploymentSecurity::Development)
-            .expect("restarted Edge transport");
+    let transport = start_transport(config, topics, DeploymentSecurity::Development);
     wait_connected(&transport).await;
     send_hello_with_nonce(&transport, &gateway_id, 0, 2).await;
     let (session, resume_cursors) = wait_session_with_resume(&transport, &gateway_id, 1).await;
     assert!(
         resume_cursors.iter().any(|cursor| {
             cursor.stream_id() == "manifest"
-                && cursor.stream_epoch() == 1
-                && cursor.acknowledged_position() == 1
+                && cursor.stream_epoch().expect("resume stream epoch") == 1
+                && cursor
+                    .acknowledged_position()
+                    .expect("resume acknowledged position")
+                    == 1
         }),
         "Cloud must return its durable manifest/1/1 resume cursor"
     );
@@ -1027,7 +1038,7 @@ async fn external_cloud_dual_phase2_after_edge_restart() {
         .enqueue(
             CloudLinkCodec::prepare(
                 CloudLinkMessageKind::DataLoss,
-                "loss-dual",
+                "loss-conformance",
                 &loss_payload,
                 TimestampMs::new(1_721_000_000_500),
                 None,
@@ -1135,15 +1146,10 @@ async fn wait_session_allowing_cloud_state_loss(
                 CloudLinkCodec::decode(message.payload()).expect("accepted JSON")
         {
             let rollback = accepted
-                .bind(
-                    gateway_id,
-                    TEST_CREDENTIAL_GENERATION,
-                    &["1.0"],
-                    previous_epoch,
-                )
+                .bind(gateway_id, TEST_CREDENTIAL_GENERATION, previous_epoch)
                 .is_err();
             let binding = accepted
-                .bind(gateway_id, TEST_CREDENTIAL_GENERATION, &["1.0"], 0)
+                .bind(gateway_id, TEST_CREDENTIAL_GENERATION, 0)
                 .expect("fresh Cloud process session binding");
             return (binding, rollback);
         }
@@ -1159,10 +1165,11 @@ async fn contextual_fixture(
     position_and_expiry: Option<(&str, &str)>,
 ) -> Value {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../../contracts/cloudlink/v1/fixtures")
+        .join("../../../../contracts/cloudlink/fixtures")
         .join(name);
     let mut value: Value =
-        serde_json::from_slice(&std::fs::read(path).expect("dual fixture")).expect("fixture JSON");
+        serde_json::from_slice(&std::fs::read(path).expect("conformance fixture"))
+            .expect("fixture JSON");
     value["gateway_id"] = json!(gateway_id);
     value["session_id"] = json!(session.session_id());
     value["session_epoch"] = json!(session.session_epoch().to_string());
@@ -1457,11 +1464,10 @@ async fn fake_cloud(
                         }
                         sessions += 1;
                         let accepted = json!({
-                            "schema": "aether.cloudlink.session-accepted.v1",
+                            "schema": "aether.cloudlink.session-accepted",
                             "protocol": "aether.cloudlink",
                             "message_kind": "session-accepted",
                             "gateway_id": gateway_id,
-                            "selected_protocol_version": "1.0",
                             "session_id": if sessions == 1 {
                                 "44444444-4444-4444-8444-444444444444"
                             } else {
@@ -1485,9 +1491,8 @@ async fn fake_cloud(
                         .await;
                         if sessions == 2 {
                             let replay = json!({
-                                "schema": "aether.cloudlink.replay-request.v1",
+                                "schema": "aether.cloudlink.replay-request",
                                 "protocol": "aether.cloudlink",
-                                "protocol_version": "1.0",
                                 "message_kind": "replay-request",
                                 "gateway_id": gateway_id,
                                 "session_id": "55555555-5555-4555-8555-555555555555",
@@ -1601,7 +1606,7 @@ fn signed_test_challenge(
     cloud_nonce: &str,
 ) -> SessionChallenge {
     let signing_projection = json!({
-        "schema": "aether.cloudlink.session-challenge-signing.v1alpha1",
+        "schema": "aether.cloudlink.session-challenge-signing",
         "gateway_id": gateway_id,
         "challenge_id": challenge_id,
         "cloud_nonce": cloud_nonce,
@@ -1613,7 +1618,7 @@ fn signed_test_challenge(
     let cloud_key = SigningKey::from_bytes(&[7_u8; 32]);
     let signature = URL_SAFE_NO_PAD.encode(cloud_key.sign(&signing_bytes).to_bytes());
     let wire = json!({
-        "schema": "aether.cloudlink.session-challenge.v1",
+        "schema": "aether.cloudlink.session-challenge",
         "protocol": "aether.cloudlink",
         "message_kind": "session-challenge",
         "gateway_id": gateway_id,
@@ -1697,9 +1702,8 @@ async fn publish_json(client: &AsyncClient, topic: String, value: Value) {
 
 async fn publish_ack(client: &AsyncClient, topics: &TopicNamespace, envelope: &Value) {
     let ack = json!({
-        "schema": "aether.cloudlink.durable-ack.v1",
+        "schema": "aether.cloudlink.durable-ack",
         "protocol": "aether.cloudlink",
-        "protocol_version": "1.0",
         "message_kind": "durable-ack",
         "gateway_id": envelope["gateway_id"],
         "session_id": envelope["session_id"],
@@ -1764,7 +1768,6 @@ async fn send_hello_with_nonce(
         gateway_id,
         TEST_CREDENTIAL_ID,
         TEST_CREDENTIAL_GENERATION,
-        vec!["1.0".to_string()],
         format!("{nonce_marker:0>43}"),
         vec![
             aether_cloudlink::ResumeCursor::new("business", 1, acknowledged_position)
@@ -1842,12 +1845,7 @@ async fn wait_session_with_resume(
         {
             let resume_cursors = accepted.resume_cursors().to_vec();
             let binding = accepted
-                .bind(
-                    gateway_id,
-                    TEST_CREDENTIAL_GENERATION,
-                    &["1.0"],
-                    previous_epoch,
-                )
+                .bind(gateway_id, TEST_CREDENTIAL_GENERATION, previous_epoch)
                 .expect("accepted session binding");
             return (binding, resume_cursors);
         }
@@ -1957,8 +1955,14 @@ async fn wait_replay_request(
                 .validate_session(session)
                 .expect("replay current session");
             assert_eq!(request.stream_id(), record.identity().stream_id());
-            assert_eq!(request.stream_epoch(), record.identity().stream_epoch());
-            assert_eq!(request.from_position(), record.identity().position());
+            assert_eq!(
+                request.stream_epoch().expect("requested stream epoch"),
+                record.identity().stream_epoch()
+            );
+            assert_eq!(
+                request.from_position().expect("requested position"),
+                record.identity().position()
+            );
             return;
         }
     }

@@ -134,7 +134,7 @@ impl Fixture {
                     audit,
                 ),
             ),
-            Arc::new(ControlAuthenticator::new(JWT_SECRET, None).expect("authenticator")),
+            Arc::new(ControlAuthenticator::new(JWT_SECRET).expect("authenticator")),
             physical_sink,
             pool.clone(),
         ));

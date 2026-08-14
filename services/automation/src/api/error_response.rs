@@ -95,7 +95,7 @@ impl AetherErrorTrait for AutomationError {
                     .to_string(),
             ),
             AutomationError::InvalidRule(_) | AutomationError::ParseError(_) => Some(
-                "Check rule syntax. See docs/API_REFERENCE.md for rule format documentation"
+                "Check rule syntax. See docs/guides/writing-rules.md for rule format documentation"
                     .to_string(),
             ),
             AutomationError::InvalidRouting(_) => Some(

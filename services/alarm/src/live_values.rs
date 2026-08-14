@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use aether_domain::ChannelId;
+use aether_domain::{ChannelId, PointQuality};
 #[cfg(test)]
 use aether_ports::ChannelHealthObservation;
 use aether_ports::{ChannelHealthSource, PortError, PortErrorKind, PortResult};
@@ -111,6 +111,7 @@ impl ValidatedPointWatchHint {
 /// Alarm value adapter over an atomically replaceable topology generation.
 pub struct ShmAlarmValueSource {
     current: ArcSwap<AlarmValueGeneration>,
+    sample_stale_after_ms: u64,
 }
 
 struct AlarmValueGeneration {
@@ -145,7 +146,27 @@ impl ShmAlarmValueSource {
                 topology: None,
                 digest: 0,
             }),
+            // Existing deterministic fixtures use synthetic timestamps. Tests
+            // that exercise freshness use `new_with_stale_after` explicitly.
+            sample_stale_after_ms: u64::MAX,
         }
+    }
+
+    #[cfg(test)]
+    fn new_with_stale_after<S, H>(
+        slots: Arc<S>,
+        manifest: Arc<ChannelPointManifest>,
+        routing: Arc<AlarmRouting>,
+        channel_health: Arc<H>,
+        sample_stale_after_ms: u64,
+    ) -> Self
+    where
+        S: SlotSource,
+        H: ChannelHealthSource,
+    {
+        let mut source = Self::new(slots, manifest, routing, channel_health);
+        source.sample_stale_after_ms = sample_stale_after_ms;
+        source
     }
 
     /// Reloads one SQLite topology snapshot and atomically publishes it after
@@ -315,7 +336,7 @@ enum ResolvedAlarmTarget {
 impl AlarmValueSource for ShmAlarmValueSource {
     fn read_rule(&self, rule: &AlertRule) -> PortResult<Option<SlotSnapshot>> {
         let generation = self.current.load();
-        match generation.resolve_target(rule)? {
+        let sample = match generation.resolve_target(rule)? {
             Some(ResolvedAlarmTarget::Point(target)) => generation.read_point(target),
             Some(ResolvedAlarmTarget::ChannelHealth(channel_id)) => Ok(generation
                 .channel_health
@@ -323,12 +344,15 @@ impl AlarmValueSource for ShmAlarmValueSource {
                 .map(|sample| {
                     SlotSnapshot::new(
                         if sample.online() { 1.0 } else { 0.0 },
-                        sample.timestamp_ms(),
+                        sample.observed_at().get(),
                         aether_domain::PointQuality::Good,
                     )
                 })),
             None => Ok(None),
-        }
+        }?;
+        let now_ms = aether_shm_bridge::timestamp_ms();
+        Ok(sample
+            .filter(|sample| alarm_sample_is_usable(*sample, now_ms, self.sample_stale_after_ms)))
     }
 
     fn watched_slot(&self, rule: &AlertRule) -> PortResult<Option<usize>> {
@@ -390,7 +414,16 @@ pub async fn build_shm_alarm_source(
         .context("compose lazy alarm SHM topology")?;
     Ok(Arc::new(ShmAlarmValueSource {
         current: ArcSwap::from_pointee(generation),
+        sample_stale_after_ms: config.shm_writer_stale_after_ms,
     }))
+}
+
+const fn alarm_sample_is_usable(sample: SlotSnapshot, now_ms: u64, stale_after_ms: u64) -> bool {
+    !matches!(
+        sample.quality(),
+        PointQuality::Bad | PointQuality::Unavailable
+    ) && sample.timestamp_ms() <= now_ms
+        && now_ms - sample.timestamp_ms() < stale_after_ms
 }
 
 /// Periodically refreshes the alarm's complete SQLite/SHM topology view.
@@ -477,7 +510,7 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::Arc;
 
-    use aether_domain::PointKind;
+    use aether_domain::{PointKind, PointQuality};
     use aether_ports::{PortError, PortErrorKind, PortResult};
     use aether_shm_bridge::{
         ChannelPointManifest, PhysicalPointAddress, PointWatchEvent, SlotSnapshot, SlotSource,
@@ -574,6 +607,21 @@ mod tests {
         )
     }
 
+    fn direct_source(sample: SlotSnapshot, sample_stale_after_ms: u64) -> ShmAlarmValueSource {
+        let address = PhysicalPointAddress::from_raw_ids(10, PointKind::Telemetry, 1);
+        let manifest = ChannelPointManifest::compile([address], 1).expect("one-slot manifest");
+        ShmAlarmValueSource::new_with_stale_after(
+            Arc::new(StubSlots {
+                slot_count: 1,
+                values: HashMap::from([(0, sample)]),
+            }),
+            Arc::new(manifest),
+            Arc::new(AlarmRouting::default()),
+            Arc::new(NoChannelHealth),
+            sample_stale_after_ms,
+        )
+    }
+
     async fn config_pool(seed: &[&str]) -> sqlx::SqlitePool {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
@@ -607,6 +655,51 @@ mod tests {
 
         assert_eq!(sample.value(), 42.5);
         assert_eq!(sample.timestamp_ms(), 1_000);
+    }
+
+    #[test]
+    fn alarm_evaluation_rejects_bad_unavailable_and_stale_samples() {
+        let now_ms = aether_shm_bridge::timestamp_ms();
+        let target = rule("io", 10, "T", 1);
+
+        for quality in [PointQuality::Good, PointQuality::Uncertain] {
+            let source = direct_source(SlotSnapshot::new(42.5, now_ms, quality), 10_000);
+            assert!(
+                source
+                    .read_rule(&target)
+                    .expect("fresh sample read")
+                    .is_some(),
+                "fresh {quality:?} alarm input remains observable"
+            );
+        }
+        for quality in [PointQuality::Bad, PointQuality::Unavailable] {
+            let source = direct_source(SlotSnapshot::new(42.5, now_ms, quality), 10_000);
+            assert_eq!(
+                source.read_rule(&target).expect("invalid sample read"),
+                None,
+                "{quality:?} must not drive alarm state"
+            );
+        }
+
+        let stale = direct_source(
+            SlotSnapshot::new(42.5, now_ms.saturating_sub(10_000), PointQuality::Good),
+            10_000,
+        );
+        assert_eq!(
+            stale.read_rule(&target).expect("stale sample read"),
+            None,
+            "a sample at the staleness boundary is rejected"
+        );
+
+        let future = direct_source(
+            SlotSnapshot::new(42.5, now_ms.saturating_add(60_000), PointQuality::Good),
+            10_000,
+        );
+        assert_eq!(
+            future.read_rule(&target).expect("future sample read"),
+            None,
+            "a future-dated sample must fail closed"
+        );
     }
 
     #[test]

@@ -29,8 +29,8 @@ static features and an artifact selector; processor routes are never selected
 by API callers.
 
 The landed external binding is the authenticated
-`/api/v1/data-processing/*` HTTP surface in `aether-api`. Data Processing CLI
-and MCP bindings are not implemented in version 1.
+`/api/data-processing/*` HTTP surface in `aether-api`. Data Processing CLI
+and MCP bindings are not implemented.
 
 For each processing request the application authorizes before reading data,
 queries bounded history and covariates, optionally merges an exactly aligned

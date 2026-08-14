@@ -1,12 +1,12 @@
 ---
 title: Data Processing Contracts
-description: Version 1 contracts for processing frames, requests, derived results, validation, and failure semantics
+description: Contracts for processing frames, requests, derived results, validation, and failure semantics
 updated: 2026-07-11
 ---
 
 # Data Processing Contracts
 
-This reference specifies the implemented version 1 contracts for **Aether Data
+This reference specifies the implemented contracts for **Aether Data
 Processing**. Rust domain values and orchestration live in `aether-domain`,
 `aether-ports`, and `aether-application`; `aether-data-processing` provides the
 strict transport-neutral JSON codec, and `services/api/adapters/http-data-processor`
@@ -21,26 +21,26 @@ configuration.
 
 | Contract | Identifier | Purpose |
 |----------|------------|---------|
-| Task declaration | `aether.data-processing-task.v1` | Portable domain semantics and input bindings |
-| Application request | `aether.data-processing.process-task-request.v1` | Select a commissioned task, binding, data cut, and typed options |
-| Processing frame | `aether.processing-frame.v1` | Aligned observations and known-future covariates |
-| Processor request | `aether.data-processing.request.v1` | Resolved task and binding, deadline, complete frame, digest, and typed options |
-| Result envelope | `aether.data-processing.result.v1` | Status, provenance, expiry, and typed derived data |
-| Forecast output | `aether.data-processing.output.forecast.v1` | Processor-produced time-indexed forecast values |
-| Accepted derived data | `aether.derived-data.v1` | Aether-stamped, validated task output |
-| Error envelope | `aether.data-processing.error.v1` | Typed transport or processor failure |
+| Task declaration | `aether.data-processing-task` | Portable domain semantics and input bindings |
+| Application request | `aether.data-processing.process-task-request` | Select a commissioned task, binding, data cut, and typed options |
+| Processing frame | `aether.processing-frame` | Aligned observations and known-future covariates |
+| Processor request | `aether.data-processing.request` | Resolved task and binding, deadline, complete frame, digest, and typed options |
+| Result envelope | `aether.data-processing.result` | Status, provenance, expiry, and typed derived data |
+| Forecast output | `aether.data-processing.output.forecast` | Processor-produced time-indexed forecast values |
+| Accepted derived data | `aether.derived-data` | Aether-stamped, validated task output |
+| Error envelope | `aether.data-processing.error` | Typed transport or processor failure |
 
 The HTTP adapter uses the media type:
 
 ```text
-application/vnd.aether.data-processing+json;version=1
+application/vnd.aether.data-processing+json
 ```
 
-Contract identifiers are exact, case-sensitive strings. Version 1 consumers
-must reject an unsupported major version rather than guessing how to interpret
-it. Additive fields may be introduced only where the schema explicitly permits
-them; implementations must not use unknown fields to smuggle vendor-specific
-commands through the common envelope.
+Contract identifiers are exact, case-sensitive strings. Consumers accept only
+the configured current contract identifier and reject every other value rather
+than guessing how to interpret it. Additive fields may be introduced only
+where the schema explicitly permits them; implementations must not use unknown
+fields to smuggle vendor-specific commands through the common envelope.
 
 The keywords **MUST**, **MUST NOT**, **SHOULD**, and **MAY** below are normative.
 
@@ -56,7 +56,7 @@ The keywords **MUST**, **MUST NOT**, **SHOULD**, and **MAY** below are normative
   negative infinity are invalid.
 - Missing samples MUST be JSON `null` and have sample quality `missing`.
 - Units MUST be explicit for numeric features and outputs. A task declaration
-  chooses the canonical unit. The current v1 runtime verifies that commissioned
+  chooses the canonical unit. The runtime verifies that commissioned
   source metadata already matches that unit and sign convention; it does not
   convert either at request time.
 - Feature names MUST match the task declaration exactly and be unique within a
@@ -74,7 +74,7 @@ static features, aggregate quality, and redaction-safe provenance.
 
 ```json
 {
-  "schema": "aether.processing-frame.v1",
+  "schema": "aether.processing-frame",
   "as_of": "2026-07-11T12:00:00Z",
   "cadence_seconds": 900,
   "history": {
@@ -158,7 +158,7 @@ static features, aggregate quality, and redaction-safe provenance.
 
 | Field | Required | Validation |
 |-------|----------|------------|
-| `schema` | yes | Exactly `aether.processing-frame.v1` |
+| `schema` | yes | Exactly `aether.processing-frame` |
 | `as_of` | yes | Logical cutoff for the request; UTC RFC 3339 |
 | `cadence_seconds` | yes | Positive integer matching the task revision |
 | `history` | yes | At least one timestamp and one declared feature |
@@ -208,13 +208,13 @@ explicitly declares that exact substitution before the frame is built.
 
 ### Time invariants
 
-- Version 1 uses interval-end labels. For cadence `c`, a historical label `t`
+- The contract uses interval-end labels. For cadence `c`, a historical label `t`
   represents the raw interval `(t-c, t]`.
 - A history grid with `N` steps MUST be
   `as_of-(N-1)c, ..., as_of`; its final label is exactly `as_of`, and source
   reads MUST NOT advance beyond that cutoff.
 - A future-covariate grid MUST begin at `as_of+c` and advance by exact cadence.
-- Version 1 frames use an exact `cadence_seconds` grid. A source gap is retained
+- Frames use an exact `cadence_seconds` grid. A source gap is retained
   as an explicit missing sample or rejected by task policy; timestamps are not
   silently removed or retimed.
 - Future target values MUST NOT appear in `future_covariates`. A feature is
@@ -235,7 +235,7 @@ explicitly declares that exact substitution before the frame is built.
 The aggregate does not replace per-sample quality. A processor validates both
 against the selected task and optional processor artifact manifest.
 
-The v1 wire contract and SHM v5 live path preserve per-sample quality. Live
+The wire contract and SHM live path preserve per-sample quality. Live
 reads combine stored source quality with freshness policy. The embedded history
 table still stores numeric observations without device quality, so historical
 or mixed history/live frames cannot claim complete source-quality fidelity.
@@ -244,7 +244,7 @@ quality-bearing history source.
 
 Live tail is permitted only for a history feature whose commissioned
 aggregation is `Last`, where one instantaneous SHM value can validly replace
-the final cell. Version 1 rejects live tail for `Mean`, `Sum`, `Min`, and `Max`.
+the final cell. The contract rejects live tail for `Mean`, `Sum`, `Min`, and `Max`.
 The current energy load and PV target histories use `Mean`, so their frames set
 `live_tail_included: false`.
 
@@ -258,7 +258,7 @@ SHM path, channel address, or model filesystem path. When a remote data-egress
 policy removes `source_ref`, it MUST retain the segment, feature name, source
 kind, and watermark.
 
-`issued_at` is optional and records when a versioned external forecast, such
+`issued_at` is optional and records when an externally issued forecast, such
 as an NWP run, was issued. When present, it MUST satisfy
 `issued_at <= watermark <= frame.as_of`. Valid times in
 `future_covariates.timestamps` may be later than `as_of`; the issue cut may
@@ -361,7 +361,7 @@ public application input.
 
 ```json
 {
-  "schema": "aether.data-processing.request.v1",
+  "schema": "aether.data-processing.request",
   "request_id": "0190aee6-2139-7a87-8448-806f1b843201",
   "submitted_at": "2026-07-11T12:00:01Z",
   "deadline": "2026-07-11T12:00:06Z",
@@ -374,7 +374,7 @@ public application input.
     "id": "site-a",
     "revision": 7
   },
-  "processor_contract": "aether.data-processing.forecast.v1",
+  "processor_contract": "aether.data-processing.forecast",
   "artifact": {
     "kind": "model",
     "family": "site-load",
@@ -382,7 +382,7 @@ public application input.
     "artifact_digest": "sha256:98967bdedc60b8ab555e596516eb272063c139ccf3a3112fb29a46ab0610f270"
   },
   "frame": {
-    "schema": "aether.processing-frame.v1",
+    "schema": "aether.processing-frame",
     "as_of": "2026-07-11T12:00:00Z",
     "cadence_seconds": 900,
     "history": {
@@ -541,8 +541,8 @@ example.
 
 | Field | Required | Validation |
 |-------|----------|------------|
-| `schema` | yes | Exactly `aether.data-processing.request.v1` |
-| `request_id` | yes | Correlation identity for this invocation; v1 provides no replay or de-duplication semantics |
+| `schema` | yes | Exactly `aether.data-processing.request` |
+| `request_id` | yes | Correlation identity for this invocation; the contract provides no replay or de-duplication semantics |
 | `submitted_at` | yes | UTC time the application created the request |
 | `deadline` | yes | UTC time after which the processor must not start work or return an accepted result |
 | `task` | yes | ID, positive revision, and typed kind matching a loaded task |
@@ -564,8 +564,8 @@ unknown options rather than silently ignore behavior-changing fields.
 
 ```json
 {
-  "task": "<the exact versioned task identity object>",
-  "binding": "<the exact versioned binding identity object>",
+  "task": "<the exact task identity object>",
+  "binding": "<the exact binding identity object>",
   "processor_contract": "<contract identifier>",
   "artifact": "<the artifact object or null>",
   "frame": "<the complete frame object>",
@@ -580,8 +580,8 @@ changes to their governed definitions content-distinct without copying site
 configuration into the processor request. Processor endpoint and identity,
 correlation times, and `request_id` are excluded, so independent invocations of
 the exact same normalized governed content retain the same digest. Repeating
-only `as_of` does not guarantee that content when sources are mutable. Version
-1 does not provide a built-in result cache or replay store.
+only `as_of` does not guarantee that content when sources are mutable. The
+contract does not provide a built-in result cache or replay store.
 
 The actor and the actor's permissions are intentionally absent. Aether
 authorizes the application call and audits the actor; it does not disclose
@@ -589,7 +589,7 @@ identity to a processor unless a separate, explicit service-authentication
 protocol requires it.
 
 Artifact identity is not artifact chronology. The selector/result provenance
-can carry kind, family, version, and digest, but version 1 has no
+can carry kind, family, version, and digest, but the contract has no
 `trained_through` or `available_at` field and does not compare either with
 `frame.as_of`. A digest-pinned artifact is reproducible once supplied, yet a
 model trained or published later can still be selected for an old frame.
@@ -603,7 +603,7 @@ fields.
 
 ```json
 {
-  "schema": "aether.data-processing.result.v1",
+  "schema": "aether.data-processing.result",
   "request_id": "0190aee6-2139-7a87-8448-806f1b843201",
   "task": {
     "id": "energy.site-load-forecast",
@@ -622,7 +622,7 @@ fields.
   "processor": {
     "id": "load-forecasting-edge",
     "version": "0.1.0",
-    "contract": "aether.data-processing.forecast.v1"
+    "contract": "aether.data-processing.forecast"
   },
   "artifact": {
     "kind": "model",
@@ -631,7 +631,7 @@ fields.
     "artifact_digest": "sha256:f04c532f2f814a3690f0f40e6f26fa82b0d69b9c510e7c0bb9f9f4de35b5a882"
   },
   "output": {
-    "schema": "aether.data-processing.output.forecast.v1",
+    "schema": "aether.data-processing.output.forecast",
     "kind": "forecast",
     "target": "load",
     "unit": "kW",
@@ -657,7 +657,7 @@ fields.
 
 | Field | Required | Validation |
 |-------|----------|------------|
-| `schema` | yes | Exactly `aether.data-processing.result.v1` |
+| `schema` | yes | Exactly `aether.data-processing.result` |
 | `request_id` | yes | Exact request correlation |
 | `task` | yes | Exact task ID, revision, and kind from the request |
 | `binding` | yes | Exact binding ID and revision from the request |
@@ -675,21 +675,20 @@ fields.
 
 ### Forecast output
 
-Version 1 initially defines the typed forecast output schema. Estimate,
-detection, and classification tasks should add their own versioned output
-schemas instead of placing arbitrary JSON under `output`.
+The contract defines the typed forecast output schema. Estimate, detection,
+and classification tasks must add typed schemas to this single contract family
+instead of placing arbitrary JSON under `output`.
 
-Version 1 fixes `timestamp_semantics` to `interval_end`: every point timestamp
+The contract fixes `timestamp_semantics` to `interval_end`: every point timestamp
 identifies the end of the interval it forecasts. `interval_start`, `instant`,
-or any other interpretation requires a future contract version and MUST be
-rejected by a v1 decoder.
+or any other interpretation MUST be rejected by the decoder.
 
 A forecast MUST satisfy all of the following:
 
 - `target`, `unit`, and `sign_convention` exactly match the task declaration;
 - point timestamps exactly match the requested future horizon and cadence;
 - the number of points equals `options.horizon_steps`;
-- timestamps are strictly increasing and use v1 `interval_end` semantics;
+- timestamps are strictly increasing and use `interval_end` semantics;
 - values and quantile values are finite;
 - returned quantile probabilities exactly match the requested set;
 - quantile values are nondecreasing by probability at each timestamp; and
@@ -707,7 +706,7 @@ a way to hide a processor failure.
 
 ```json
 {
-  "schema": "aether.data-processing.result.v1",
+  "schema": "aether.data-processing.result",
   "request_id": "0190aee6-2139-7a87-8448-806f1b843201",
   "task": {
     "id": "energy.site-load-forecast",
@@ -726,7 +725,7 @@ a way to hide a processor failure.
   "processor": {
     "id": "load-forecasting-edge",
     "version": "0.1.0",
-    "contract": "aether.data-processing.forecast.v1"
+    "contract": "aether.data-processing.forecast"
   },
   "fallback": {
     "strategy": "persistence",
@@ -736,7 +735,7 @@ a way to hide a processor failure.
     "based_on_data_through": "2026-07-11T11:45:00Z"
   },
   "output": {
-    "schema": "aether.data-processing.output.forecast.v1",
+    "schema": "aether.data-processing.output.forecast",
     "kind": "forecast",
     "target": "load",
     "unit": "kW",
@@ -774,7 +773,7 @@ approved model exists or the allowed fallback lacks enough observations.
 
 ```json
 {
-  "schema": "aether.data-processing.result.v1",
+  "schema": "aether.data-processing.result",
   "request_id": "0190aee6-2139-7a87-8448-806f1b843201",
   "task": {
     "id": "energy.site-load-forecast",
@@ -792,7 +791,7 @@ approved model exists or the allowed fallback lacks enough observations.
   "processor": {
     "id": "load-forecasting-edge",
     "version": "0.1.0",
-    "contract": "aether.data-processing.forecast.v1"
+    "contract": "aether.data-processing.forecast"
   },
   "unavailable": {
     "reason_code": "INSUFFICIENT_HISTORY",
@@ -814,7 +813,7 @@ output as `DerivedData`:
 
 ```json
 {
-  "schema": "aether.derived-data.v1",
+  "schema": "aether.derived-data",
   "result_id": "0190aee6-22ac-72da-b214-629a31ccb99c",
   "request_id": "0190aee6-2139-7a87-8448-806f1b843201",
   "task": {
@@ -846,7 +845,7 @@ output as `DerivedData`:
     "fallback_used": false
   },
   "data": {
-    "schema": "aether.data-processing.output.forecast.v1",
+    "schema": "aether.data-processing.output.forecast",
     "kind": "forecast",
     "target": "load",
     "unit": "kW",
@@ -873,7 +872,7 @@ response with a typed error. They are distinct from a completed
 
 ```json
 {
-  "schema": "aether.data-processing.error.v1",
+  "schema": "aether.data-processing.error",
   "request_id": "0190aee6-2139-7a87-8448-806f1b843201",
   "code": "FRAME_INVALID",
   "category": "invalid_data",
@@ -907,7 +906,7 @@ for diagnostics.
 
 A conforming application/adapter should validate in this order:
 
-1. size, media type, JSON syntax, and contract major version;
+1. size, media type, JSON syntax, and exact current contract identifier;
 2. request identity, deadline, and canonical digest;
 3. configured task ID, revision, kind, and processor route;
 4. feature set, value types, units, and sign conventions;
@@ -924,7 +923,7 @@ safety behavior unavailable.
 
 `data_processing.process` is declared `idempotent: false`. Although the query
 does not mutate Aether state or control a device, invoking it may execute local
-or remote processor work and create a new required audit record. Version 1 has
+or remote processor work and create a new required audit record. The contract has
 no replay store, request de-duplication contract, exact-result guarantee, or
 special `409` behavior for reused request IDs.
 
@@ -938,7 +937,7 @@ operation into an exact-replay API.
 ## Capability metadata
 
 Every transport that wires this capability MUST consume and expose the same
-application metadata. Version 1 currently exposes the application through the
+application metadata. The runtime exposes the application through the
 authenticated HTTP routes on `aether-api`; CLI and MCP bindings remain future
 work. The implemented baseline descriptors in the application catalog are:
 
@@ -959,14 +958,14 @@ fails closed when the required audit sink cannot record the invocation.
 
 The application-facing routes are:
 
-- `GET /api/v1/data-processing/tasks`;
-- `GET /api/v1/data-processing/processors/health`; and
-- `POST /api/v1/data-processing/process`.
+- `GET /api/data-processing/tasks`;
+- `GET /api/data-processing/processors/health`; and
+- `POST /api/data-processing/process`.
 
 They are mounted only when Data Processing is explicitly enabled. JWT role
 mapping grants discovery to Viewer, Engineer, and Admin; process execution is
 limited to Engineer and Admin. The processor-facing sidecar route remains the
-separate `POST /v1/process` boundary.
+separate `POST /process` boundary.
 
 Task bindings, routes, and approved artifacts change only through the existing
 governed configuration path. A processing request MUST NOT activate an
@@ -981,7 +980,7 @@ entry (with the full `features` array abbreviated here) has this nested shape:
   "task": {"id": "energy.site-load-forecast", "revision": 1},
   "binding": {"id": "energy.example-site", "revision": 1},
   "kind": "forecast",
-  "processor_contract": "aether.data-processing.forecast.v1",
+  "processor_contract": "aether.data-processing.forecast",
   "features": [
     {
       "name": "load",
@@ -1051,25 +1050,27 @@ request closed.
 An AI client can then distinguish observing or explaining a forecast from
 activating a model or dispatching a control plan.
 
-## Compatibility rules
+## Contract evolution rules
 
-- A processor may support multiple major contracts concurrently, but each
-  request selects exactly one.
+- Every deployed processor endpoint implements the repository's single current
+  request and response contract. The canonical wire is the only accepted
+  processor representation.
 - A new task kind receives a typed options schema and a typed output schema.
   Do not expand Forecast fields until they become a generic blob.
 - Renaming a feature, changing a unit or sign convention, changing timestamp
-  semantics, or changing a missing-data rule requires a new task revision.
-- Removing a compatibility adapter requires conformance tests and a stated
-  migration criterion.
-- A domain pack may require a minimum processor contract, but only a
-  composition root selects the actual adapter or endpoint.
+  semantics, or changing a missing-data rule requires a new task revision. A
+  task revision is business configuration identity, not a wire-contract
+  version.
+- Wire changes update the one canonical schema, DTO, fixtures, adapter, and
+  conformance tests together; old shapes are rejected.
+- Only a composition root selects the actual processor adapter or endpoint.
 
 ## Related pages
 
 - [Connect Data Processors](../guides/data-processors.md) — declare a task and route a processor
 - [AetherEMS Power Forecasting](https://github.com/EvanL1/AetherEMS/blob/main/packs/energy/knowledge/power-forecasting.md) — first downstream forecast contract
-- [JSON Schemas](../../contracts/data-processing/README.md) — strict machine-readable v1 wire guards
+- [JSON Schemas](../../contracts/data-processing/README.md) — strict machine-readable wire guards
 - [Load-Forecasting Processor](https://github.com/EvanL1/AetherEMS/tree/main/processors/load-forecasting) — downstream energy-domain implementation
 - [Data Flow](../concepts/data-flow.md) — SHM and history authority
-- [HTTP Data Processor](../../services/api/adapters/http-data-processor/README.md) — bounded optional implementation of the v1 processor transport
+- [HTTP Data Processor](../../services/api/adapters/http-data-processor/README.md) — bounded optional implementation of the processor transport
 - [HTTP API](http-api.md) — service-envelope conventions for Aether's application-facing APIs

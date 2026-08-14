@@ -38,15 +38,11 @@ commissioned AetherEdge runtime.
 ## Naming rules
 
 - Use **AetherIoT** for the project, community, website, and complete platform.
-- Use **AetherEdge** for the repository and product that were formerly named
-  AetherIot.
-- Keep existing `aether-*` crate names, the `aether` CLI, the
+- Use **AetherEdge** for this repository and the edge product.
+- Use `aether-*` crate names, the `aether` CLI, the
   `aether-edge-sdk` package, installer names, and protocol identifiers stable.
 - Preserve historical release artifacts and digest-pinned AetherContracts
   bundles byte for byte. A new display name never rewrites old evidence.
-
-Read the [AetherIot to AetherEdge migration guide](../migration/aetheriot-to-aetheredge.md)
-for repository and automation changes.
 
 ## Documentation ownership
 

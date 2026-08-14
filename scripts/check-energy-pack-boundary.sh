@@ -5,7 +5,6 @@ set -euo pipefail
 readonly RETIRED_MODEL_CRATE="libs/aether-model"
 readonly PACK_MODELS="packs/energy/models"
 readonly PACK_KNOWLEDGE="packs/energy/knowledge"
-readonly ENERGY_HOMEPAGE_PRESET="packs/energy/examples/config/api/calculated_points.sql"
 readonly FORMAL_ASSET_CATEGORIES=(mappings rules evaluations)
 
 fail() {
@@ -22,13 +21,10 @@ model_count=$(find "$PACK_MODELS" -maxdepth 1 -type f -name '*.json' | wc -l | t
 knowledge_count=$(find "$PACK_KNOWLEDGE" -maxdepth 1 -type f -name '*.md' | wc -l | tr -d ' ')
 [[ "$knowledge_count" == 5 ]] || fail "energy pack must own exactly 5 knowledge pages"
 
-[[ ! -e services/api/assets/calculated_points.sql ]] \
-    || fail "core API still owns the Energy homepage calculated-point preset"
-[[ -s "$ENERGY_HOMEPAGE_PRESET" ]] \
-    || fail "Energy Pack homepage commissioning preset is missing"
-preset_point_count=$(rg -c '^\(' "$ENERGY_HOMEPAGE_PRESET" || true)
-[[ "$preset_point_count" == 19 ]] \
-    || fail "Energy Pack homepage commissioning preset must preserve exactly 19 legacy points"
+if find services/api packs/energy -type f -name 'calculated_points.sql' -print -quit \
+    | grep -q .; then
+    fail "retired Energy homepage calculated-point preset was restored"
+fi
 
 if sed '/^#\[cfg(test)\]/,$d' services/api/src/db.rs | rg -n \
     'include_(str|bytes)!\([^)]*calculated_points|INSERT[[:space:]]+INTO[[:space:]]+calculated_points|PV Energy|Diesel Energy|Saving Billing|icon-(pv|diesel|ess)-energy|\bSOC\b' \
@@ -72,15 +68,15 @@ if rg -n 'aether://docs/domain/' README.md docs tools services libs examples pac
 fi
 
 if ! rg -q '^  models:[[:space:]]*models[[:space:]]*$' packs/energy/pack.yaml; then
-    fail "Pack v1 manifest does not declare the models directory"
+    fail "Pack manifest does not declare the models directory"
 fi
 if ! rg -q '^  knowledge:[[:space:]]*knowledge[[:space:]]*$' packs/energy/pack.yaml; then
-    fail "Pack v1 manifest does not declare the knowledge directory"
+    fail "Pack manifest does not declare the knowledge directory"
 fi
 
 for category in "${FORMAL_ASSET_CATEGORIES[@]}"; do
     if ! rg -q "^  ${category}:[[:space:]]*${category}[[:space:]]*$" packs/energy/pack.yaml; then
-        fail "Pack v1 manifest does not declare the ${category} directory"
+        fail "Pack manifest does not declare the ${category} directory"
     fi
     [[ -f "packs/energy/${category}/index.yaml" ]] \
         || fail "energy ${category} asset index is missing"
@@ -88,7 +84,7 @@ done
 
 if ! rg -q '^  data_processing:[[:space:]]*data-processing/tasks[[:space:]]*$' \
     packs/energy/pack.yaml; then
-    fail "Pack v1 manifest does not declare the Data Processing task directory"
+    fail "Pack manifest does not declare the Data Processing task directory"
 fi
 [[ -f packs/energy/data-processing/tasks/index.yaml ]] \
     || fail "Energy Data Processing task index is missing"
@@ -103,24 +99,32 @@ if rg -n \
     fail "generic CLI/schema still hard-codes Energy product compatibility names"
 fi
 
-for migration in \
-    packs/energy/mappings/product-name-aliases.yaml \
-    packs/energy/mappings/legacy-instance-properties-v5.yaml; do
-    if ! rg -q '^  removed_from_kernel:[[:space:]]*0\.5\.0[[:space:]]*$' "$migration"; then
-        fail "Energy compatibility mapping lacks an explicit kernel-removal version: $migration"
-    fi
-done
+[[ ! -e packs/energy/mappings/product-name-aliases.yaml ]] \
+    || fail "retired Energy product-name alias migration remains active"
+[[ ! -e packs/energy/mappings/legacy-instance-properties-v5.yaml ]] \
+    || fail "retired instance-property migration remains active"
 
 for schema in \
-    contracts/pack/pack-artifact.v1.schema.json \
-    contracts/pack/pack-manifest.v1.schema.json \
-    contracts/pack/pack-asset-index.v1.schema.json \
-    contracts/pack/mapping-set.v1.schema.json \
-    contracts/pack/rule.v1.schema.json \
-    contracts/pack/evaluation-suite.v1.schema.json \
-    contracts/pack/data-processing-task.v1.schema.json; do
+    contracts/pack/pack-artifact.schema.json \
+    contracts/pack/pack-manifest.schema.json \
+    contracts/pack/pack-asset-index.schema.json \
+    contracts/pack/mapping-set.schema.json \
+    contracts/pack/rule.schema.json \
+    contracts/pack/evaluation-suite.schema.json \
+    contracts/pack/data-processing-task.schema.json; do
     [[ -s "$schema" ]] || fail "Pack asset schema is missing: $schema"
 done
+
+if rg -n 'schema_version|\.v1(?:\.|$)|\.v1\.schema\.json' \
+    packs/energy/pack.yaml \
+    packs/energy/mappings \
+    packs/energy/rules \
+    packs/energy/evaluations \
+    packs/energy/data-processing \
+    contracts/pack \
+    contracts/data-processing; then
+    fail "Pack and Data Processing contracts must use the single unversioned interface"
+fi
 
 [[ -x scripts/build-pack-artifact.sh ]] \
     || fail "Pack-only artifact builder is missing or not executable"

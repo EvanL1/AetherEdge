@@ -11,7 +11,7 @@ const REQUEST_FIXTURE: &[u8] = include_bytes!("fixtures/forecast-processing-requ
 const RESULT_FIXTURE: &[u8] = include_bytes!("fixtures/forecast-processing-result.json");
 const DERIVED_FIXTURE: &[u8] = include_bytes!("fixtures/forecast-derived-data.json");
 const PYTHON_RFC8785_DIGEST: &str =
-    "sha256:66aade139532bcd80b8ae85f5e6b120332e8b29128df82546440f209064193dc";
+    "sha256:f78edd8e74f4f05f8dc79476f19140abfc85107083fd52f9c5ef6e0e05bfa685";
 
 fn refresh_digest(request: &mut Value) {
     let basis = json!({
@@ -74,7 +74,7 @@ fn accepted_derived_data_encodes_as_the_complete_contract_golden() {
     );
     assert_eq!(
         encoded_json["processor"]["contract"],
-        "aether.data-processing.forecast.v1"
+        "aether.data-processing.forecast"
     );
     assert_eq!(encoded_json["warnings"], json!([]));
     assert_eq!(
@@ -216,7 +216,7 @@ fn result_fixture_round_trips_between_json_dto_and_domain() {
 #[test]
 fn decoder_rejects_unknown_schemas_and_unknown_fields() {
     let mut request: Value = serde_json::from_slice(REQUEST_FIXTURE).unwrap();
-    request["schema"] = json!("aether.data-processing.request.v2");
+    request["schema"] = json!("aether.data-processing.request.invalid");
     assert!(decode_request(&serde_json::to_vec(&request).unwrap()).is_err());
 
     let mut request: Value = serde_json::from_slice(REQUEST_FIXTURE).unwrap();
@@ -224,7 +224,7 @@ fn decoder_rejects_unknown_schemas_and_unknown_fields() {
     assert!(decode_request(&serde_json::to_vec(&request).unwrap()).is_err());
 
     let mut result: Value = serde_json::from_slice(RESULT_FIXTURE).unwrap();
-    result["schema"] = json!("aether.data-processing.result.v2");
+    result["schema"] = json!("aether.data-processing.result.invalid");
     assert!(decode_result(&serde_json::to_vec(&result).unwrap()).is_err());
 }
 

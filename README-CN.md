@@ -3,7 +3,7 @@
 [![代码检查](https://github.com/EvanL1/AetherEdge/actions/workflows/rust-check.yml/badge.svg)](https://github.com/EvanL1/AetherEdge/actions/workflows/rust-check.yml)
 [![许可证](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#许可证)
 [![Rust](https://img.shields.io/badge/rust-1.90%2B-orange.svg)](https://www.rust-lang.org/)
-[![版本](https://img.shields.io/badge/version-0.0.1-yellow.svg)](https://github.com/EvanL1/AetherEdge/releases)
+[![版本](https://img.shields.io/badge/version-0.0.2-yellow.svg)](https://github.com/EvanL1/AetherEdge/releases)
 [![状态](https://img.shields.io/badge/status-beta-orange.svg)](https://github.com/EvanL1/AetherEdge/releases)
 
 **产品站：** [aetheriot.ai](https://aetheriot.ai/) ·
@@ -203,7 +203,7 @@ cargo add aether-edge-sdk --features local-runtime
 | `aether-alarm` | 告警计算与生命周期 |
 | `aether-history` | 嵌入式历史与可选历史适配器 |
 | `aether-api` | 经认证的远程 application API 与 WebSocket |
-| `aether-uplink` | 持久 legacy Cloud/MQTT 交付和实验性 CloudLink 基础 |
+| `aether-uplink` | 持久 CloudLink MQTT 交付、确认与重放 |
 
 ```text
 设备 -> aether-io -> 权威 SHM
@@ -217,7 +217,7 @@ cargo add aether-edge-sdk --features local-runtime
 ```
 
 AetherEdge 当前交付面向集成商的 Runtime、application contracts、受治理命令、
-MCP 基础、Pack v1 和 SDK facade。完整的对话式意图编译、仿真、临时行为和持续
+MCP 基础、Pack 和 SDK facade。完整的对话式意图编译、仿真、临时行为和持续
 效果评估仍是产品方向。准确交付边界见[平台状态](docs/roadmap/status.md)。
 
 ## 参与开发

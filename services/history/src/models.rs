@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use uuid::Uuid;
 
 /// Upper bound for any day-denominated configuration value (100 years).
 ///
@@ -11,11 +12,22 @@ pub const MAX_RANGE_DAYS: i64 = 36_500;
 /// Upper bound for page sizes so `(page - 1) * page_size` cannot overflow `i64`.
 pub const MAX_PAGE_SIZE_LIMIT: i64 = 100_000;
 
+/// Hard cap on a storage write call. This bounds retry copies and stays below
+/// backend bind-parameter limits after backend-specific statement chunking.
+pub const MAX_WRITE_BATCH_POINTS: usize = 10_000;
+
 // ── Core data types ───────────────────────────────────────────────────────────
 
 /// One measurement point ready to be written to storage.
 #[derive(Debug, Clone)]
 pub struct DataPoint {
+    /// Internal idempotency identity assigned exactly once when the sample is
+    /// admitted from the live-state collector. Cloning a point for a retry
+    /// deliberately preserves this value.
+    ///
+    /// This is not a business-data identity: two distinct admissions with the
+    /// same timestamp, series, point and value must still be stored twice.
+    ingestion_id: Uuid,
     pub time: DateTime<Utc>,
     /// Stable logical series key, e.g. `inst:1:M`.
     pub series_key: String,
@@ -23,6 +35,32 @@ pub struct DataPoint {
     pub point_id: String,
     pub value: Option<f64>,
     pub string_value: Option<String>,
+}
+
+impl DataPoint {
+    /// Admit a freshly collected sample and assign its stable retry identity.
+    pub fn new(
+        time: DateTime<Utc>,
+        series_key: impl Into<String>,
+        point_id: impl Into<String>,
+        value: Option<f64>,
+        string_value: Option<String>,
+    ) -> Self {
+        Self {
+            ingestion_id: Uuid::new_v4(),
+            time,
+            series_key: series_key.into(),
+            point_id: point_id.into(),
+            value,
+            string_value,
+        }
+    }
+
+    /// Stable identity used only by storage adapters to collapse retries.
+    #[must_use]
+    pub const fn ingestion_id(&self) -> Uuid {
+        self.ingestion_id
+    }
 }
 
 /// One row returned from a historical query.
@@ -82,7 +120,7 @@ pub struct DataStats {
 /// ```json
 /// { "inst:*:M": null, "inst:4:M": 60 }
 /// ```
-/// `null`, `""`, or `0` all mean "use the global `collection_interval_secs`".
+/// `null` or `0` means "use the global `collection_interval_secs`".
 #[derive(Debug, Clone)]
 pub struct PatternEntry {
     pub pattern: String,
@@ -107,20 +145,13 @@ impl PatternEntry {
     }
 }
 
-/// Custom serde for `Vec<PatternEntry>` and plain-`Value` helpers used by
-/// `db_config.rs` (which cannot use serde's generic machinery directly).
-///
-/// **Deserialises** both the legacy array-of-strings format and the new
-/// object format:
-/// - Legacy: `["inst:*:M", "inst:*:A"]`
-/// - New:    `{"inst:*:M": null, "inst:4:M": 60}`
-///
-/// **Serialises** always as the object format.
+/// Canonical object-map serde for `Vec<PatternEntry>` plus JSON helpers used by
+/// `db_config.rs`.
 pub mod pattern_serde {
     use super::PatternEntry;
     use serde::{
         Deserializer, Serializer,
-        de::{MapAccess, SeqAccess, Visitor},
+        de::{MapAccess, Visitor},
         ser::SerializeMap,
     };
 
@@ -147,52 +178,34 @@ pub mod pattern_serde {
             type Value = Vec<PatternEntry>;
 
             fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-                f.write_str(
-                    "an array of strings or an object mapping pattern to interval (seconds)",
-                )
+                f.write_str("an object mapping pattern to interval seconds or null")
             }
 
-            // Legacy: ["inst:*:M", "inst:*:A"]
-            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
-                let mut result = Vec::new();
-                while let Some(pattern) = seq.next_element::<String>()? {
-                    result.push(PatternEntry {
-                        pattern,
-                        interval_secs: None,
-                    });
-                }
-                Ok(result)
-            }
-
-            // New: {"inst:*:M": null, "inst:4:M": 60}
             fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
                 let mut result = Vec::new();
-                while let Some((pattern, raw)) =
-                    map.next_entry::<String, Option<serde_json::Value>>()?
+                while let Some((pattern, interval_secs)) =
+                    map.next_entry::<String, Option<u64>>()?
                 {
-                    let interval_secs = raw.and_then(value_to_interval);
                     result.push(PatternEntry {
                         pattern,
-                        interval_secs,
+                        interval_secs: interval_secs.filter(|value| *value > 0),
                     });
                 }
                 Ok(result)
             }
         }
 
-        deserializer.deserialize_any(PatternVisitor)
+        deserializer.deserialize_map(PatternVisitor)
     }
 
     // ── Plain-Value helpers for db_config.rs ─────────────────────────────────
 
-    /// Parse a JSON string (either old array or new object format) into
-    /// `Vec<PatternEntry>`.  Returns defaults on parse failure.
-    pub fn from_json_str(s: &str) -> Vec<PatternEntry> {
-        let v: serde_json::Value = match serde_json::from_str(s) {
-            Ok(v) => v,
-            Err(_) => return vec![PatternEntry::new("inst:*:M"), PatternEntry::new("inst:*:A")],
-        };
-        from_value(v)
+    /// Parse the canonical JSON object into `Vec<PatternEntry>`.
+    pub fn from_json_str(s: &str) -> serde_json::Result<Vec<PatternEntry>> {
+        let mut deserializer = serde_json::Deserializer::from_str(s);
+        let patterns = deserialize(&mut deserializer)?;
+        deserializer.end()?;
+        Ok(patterns)
     }
 
     /// Serialize `Vec<PatternEntry>` to a JSON string (object format).
@@ -208,35 +221,6 @@ pub mod pattern_serde {
             })
             .collect();
         serde_json::to_string(&serde_json::Value::Object(map))
-    }
-
-    fn from_value(v: serde_json::Value) -> Vec<PatternEntry> {
-        match v {
-            serde_json::Value::Array(arr) => arr
-                .into_iter()
-                .filter_map(|item| item.as_str().map(PatternEntry::new))
-                .collect(),
-            serde_json::Value::Object(map) => map
-                .into_iter()
-                .map(|(pattern, val)| {
-                    let interval_secs = value_to_interval(val);
-                    PatternEntry {
-                        pattern,
-                        interval_secs,
-                    }
-                })
-                .collect(),
-            _ => vec![PatternEntry::new("inst:*:M"), PatternEntry::new("inst:*:A")],
-        }
-    }
-
-    /// Convert a JSON value to a positive `u64` interval, or `None`.
-    fn value_to_interval(v: serde_json::Value) -> Option<u64> {
-        match v {
-            serde_json::Value::Number(n) => n.as_u64().filter(|&x| x > 0),
-            serde_json::Value::String(s) => s.trim().parse::<u64>().ok().filter(|&x| x > 0),
-            _ => None,
-        }
     }
 }
 
@@ -300,15 +284,7 @@ pub struct ServiceConfig {
 
     /// Logical series selectors using `*` and `?` glob syntax.
     ///
-    /// Accepts two formats (backward compatible with the legacy array format):
-    ///
-    /// **Legacy format** (array): every pattern uses the global
-    /// `collection_interval_secs`.
-    /// ```json
-    /// ["inst:*:M", "inst:*:A"]
-    /// ```
-    ///
-    /// **New format** (object): each pattern may specify its own collection
+    /// Each pattern may specify its own collection
     /// interval in seconds; `null`, `0`, or omission all mean "use the
     /// global default".
     /// ```json
@@ -345,7 +321,7 @@ impl ServiceConfig {
     pub fn normalize(&mut self) {
         self.collection_interval_secs = self.collection_interval_secs.max(1);
         self.flush_interval_secs = self.flush_interval_secs.max(1);
-        self.batch_size = self.batch_size.max(1);
+        self.batch_size = self.batch_size.clamp(1, MAX_WRITE_BATCH_POINTS);
         self.cleanup_older_than_days = self.cleanup_older_than_days.clamp(1, MAX_RANGE_DAYS as i32);
         self.default_page_size = self.default_page_size.clamp(1, MAX_PAGE_SIZE_LIMIT);
         self.max_page_size = self.max_page_size.clamp(1, MAX_PAGE_SIZE_LIMIT);
@@ -398,6 +374,18 @@ mod config_tests {
     }
 
     #[test]
+    fn normalize_caps_storage_batch_memory_and_bind_count() {
+        let mut cfg = ServiceConfig {
+            batch_size: usize::MAX,
+            ..ServiceConfig::default()
+        };
+
+        cfg.normalize();
+
+        assert_eq!(cfg.batch_size, MAX_WRITE_BATCH_POINTS);
+    }
+
+    #[test]
     fn clamped_day_ranges_survive_the_arithmetic_the_query_path_performs() {
         let mut cfg = ServiceConfig {
             cleanup_older_than_days: i32::MAX,
@@ -431,6 +419,21 @@ mod config_tests {
 
         assert_eq!(cfg.max_page_size, MAX_PAGE_SIZE_LIMIT);
         assert_eq!(cfg.default_page_size, MAX_PAGE_SIZE_LIMIT);
+    }
+
+    #[test]
+    fn subscribe_patterns_accept_only_the_canonical_object_shape() {
+        let patterns =
+            pattern_serde::from_json_str(r#"{"inst:*:M":null,"inst:4:M":60,"inst:5:M":0}"#)
+                .expect("canonical object map");
+        assert_eq!(patterns.len(), 3);
+        assert_eq!(patterns[0].pattern, "inst:*:M");
+        assert_eq!(patterns[0].interval_secs, None);
+        assert_eq!(patterns[1].interval_secs, Some(60));
+        assert_eq!(patterns[2].interval_secs, None);
+
+        assert!(pattern_serde::from_json_str(r#"["inst:*:M"]"#).is_err());
+        assert!(pattern_serde::from_json_str(r#"{"inst:*:M":"60"}"#).is_err());
     }
 }
 

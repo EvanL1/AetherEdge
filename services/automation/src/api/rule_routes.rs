@@ -156,8 +156,8 @@ pub struct UpdateRuleRequest {
     #[cfg_attr(feature = "openapi", schema(value_type = Option<Object>))]
     pub flow_json: Option<serde_json::Value>,
 
-    /// Trigger configuration (optional). Replaces legacy `cooldown_ms`-based
-    /// interval triggers with explicit per-rule trigger semantics.
+    /// Trigger configuration. The field is optional only because this is a
+    /// partial update; an enabled rule must already have or provide one.
     ///
     /// Two variants, discriminated by `"type"`:
     /// - `{"type":"interval","interval_ms":1000}` — periodic execution
@@ -583,14 +583,9 @@ async fn rules_query_response<T: serde::Serialize>(
     let revision = queries.current_revision().await?;
     let mut response = Json(SuccessResponse::new(data)).into_response();
     let revision_text = revision.to_string();
-    let revision = HeaderValue::from_str(&revision_text)
-        .map_err(|error| AutomationError::InternalError(error.to_string()))?;
     let etag = HeaderValue::from_str(&format!("\"{revision_text}\""))
         .map_err(|error| AutomationError::InternalError(error.to_string()))?;
     response.headers_mut().insert(ETAG, etag);
-    response
-        .headers_mut()
-        .insert("x-aether-configuration-revision", revision);
     Ok(response)
 }
 
@@ -606,7 +601,7 @@ async fn apply_rule_mutation(
         headers,
         confirmed,
         aether_domain::TimestampMs::new(timestamp_ms),
-    );
+    )?;
     let acceptance = state
         .mutation_application
         .mutate_revisioned(invocation.context(), mutation)
@@ -726,7 +721,7 @@ pub async fn execute_rule_now(
         &headers,
         request.confirmed,
         aether_domain::TimestampMs::new(timestamp_ms),
-    );
+    )?;
     let acceptance = state
         .execution_application
         .execute(invocation.context(), rule_id)
@@ -772,7 +767,12 @@ pub async fn scheduler_status(
         "running": status.running,
         "total_rules": status.total_rules,
         "enabled_rules": status.enabled_rules,
-        "tick_interval_ms": status.tick_interval_ms
+        "invalid_enabled_rules": status.invalid_enabled_rules,
+        "tick_interval_ms": status.tick_interval_ms,
+        "point_watch_configured": status.point_watch_configured,
+        "point_watch_subscriptions": status.point_watch_subscriptions,
+        "point_watch_dropped_events": status.point_watch_dropped_events,
+        "rule_log": status.rule_log
     }))))
 }
 

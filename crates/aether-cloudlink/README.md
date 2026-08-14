@@ -2,13 +2,13 @@
 
 Transport-neutral implementation of the experimental, digest-pinned public
 AetherContracts CloudLink subset. It provides strict closed JSON decoding, RFC
-8785 business digests, session/version/epoch validation, stable delivery
+8785 business digests, session/epoch validation, stable delivery
 envelopes, Runtime Manifest checksum reuse, and truthful `PointSample` mapping.
 
 This crate contains no MQTT client and no device-control message. The matching
 AetherCloud codec consumes the same imported fixtures, while three public
 behavior artifacts and all production interoperability gates remain open. See
-the [CloudLink MQTT reference](../../docs/reference/cloudlink-mqtt-v1.md) for
+the [CloudLink MQTT reference](../../docs/reference/cloudlink-mqtt.md) for
 current behavior and production limits.
 
 ## Gateway-signed uplinks
@@ -26,13 +26,13 @@ Trusted-connector test mode relies on external broker attestation and omits
 payload authentication.
 
 `session-accepted`, heartbeat ACK, and durable ACK remain unsigned in the
-current alpha profile. A heartbeat ACK that adds `message_authentication` is
+current pinned profile. A heartbeat ACK that adds `message_authentication` is
 rejected; the missing Cloud-to-Edge signing projections remain an explicit
 production blocker.
 
 ## Experimental Integration extension
 
-`aether.cloudlink.integration.v1alpha1` is disabled by default. It can be
+`aether.cloudlink.integration` is disabled by default. It can be
 constructed only after a compatible Cloud consumer is enabled and the current
 Runtime Manifest explicitly declares the same extension identifier.
 

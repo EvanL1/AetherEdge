@@ -3,7 +3,7 @@
 Small, object-safe capability interfaces for kernel and downstream adapters.
 
 The crate separates authoritative live reads, device command dispatch, audit,
-history, mirroring, durable outbox, uplink publishing, I/O channel
+history, mirroring, durable outbox, I/O channel
 commissioning, and request-driven data processing. The owner-only physical
 writer is deliberately isolated in `aether-acquisition-port`, so application
 interfaces cannot acquire it through this general port crate.

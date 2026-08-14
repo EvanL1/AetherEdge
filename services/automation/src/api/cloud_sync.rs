@@ -27,7 +27,6 @@ pub struct InstanceExport {
 /// Instance topology export response
 #[derive(Debug, Serialize)]
 pub struct InstanceTopology {
-    pub version: String,
     pub instances: Vec<InstanceExport>,
 }
 
@@ -46,7 +45,6 @@ pub struct InstanceTopology {
             example = json!({
                 "success": true,
                 "data": {
-                    "version": "1.0.0",
                     "instances": [
                         {"id": 1, "name": "pump_001", "product": "pump", "parent_id": null, "properties": {}}
                     ]
@@ -75,11 +73,5 @@ pub async fn export_instances(
         })
         .collect();
 
-    // Use a fixed version for edge export
-    let version = "1.0.0".to_string();
-
-    Ok(Json(SuccessResponse::new(InstanceTopology {
-        version,
-        instances,
-    })))
+    Ok(Json(SuccessResponse::new(InstanceTopology { instances })))
 }

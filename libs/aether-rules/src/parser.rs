@@ -15,6 +15,22 @@ use std::collections::HashMap;
 
 use crate::error::{Result, RuleError};
 
+fn required_nonempty_array<'a>(
+    object: &'a Value,
+    field: &str,
+    context: &str,
+) -> Result<&'a Vec<Value>> {
+    let values = object.get(field).and_then(Value::as_array).ok_or_else(|| {
+        RuleError::ParseError(format!("{context} missing required '{field}' array"))
+    })?;
+    if values.is_empty() {
+        return Err(RuleError::ParseError(format!(
+            "{context} '{field}' array must not be empty"
+        )));
+    }
+    Ok(values)
+}
+
 // =============================================================================
 // Rule Flow Extraction (Vue Flow JSON → RuleFlow)
 // =============================================================================
@@ -53,17 +69,21 @@ pub fn extract_rule_flow(full_json: &Value) -> Result<RuleFlow> {
             .ok_or_else(|| RuleError::ParseError("Node missing 'id'".to_string()))?
             .to_string();
 
-        let node_type = node
-            .get("type")
-            .and_then(|v| v.as_str())
-            .unwrap_or("custom");
+        let node_type = node.get("type").and_then(|v| v.as_str()).ok_or_else(|| {
+            RuleError::ParseError(format!("node '{node_id}' is missing required 'type'"))
+        })?;
 
         let data = node.get("data");
 
         let compact_node = match node_type {
             "start" => {
                 start_node = node_id.clone();
-                let wires = extract_rule_wires_default(data)?;
+                let config = data.and_then(|value| value.get("config")).ok_or_else(|| {
+                    RuleError::ParseError(format!(
+                        "start node '{node_id}' is missing required data.config"
+                    ))
+                })?;
+                let wires = extract_rule_wires_default(config)?;
                 RuleNode::Start { wires }
             },
             "end" => RuleNode::End,
@@ -108,19 +128,27 @@ pub fn extract_rule_flow(full_json: &Value) -> Result<RuleFlow> {
 }
 
 /// Extract RuleWires from node data (for default wire)
-fn extract_rule_wires_default(data: Option<&Value>) -> Result<RuleWires> {
-    let default_targets = data
-        .and_then(|d| d.get("config"))
-        .or(data)
-        .and_then(|c| c.get("wires"))
+fn extract_rule_wires_default(config: &Value) -> Result<RuleWires> {
+    let default_targets = config
+        .get("wires")
         .and_then(|w| w.get("default"))
         .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                .collect()
+        .ok_or_else(|| {
+            RuleError::ParseError("node config missing required 'wires.default' array".to_string())
+        })?;
+    let default_targets = default_targets
+        .iter()
+        .map(|target| {
+            target.as_str().map(String::from).ok_or_else(|| {
+                RuleError::ParseError("wires.default targets must be strings".to_string())
+            })
         })
-        .unwrap_or_default();
+        .collect::<Result<Vec<_>>>()?;
+    if default_targets.is_empty() {
+        return Err(RuleError::ParseError(
+            "wires.default must contain at least one target".to_string(),
+        ));
+    }
 
     Ok(RuleWires {
         default: default_targets,
@@ -141,6 +169,14 @@ fn extract_switch_rule_node(data: Option<&Value>) -> Result<RuleNode> {
 
     // Extract wires (HashMap for multiple outputs)
     let wires = extract_rule_wires_map(config)?;
+    for branch in &rule {
+        if !wires.contains_key(&branch.name) {
+            return Err(RuleError::ParseError(format!(
+                "Switch branch '{}' is missing a matching wire",
+                branch.name
+            )));
+        }
+    }
 
     Ok(RuleNode::Switch {
         variables,
@@ -151,19 +187,15 @@ fn extract_switch_rule_node(data: Option<&Value>) -> Result<RuleNode> {
 
 /// Extract action-changeValue node as RuleNode::ChangeValue
 fn extract_change_value_rule_node(data: Option<&Value>) -> Result<RuleNode> {
-    let config = data.and_then(|d| d.get("config"));
+    let config = data
+        .and_then(|d| d.get("config"))
+        .ok_or_else(|| RuleError::ParseError("ChangeValue node missing 'config'".to_string()))?;
 
     // Extract variables (target points)
-    let variables = config
-        .map(extract_rule_variables)
-        .transpose()?
-        .unwrap_or_default();
+    let variables = extract_rule_variables(config)?;
 
     // Extract value assignments
-    let rule = config
-        .map(extract_rule_value_assignments)
-        .transpose()?
-        .unwrap_or_default();
+    let rule = extract_rule_value_assignments(config)?;
 
     // Extract wires (default output)
     let wires = extract_rule_wires_default(config)?;
@@ -177,19 +209,15 @@ fn extract_change_value_rule_node(data: Option<&Value>) -> Result<RuleNode> {
 
 /// Extract action-calculation node as RuleNode::Calculation
 fn extract_calculation_rule_node(data: Option<&Value>) -> Result<RuleNode> {
-    let config = data.and_then(|d| d.get("config"));
+    let config = data
+        .and_then(|d| d.get("config"))
+        .ok_or_else(|| RuleError::ParseError("Calculation node missing 'config'".to_string()))?;
 
     // Extract variables (input sources and output targets)
-    let variables = config
-        .map(extract_rule_variables)
-        .transpose()?
-        .unwrap_or_default();
+    let variables = extract_rule_variables(config)?;
 
     // Extract calculation rules with formulas
-    let rule = config
-        .map(extract_calculation_rules)
-        .transpose()?
-        .unwrap_or_default();
+    let rule = extract_calculation_rules(config)?;
 
     // Extract wires (default output)
     let wires = extract_rule_wires_default(config)?;
@@ -242,7 +270,7 @@ fn extract_period_delta_rule_node(data: Option<&Value>) -> Result<RuleNode> {
     }
 
     // Extract wires (default output)
-    let wires = extract_rule_wires_default(Some(config))?;
+    let wires = extract_rule_wires_default(config)?;
 
     Ok(RuleNode::PeriodDelta {
         input,
@@ -263,10 +291,19 @@ fn parse_rule_variable(var: &Value, missing_name: String) -> Result<RuleVariable
         .ok_or(RuleError::ParseError(missing_name))?
         .to_string();
 
-    // Support both "instance" and "instance_id" as numeric ID
+    if var.get("instance_id").is_some() {
+        return Err(RuleError::ParseError(
+            "Rule variable field 'instance_id' is not supported; use 'instance'".to_string(),
+        ));
+    }
+    if var.get("point").is_some() {
+        return Err(RuleError::ParseError(
+            "Rule variable field 'point' is not supported; use 'point_id'".to_string(),
+        ));
+    }
+
     let instance = var
         .get("instance")
-        .or_else(|| var.get("instance_id"))
         .and_then(|v| v.as_u64())
         .and_then(|n| u32::try_from(n).ok());
 
@@ -275,10 +312,8 @@ fn parse_rule_variable(var: &Value, missing_name: String) -> Result<RuleVariable
         .and_then(|v| v.as_str())
         .map(String::from);
 
-    // Accept both "point_id" (parser tests) and "point" (frontend/executor tests)
     let point = var
         .get("point_id")
-        .or_else(|| var.get("point"))
         .and_then(|v| v.as_u64())
         .and_then(|n| u32::try_from(n).ok());
 
@@ -308,10 +343,7 @@ fn extract_single_rule_variable(value: Option<&Value>, field_name: &str) -> Resu
 
 /// Extract compact variables from config
 fn extract_rule_variables(config: &Value) -> Result<Vec<RuleVariable>> {
-    let vars_arr = match config.get("variables").and_then(|v| v.as_array()) {
-        Some(arr) => arr,
-        None => return Ok(vec![]),
-    };
+    let vars_arr = required_nonempty_array(config, "variables", "node config")?;
 
     vars_arr
         .iter()
@@ -321,10 +353,7 @@ fn extract_rule_variables(config: &Value) -> Result<Vec<RuleVariable>> {
 
 /// Extract compact switch rules from config
 fn extract_rule_switch_branches(config: &Value) -> Result<Vec<RuleSwitchBranch>> {
-    let rules_arr = match config.get("rule").and_then(|v| v.as_array()) {
-        Some(arr) => arr,
-        None => return Ok(vec![]),
-    };
+    let rules_arr = required_nonempty_array(config, "rule", "switch config")?;
 
     let mut rules = Vec::new();
     for rule in rules_arr {
@@ -337,8 +366,13 @@ fn extract_rule_switch_branches(config: &Value) -> Result<Vec<RuleSwitchBranch>>
         let rule_type = rule
             .get("type")
             .and_then(|v| v.as_str())
-            .unwrap_or("default")
+            .ok_or_else(|| RuleError::ParseError("Switch rule missing 'type'".to_string()))?
             .to_string();
+        if rule_type != "default" {
+            return Err(RuleError::ParseError(format!(
+                "Switch rule '{name}' has unsupported type '{rule_type}'"
+            )));
+        }
 
         let conditions = extract_flow_conditions(rule)?;
 
@@ -354,17 +388,14 @@ fn extract_rule_switch_branches(config: &Value) -> Result<Vec<RuleSwitchBranch>>
 
 /// Extract compact conditions from a rule
 fn extract_flow_conditions(rule: &Value) -> Result<Vec<FlowCondition>> {
-    let rule_arr = match rule.get("rule").and_then(|v| v.as_array()) {
-        Some(arr) => arr,
-        None => return Ok(vec![]),
-    };
+    let rule_arr = required_nonempty_array(rule, "rule", "switch rule")?;
 
     let mut conditions = Vec::new();
     for item in rule_arr {
         let cond_type = item
             .get("type")
             .and_then(|v| v.as_str())
-            .unwrap_or("variable")
+            .ok_or_else(|| RuleError::ParseError("Condition missing 'type'".to_string()))?
             .to_string();
 
         let variables = item
@@ -376,6 +407,34 @@ fn extract_flow_conditions(rule: &Value) -> Result<Vec<FlowCondition>> {
             .and_then(|v| v.as_str())
             .map(String::from);
         let value = item.get("value").cloned();
+
+        match cond_type.as_str() {
+            "variable" => {
+                if variables.is_none() || operator.is_none() || value.is_none() {
+                    return Err(RuleError::ParseError(
+                        "Variable condition requires 'variables', 'operator', and 'value'"
+                            .to_string(),
+                    ));
+                }
+            },
+            "relation" => {
+                let relation = value.as_ref().and_then(Value::as_str).ok_or_else(|| {
+                    RuleError::ParseError(
+                        "Relation condition requires a string 'value'".to_string(),
+                    )
+                })?;
+                if !matches!(relation, "&&" | "||") {
+                    return Err(RuleError::ParseError(format!(
+                        "Relation condition has unsupported value '{relation}'"
+                    )));
+                }
+            },
+            _ => {
+                return Err(RuleError::ParseError(format!(
+                    "Unsupported condition type '{cond_type}'"
+                )));
+            },
+        }
 
         conditions.push(FlowCondition {
             cond_type,
@@ -390,10 +449,7 @@ fn extract_flow_conditions(rule: &Value) -> Result<Vec<FlowCondition>> {
 
 /// Extract compact value assignments from config
 fn extract_rule_value_assignments(config: &Value) -> Result<Vec<RuleValueAssignment>> {
-    let rules_arr = match config.get("rule").and_then(|v| v.as_array()) {
-        Some(arr) => arr,
-        None => return Ok(vec![]),
-    };
+    let rules_arr = required_nonempty_array(config, "rule", "ChangeValue config")?;
 
     let mut assignments = Vec::new();
     for rule in rules_arr {
@@ -416,10 +472,7 @@ fn extract_rule_value_assignments(config: &Value) -> Result<Vec<RuleValueAssignm
 
 /// Extract calculation rules from config
 fn extract_calculation_rules(config: &Value) -> Result<Vec<CalculationRule>> {
-    let rules_arr = match config.get("rule").and_then(|v| v.as_array()) {
-        Some(arr) => arr,
-        None => return Ok(vec![]),
-    };
+    let rules_arr = required_nonempty_array(config, "rule", "Calculation config")?;
 
     let mut rules = Vec::new();
     for rule in rules_arr {
@@ -443,21 +496,34 @@ fn extract_calculation_rules(config: &Value) -> Result<Vec<CalculationRule>> {
 
 /// Extract wires as HashMap for multiple outputs (used by switch nodes)
 fn extract_rule_wires_map(config: &Value) -> Result<HashMap<String, Vec<String>>> {
-    let wires_obj = match config.get("wires").and_then(|v| v.as_object()) {
-        Some(obj) => obj,
-        None => return Ok(HashMap::new()),
-    };
+    let wires_obj = config
+        .get("wires")
+        .and_then(Value::as_object)
+        .ok_or_else(|| RuleError::ParseError("Switch config missing 'wires' object".to_string()))?;
+    if wires_obj.is_empty() {
+        return Err(RuleError::ParseError(
+            "Switch config 'wires' object must not be empty".to_string(),
+        ));
+    }
 
     let mut wires_map = HashMap::new();
     for (key, value) in wires_obj {
-        let targets: Vec<String> = value
-            .as_array()
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(String::from))
-                    .collect()
+        let targets = value.as_array().ok_or_else(|| {
+            RuleError::ParseError(format!("Switch wire '{key}' must be an array"))
+        })?;
+        if targets.is_empty() {
+            return Err(RuleError::ParseError(format!(
+                "Switch wire '{key}' must contain at least one target"
+            )));
+        }
+        let targets: Vec<String> = targets
+            .iter()
+            .map(|target| {
+                target.as_str().map(String::from).ok_or_else(|| {
+                    RuleError::ParseError(format!("Switch wire '{key}' targets must be strings"))
+                })
             })
-            .unwrap_or_default();
+            .collect::<Result<_>>()?;
         wires_map.insert(key.clone(), targets);
     }
 
@@ -714,6 +780,34 @@ mod tests {
     }
 
     #[test]
+    fn rule_variables_reject_retired_identifier_fields() {
+        for retired in [
+            json!({"name": "X1", "instance_id": 1, "pointType": "measurement", "point_id": 3}),
+            json!({"name": "X1", "instance": 1, "pointType": "measurement", "point": 3}),
+            json!({
+                "name": "X1",
+                "instance": 1,
+                "instance_id": 1,
+                "pointType": "measurement",
+                "point_id": 3
+            }),
+        ] {
+            assert!(
+                parse_rule_variable(&retired, "Variable missing 'name'".to_string()).is_err(),
+                "retired rule-variable field was accepted: {retired}"
+            );
+        }
+
+        let canonical = parse_rule_variable(
+            &json!({"name": "X1", "instance": 1, "pointType": "measurement", "point_id": 3}),
+            "Variable missing 'name'".to_string(),
+        )
+        .expect("canonical rule-variable identifiers");
+        assert_eq!(canonical.instance, Some(1));
+        assert_eq!(canonical.point, Some(3));
+    }
+
+    #[test]
     fn an_unrecognised_node_type_is_rejected_rather_than_dropped() {
         // The parser used to `warn!` and `continue`, so a flow authored against
         // the wrong vocabulary was accepted, stored, and only failed later at
@@ -771,6 +865,57 @@ mod tests {
             message.contains("decide") && message.contains("switch"),
             "the error must name the node and its unrecognised subtype, got: {message}"
         );
+    }
+
+    #[test]
+    fn retired_or_incomplete_execution_shapes_are_rejected() {
+        let missing_node_type = json!({
+            "nodes": [
+                {"id": "start", "data": {"config": {"wires": {"default": ["end"]}}}},
+                {"id": "end", "type": "end"}
+            ]
+        });
+        assert!(extract_rule_flow(&missing_node_type).is_err());
+
+        let direct_start_data = json!({
+            "nodes": [
+                {"id": "start", "type": "start", "data": {"wires": {"default": ["end"]}}},
+                {"id": "end", "type": "end"}
+            ]
+        });
+        let error = extract_rule_flow(&direct_start_data)
+            .expect_err("start wires outside data.config must be rejected");
+        assert!(error.to_string().contains("data.config"), "{error}");
+
+        let missing_action_config = json!({
+            "nodes": [
+                {"id": "start", "type": "start", "data": {"config": {"wires": {"default": ["action"]}}}},
+                {"id": "action", "type": "custom", "data": {"type": "action-changeValue"}},
+                {"id": "end", "type": "end"}
+            ]
+        });
+        assert!(extract_rule_flow(&missing_action_config).is_err());
+
+        let missing_action_rule = json!({
+            "nodes": [
+                {"id": "start", "type": "start", "data": {"config": {"wires": {"default": ["action"]}}}},
+                {
+                    "id": "action",
+                    "type": "custom",
+                    "data": {
+                        "type": "action-changeValue",
+                        "config": {
+                            "variables": [{"name": "Y1", "instance": 1, "pointType": "action", "point_id": 1}],
+                            "wires": {"default": ["end"]}
+                        }
+                    }
+                },
+                {"id": "end", "type": "end"}
+            ]
+        });
+        let error = extract_rule_flow(&missing_action_rule)
+            .expect_err("missing action rule array must not become a no-op");
+        assert!(error.to_string().contains("rule"), "{error}");
     }
 
     /// The worked example in `docs/guides/writing-rules.md`. Kept here verbatim

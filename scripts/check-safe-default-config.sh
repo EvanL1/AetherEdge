@@ -60,7 +60,7 @@ require_exact_setting "$DEFAULT_IO" '^channels:[[:space:]]*\[\][[:space:]]*$' \
     "default io config must start with no channels"
 require_exact_setting "$DEFAULT_AUTOMATION" '^auto_load_instances:[[:space:]]*false([[:space:]#]|$)' \
     "default automation config must not auto-load instances"
-require_exact_setting "$DEFAULT_INSTANCES" '^instances:[[:space:]]*\{\}[[:space:]]*$' \
+require_exact_setting "$DEFAULT_INSTANCES" '^instances:[[:space:]]*\[\][[:space:]]*$' \
     "default automation config must contain no device instances"
 
 if unsafe_endpoints=$(rg -n '(192\.168\.|/dev/tty|device:[[:space:]]*"?can[0-9])' config.template || true) \
@@ -85,7 +85,7 @@ if rg -n 'config\.template/' "$ENERGY_MANIFEST"; then
     fail "energy pack must own its examples rather than reference default config"
 fi
 if rg -n '^legacy_assets:' "$ENERGY_MANIFEST"; then
-    fail "Pack v1 must not expose repository-relative legacy assets"
+    fail "Pack must not expose repository-relative legacy assets"
 fi
 require_exact_setting "$ENERGY_MANIFEST" '^version:[[:space:]]*0\.0\.1[[:space:]]*$' \
     "energy pack must declare its own release version"

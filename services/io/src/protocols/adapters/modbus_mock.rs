@@ -62,6 +62,8 @@ pub struct ErrorInjection {
     pub exception: ModbusException,
     /// Number of times to inject (0 = unlimited)
     pub count: u32,
+    /// Optional request start address to match.
+    pub start_address: Option<u16>,
 }
 
 /// Mock Modbus TCP server for testing.
@@ -254,6 +256,25 @@ impl MockModbusServer {
                 function_code,
                 exception,
                 count,
+                start_address: None,
+            });
+        }
+    }
+
+    /// Inject an exception only when the request starts at `start_address`.
+    pub fn inject_error_at_address(
+        &self,
+        function_code: u8,
+        start_address: u16,
+        exception: ModbusException,
+        count: u32,
+    ) {
+        if let Ok(mut errors) = self.state.error_injections.write() {
+            errors.push(ErrorInjection {
+                function_code,
+                exception,
+                count,
+                start_address: Some(start_address),
             });
         }
     }
@@ -330,7 +351,7 @@ impl MockModbusServer {
             );
 
             // Check for error injection
-            let injected_error = Self::check_error_injection(&state, function_code);
+            let injected_error = Self::check_error_injection(&state, function_code, pdu_data);
 
             let response = if let Some(exception) = injected_error {
                 Self::build_exception_response(transaction_id, unit_id, function_code, exception)
@@ -348,15 +369,26 @@ impl MockModbusServer {
     }
 
     /// Check if error should be injected for this function code.
-    fn check_error_injection(state: &ServerState, function_code: u8) -> Option<ModbusException> {
+    fn check_error_injection(
+        state: &ServerState,
+        function_code: u8,
+        pdu_data: &[u8],
+    ) -> Option<ModbusException> {
         let mut errors = state.error_injections.write().ok()?;
+        let start_address =
+            (pdu_data.len() >= 2).then(|| u16::from_be_bytes([pdu_data[0], pdu_data[1]]));
 
         // Find matching injection
         let mut result = None;
         let mut to_remove = Vec::new();
 
         for (i, injection) in errors.iter_mut().enumerate() {
-            if injection.function_code == 0 || injection.function_code == function_code {
+            let function_matches =
+                injection.function_code == 0 || injection.function_code == function_code;
+            let address_matches = injection
+                .start_address
+                .is_none_or(|expected| start_address == Some(expected));
+            if function_matches && address_matches {
                 result = Some(injection.exception);
 
                 if injection.count > 0 {

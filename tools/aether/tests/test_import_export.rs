@@ -7,10 +7,9 @@
 //! 4. Handles invalid enum values during import
 
 use anyhow::Result;
-use common::{ComparisonOperator, FourRemote, PointRole};
+use common::{ComparisonOperator, PointRole, PointType};
 use std::fs;
 use std::path::PathBuf;
-use std::str::FromStr;
 use tempfile::TempDir;
 // Note: ProtocolType moved to io - protocol tests use config values directly
 
@@ -102,7 +101,7 @@ impl TestEnvironment {
 async fn test_io_four_remote_import_export() -> Result<()> {
     let env = TestEnvironment::new()?;
 
-    // Create a channels.yaml with FourRemote enums
+    // Create a channels.yaml with PointType enums
     let channels_yaml = r#"
 channels:
   - channel_id: 1001
@@ -246,24 +245,23 @@ instances:
 
     // Test enum parsing directly
     let test_four_remotes = vec![
-        ("T", FourRemote::Telemetry),
-        ("S", FourRemote::Signal),
-        ("C", FourRemote::Control),
-        ("A", FourRemote::Adjustment),
+        ("T", PointType::Telemetry),
+        ("S", PointType::Signal),
+        ("C", PointType::Control),
+        ("A", PointType::Adjustment),
     ];
 
     for (type_str, expected) in test_four_remotes {
         let parsed = type_str
-            .parse::<FourRemote>()
+            .parse::<PointType>()
             .map_err(|e| anyhow::anyhow!("Failed to parse four remote type {}: {}", type_str, e))?;
-        assert_eq!(parsed, expected, "FourRemote parsing works");
+        assert_eq!(parsed, expected, "PointType parsing works");
     }
 
     let test_point_roles = vec![("M", PointRole::Measurement), ("A", PointRole::Action)];
 
     for (role_str, expected) in test_point_roles {
-        let parsed = PointRole::from_str(role_str)
-            .map_err(|e| anyhow::anyhow!("Failed to parse point role {}: {}", role_str, e))?;
+        let parsed: PointRole = serde_json::from_str(&format!("\"{role_str}\""))?;
         assert_eq!(parsed, expected, "Point role parsing works");
     }
 
@@ -283,7 +281,7 @@ rules:
     name: "High Temperature Alert"
     condition:
       point_id: 101
-      operator: ">"
+      operator: "gt"
       threshold: 80.0
     action:
       type: "alert"
@@ -293,7 +291,7 @@ rules:
     name: "Voltage Range Check"
     condition:
       point_id: 201
-      operator: "between"  # Use valid operator
+      operator: "in"
       min: 380.0
       max: 420.0
     action:
@@ -303,7 +301,7 @@ rules:
     name: "Status Equals Check"
     condition:
       point_id: 301
-      operator: "=="
+      operator: "eq"
       value: "running"
     action:
       type: "notify"
@@ -323,122 +321,21 @@ rules:
 
     // Test ComparisonOperator parsing directly
     let test_operators = vec![
-        (">", ComparisonOperator::GreaterThan),
         ("gt", ComparisonOperator::GreaterThan),
-        ("greater", ComparisonOperator::GreaterThan),
-        ("==", ComparisonOperator::Equal),
         ("eq", ComparisonOperator::Equal),
-        ("equal", ComparisonOperator::Equal),
-        ("<", ComparisonOperator::LessThan),
         ("lt", ComparisonOperator::LessThan),
-        (">=", ComparisonOperator::GreaterThanOrEqual),
         ("gte", ComparisonOperator::GreaterThanOrEqual),
-        ("<=", ComparisonOperator::LessThanOrEqual),
         ("lte", ComparisonOperator::LessThanOrEqual),
-        ("!=", ComparisonOperator::NotEqual),
         ("ne", ComparisonOperator::NotEqual),
-        ("between", ComparisonOperator::InRange),
         ("in", ComparisonOperator::InRange),
-        ("within", ComparisonOperator::InRange),
     ];
 
     for (op_str, expected) in test_operators {
-        let parsed = ComparisonOperator::from_str(op_str)
-            .map_err(|e| anyhow::anyhow!("Failed to parse operator {}: {}", op_str, e))?;
+        let parsed: ComparisonOperator = serde_json::from_str(&format!("\"{op_str}\""))?;
         assert_eq!(parsed, expected, "Operator {} parsed correctly", op_str);
     }
 
     println!("Test structure verified for comparison operator import");
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn test_invalid_enum_handling() -> Result<()> {
-    let env = TestEnvironment::new()?;
-
-    // Create YAML with mix of valid and invalid enum values
-    let mixed_yaml = r#"
-channels:
-  - channel_id: 9999
-    channel_name: "Invalid Channel"
-    protocol_type: "invalid_protocol"  # Invalid ProtocolType
-    enabled: true
-
-  - channel_id: 9998
-    channel_name: "Valid Channel"
-    protocol_type: "modbus_tcp"  # Valid ProtocolType
-    enabled: true
-"#;
-
-    env.write_config_file("io/channels.yaml", mixed_yaml)?;
-
-    // Run aether init
-    env.run_aether(&["init", "io"])?;
-
-    // Run aether sync - should handle invalid enum gracefully
-    // Note: The sync might succeed but skip invalid items, or might fail
-    // depending on implementation. We test that it doesn't crash.
-    // Keep this structural fixture consistent with the other tests in this
-    // module. Spawning `cargo run` from inside `cargo test` can deadlock on
-    // Cargo's target-directory lock and is not an integration assertion.
-    env.run_aether(&["sync", "io"])?;
-
-    // Skip database verification in this test framework
-    // In a real integration test, we would verify:
-    // 1. Invalid enum values are handled gracefully
-    // 2. Valid items may still be imported
-    // 3. Process doesn't crash on invalid data
-
-    println!("Test structure verified for invalid enum handling");
-
-    // The sync_result check would verify the process doesn't crash
-    // assert!(sync_result.status.code().is_some(), "Process should not crash");
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn test_protocol_type_normalization() -> Result<()> {
-    let env = TestEnvironment::new()?;
-
-    // Create YAML with various protocol type formats
-    let channels_yaml = r#"
-channels:
-  - channel_id: 2001
-    channel_name: "Test 1"
-    protocol_type: "modbus_tcp"    # Standard format
-    enabled: true
-
-  - channel_id: 2002
-    channel_name: "Test 2"
-    protocol_type: "ModbusTcp"      # PascalCase
-    enabled: true
-
-  - channel_id: 2003
-    channel_name: "Test 3"
-    protocol_type: "modbus-tcp"     # Hyphenated
-    enabled: true
-
-  - channel_id: 2004
-    channel_name: "Test 4"
-    protocol_type: "MODBUS_RTU"     # Uppercase
-    enabled: true
-"#;
-
-    env.write_config_file("io/channels.yaml", channels_yaml)?;
-
-    // Run aether init and sync
-    env.run_aether(&["init", "io"])?;
-    env.run_aether(&["sync", "io"])?;
-
-    // Skip database verification in this test framework
-    // In a real integration test, we would verify:
-    // 1. Various protocol type formats are accepted
-    // 2. Formats may be normalized (ModbusTcp -> modbus_tcp)
-    // 3. All valid formats can be parsed to ProtocolType enum
-
-    println!("Test structure verified for protocol type normalization");
 
     Ok(())
 }

@@ -368,15 +368,6 @@ impl InstanceManager {
             .await
     }
 
-    /// List the minimal instance identities without loading product properties.
-    pub(crate) async fn list_instance_identities(&self) -> Result<Vec<(u32, String)>> {
-        Ok(
-            sqlx::query_as("SELECT instance_id, instance_name FROM instances ORDER BY instance_id")
-                .fetch_all(&self.pool)
-                .await?,
-        )
-    }
-
     async fn query_instances(
         &self,
         keyword: &str,

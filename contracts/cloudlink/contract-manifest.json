@@ -1,0 +1,18 @@
+{
+  "contract": "aether.cloudlink",
+  "status": "canonical",
+  "owner": "AetherEdge",
+  "canonical_surface": {
+    "schema_root": "contracts/cloudlink",
+    "fixture_root": "contracts/cloudlink/fixtures",
+    "mqtt_topic_root": "{prefix}/gateways/{gateway_id}",
+    "protocol_negotiation": false,
+    "physical_control": false
+  },
+  "provenance": {
+    "upstream_release": "0.1.0-alpha.3",
+    "consumer_lock": "aether-contracts.lock.json",
+    "release_manifest_sha256": "36a1c0cb2a6aa2a96ad8319cd1bc8ebe3cfe7784c5794a65e2008503d72ea4f3",
+    "note": "The vendored AetherContracts release is immutable provenance. Its release-scoped paths and identifiers are not selectable AetherEdge interfaces."
+  }
+}

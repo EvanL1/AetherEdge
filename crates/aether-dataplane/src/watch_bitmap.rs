@@ -12,7 +12,6 @@ use crate::core::authority::{AuthorityReadGuard, AuthorityWriteGuard};
 use crate::{DataplaneError, DataplaneResult};
 
 const WATCH_BITMAP_MAGIC: [u8; 8] = *b"AETHPWBM";
-const WATCH_BITMAP_VERSION: u32 = 1;
 const WATCH_BITMAP_HEADER_SIZE: usize = 32;
 
 static BITMAP_STAGING_SEQUENCE: AtomicU64 = AtomicU64::new(1);
@@ -259,7 +258,7 @@ impl SubscriptionBitmap {
     }
 
     fn words(&self) -> &[AtomicU64] {
-        // SAFETY: every constructor validates the versioned header and exact
+        // SAFETY: every constructor validates the canonical header and exact
         // `header + word_count * size_of::<AtomicU64>()` mapping. The 32-byte
         // header keeps the word array aligned, mmap bases are page-aligned,
         // and the mapping outlives the returned slice borrowed from `self`.
@@ -320,7 +319,6 @@ impl BitmapLayout {
     fn encode_header(&self) -> [u8; WATCH_BITMAP_HEADER_SIZE] {
         let mut bytes = [0_u8; WATCH_BITMAP_HEADER_SIZE];
         bytes[0..8].copy_from_slice(&WATCH_BITMAP_MAGIC);
-        bytes[8..12].copy_from_slice(&WATCH_BITMAP_VERSION.to_le_bytes());
         bytes[12..16].copy_from_slice(&self.capacity.to_le_bytes());
         bytes[16..20].copy_from_slice(&(self.word_count as u32).to_le_bytes());
         bytes
@@ -332,15 +330,11 @@ impl BitmapLayout {
                 "watch bitmap has invalid or obsolete magic".to_string(),
             ));
         }
-        let version = u32::from_le_bytes(bytes[8..12].try_into().map_err(|_| {
-            DataplaneError::InvalidLayout("watch bitmap version is malformed".to_string())
-        })?);
-        if version != WATCH_BITMAP_VERSION {
-            return Err(DataplaneError::InvalidLayout(format!(
-                "watch bitmap version {version} is unsupported; expected {WATCH_BITMAP_VERSION}"
-            )));
-        }
-        if bytes[20..].iter().any(|byte| *byte != 0) {
+        if bytes[8..12]
+            .iter()
+            .chain(bytes[20..].iter())
+            .any(|byte| *byte != 0)
+        {
             return Err(DataplaneError::InvalidLayout(
                 "watch bitmap reserved header bytes are non-zero".to_string(),
             ));

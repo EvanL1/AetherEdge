@@ -12,10 +12,9 @@ use crate::session::{MessageAuthentication, SessionChallenge, SessionChallengeRe
 use crate::validation::{canonical_u64, digest, identifier, positive_u64, uuid};
 use crate::{CloudLinkCodecError, SessionHello};
 
-const CHALLENGE_SIGNING_SCHEMA: &str = "aether.cloudlink.session-challenge-signing.v1alpha1";
-const ESTABLISHMENT_SIGNING_SCHEMA: &str =
-    "aether.cloudlink.session-establishment-signing.v1alpha1";
-const UPLINK_SIGNING_SCHEMA: &str = "aether.cloudlink.uplink-signing.v1alpha1";
+const CHALLENGE_SIGNING_SCHEMA: &str = "aether.cloudlink.session-challenge-signing";
+const ESTABLISHMENT_SIGNING_SCHEMA: &str = "aether.cloudlink.session-establishment-signing";
+const UPLINK_SIGNING_SCHEMA: &str = "aether.cloudlink.uplink-signing";
 
 #[derive(Clone)]
 struct GatewayUplinkSigner {
@@ -321,11 +320,11 @@ impl GatewaySessionAuthenticator {
         evaluation_time_ms: u64,
     ) -> Result<VerifiedSessionChallenge, CloudLinkCodecError> {
         challenge.validate()?;
-        if evaluation_time_ms >= challenge.expires_at_ms() {
+        if evaluation_time_ms >= challenge.expires_at_ms()? {
             return Err(CloudLinkCodecError::MessageExpired);
         }
         if challenge.gateway_id() != expected_gateway_id
-            || evaluation_time_ms < challenge.issued_at_ms()
+            || evaluation_time_ms < challenge.issued_at_ms()?
         {
             return Err(authentication_invalid(
                 "cloud_signature",
@@ -376,11 +375,10 @@ impl GatewaySessionAuthenticator {
         SessionHello::new_gateway_signed(
             request.gateway_id(),
             request.credential_id(),
-            request.credential_generation(),
+            request.credential_generation()?,
             verified.challenge.challenge_id(),
             self.gateway_signer.key_id.clone(),
             authentication,
-            request.offered_protocol_versions().to_vec(),
             request.client_nonce(),
             request.resume().to_vec(),
         )
@@ -427,7 +425,6 @@ struct EstablishmentSigningProjection<'a> {
     challenge_id: &'a str,
     cloud_nonce: &'a str,
     client_nonce: &'a str,
-    offered_protocol_versions: &'a [String],
     resume: &'a [crate::ResumeCursor],
 }
 
@@ -445,7 +442,6 @@ fn hello_signing_bytes(
         challenge_id: challenge.challenge_id(),
         cloud_nonce: challenge.cloud_nonce(),
         client_nonce: request.client_nonce(),
-        offered_protocol_versions: request.offered_protocol_versions(),
         resume: request.resume(),
     })
     .map_err(|source| CloudLinkCodecError::CanonicalJson { source })

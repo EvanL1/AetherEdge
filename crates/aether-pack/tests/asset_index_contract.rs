@@ -6,8 +6,7 @@ use aether_pack::{
     load_pack_manifest,
 };
 
-const MANIFEST: &str = r#"schema_version: 1
-id: demo
+const MANIFEST: &str = r#"id: demo
 name: Demo
 version: 1.0.0
 status: stable
@@ -29,23 +28,22 @@ capabilities:
     - demo.safe-rule
 "#;
 
-const INDEX: &str = r#"schema: aether.pack.asset-index.v1
+const INDEX: &str = r#"schema: aether.pack.asset-index
 category: rules
 assets:
   - id: demo.safe-rule
     path: safe-rule.json
-    schema: aether.pack.rule.v1
+    schema: aether.pack.rule
     media_type: application/json
 "#;
 
 const RULE: &str = r#"{
-  "schema": "aether.pack.rule.v1",
+  "schema": "aether.pack.rule",
   "id": "demo.safe-rule",
   "enabled": false
 }"#;
 
-const DATA_PROCESSING_MANIFEST: &str = r#"schema_version: 1
-id: demo
+const DATA_PROCESSING_MANIFEST: &str = r#"id: demo
 name: Demo
 version: 1.0.0
 status: stable
@@ -67,16 +65,16 @@ capabilities:
     - demo.forecast
 "#;
 
-const DATA_PROCESSING_INDEX: &str = r#"schema: aether.pack.asset-index.v1
+const DATA_PROCESSING_INDEX: &str = r#"schema: aether.pack.asset-index
 category: data_processing
 assets:
   - id: demo.forecast
     path: forecast.yaml
-    schema: aether.data-processing-task.v1
+    schema: aether.data-processing-task
     media_type: application/yaml
 "#;
 
-const DATA_PROCESSING_TASK: &str = r#"schema: aether.data-processing-task.v1
+const DATA_PROCESSING_TASK: &str = r#"schema: aether.data-processing-task
 id: demo.forecast
 revision: 1
 enabled: false
@@ -144,7 +142,7 @@ fn indexed_assets_require_exact_manifest_index_and_directory_inventory() {
     assert_eq!(index.assets().len(), 1);
     assert_eq!(index.assets()[0].id(), "demo.safe-rule");
     assert_eq!(index.assets()[0].path(), Path::new("safe-rule.json"));
-    assert_eq!(index.assets()[0].schema(), "aether.pack.rule.v1");
+    assert_eq!(index.assets()[0].schema(), "aether.pack.rule");
 
     fs::write(root.path().join("rules/unindexed.json"), RULE).expect("unknown file");
     assert!(matches!(
@@ -169,7 +167,7 @@ fn duplicate_ids_paths_and_unknown_index_fields_fail_closed() {
     let root = tempfile::tempdir().expect("pack root");
     write_valid_pack(root.path());
     let duplicate_id = format!(
-        "{INDEX}  - id: demo.safe-rule\n    path: second.json\n    schema: aether.pack.rule.v1\n    media_type: application/json\n"
+        "{INDEX}  - id: demo.safe-rule\n    path: second.json\n    schema: aether.pack.rule\n    media_type: application/json\n"
     );
     fs::write(root.path().join("rules/index.yaml"), duplicate_id).expect("duplicate id index");
     fs::write(root.path().join("rules/second.json"), RULE).expect("second rule");
@@ -180,7 +178,7 @@ fn duplicate_ids_paths_and_unknown_index_fields_fail_closed() {
     ));
 
     let duplicate_path = format!(
-        "{INDEX}  - id: demo.other-rule\n    path: safe-rule.json\n    schema: aether.pack.rule.v1\n    media_type: application/json\n"
+        "{INDEX}  - id: demo.other-rule\n    path: safe-rule.json\n    schema: aether.pack.rule\n    media_type: application/json\n"
     );
     fs::write(root.path().join("rules/index.yaml"), duplicate_path).expect("duplicate path index");
     assert!(matches!(
@@ -253,7 +251,7 @@ fn oversized_index_and_mismatched_asset_metadata_fail_closed() {
     write_valid_pack(root.path());
     fs::write(
         root.path().join("rules/safe-rule.json"),
-        RULE.replace("aether.pack.rule.v1", "aether.pack.rule.v2"),
+        RULE.replace("aether.pack.rule", "aether.pack.rule.invalid"),
     )
     .expect("mismatched rule schema");
     assert!(matches!(
@@ -263,9 +261,9 @@ fn oversized_index_and_mismatched_asset_metadata_fail_closed() {
 
     fs::write(
         root.path().join("rules/index.yaml"),
-        INDEX.replace("aether.pack.rule.v1", "aether.pack.rule.v2"),
+        INDEX.replace("aether.pack.rule", "aether.pack.rule.invalid"),
     )
-    .expect("unsupported rule schema index");
+    .expect("invalid rule schema index");
     assert!(matches!(
         load_pack_manifest(root.path(), &runtime()),
         Err(PackError::InvalidAssetIndex { category, .. }) if category == "rules"

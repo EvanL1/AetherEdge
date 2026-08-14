@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use aether_dataplane::AuthorityWriteGuard;
 use aether_ports::PortErrorKind;
 use aether_shm_bridge::{
     ChannelHealthManifest, ChannelPointManifest, ShmChannelHealthWriterHandle, ShmClientConfig,
@@ -84,6 +85,153 @@ fn validated_reader_generation_opens_only_when_both_planes_match() {
             .unwrap()
             .is_none()
     );
+    generation
+        .validate_freshness()
+        .expect("both coordinated writer heartbeats are fresh");
+}
+
+#[test]
+fn coordinated_reader_freshness_rejects_a_missing_or_stale_point_heartbeat() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let point_path = directory.path().join("live.shm");
+    let health_path = directory.path().join("health.shm");
+    let points = point_manifest(&[(7, [1, 0, 0, 0])]);
+    let health = health_manifest(&[7]);
+    let publication_epoch = 4;
+    let point_writer = create_point_writer(
+        ShmRuntimeConfig::new(&point_path, 32),
+        Arc::clone(&points),
+        None,
+        publication_epoch,
+    )
+    .expect("publish point generation");
+    let health_writer =
+        ShmChannelHealthWriterHandle::create(&health_path, Arc::clone(&health), publication_epoch)
+            .expect("publish health generation");
+    commit_topology_publication(&point_path, &health_path, publication_epoch)
+        .expect("commit topology publication");
+    point_writer
+        .generation()
+        .expect("point generation")
+        .acquisition_writer()
+        .update_heartbeat(0);
+    health_writer
+        .update_heartbeat(aether_shm_bridge::timestamp_ms())
+        .expect("publish fresh health heartbeat");
+    let generation = ShmReadTopologyGeneration::open(
+        ShmClientConfig::new(&point_path, points.layout_hash()),
+        ShmClientConfig::new(&health_path, health.layout_hash()),
+        points,
+        health,
+    )
+    .expect("open coherent read generation");
+
+    let missing_error = generation
+        .validate_freshness()
+        .expect_err("a missing point heartbeat must degrade the paired topology");
+    assert_eq!(missing_error.kind(), PortErrorKind::Unavailable);
+    assert!(missing_error.to_string().contains("heartbeat"));
+
+    point_writer
+        .generation()
+        .expect("point generation")
+        .acquisition_writer()
+        .update_heartbeat(1);
+    let stale_error = generation
+        .validate_freshness()
+        .expect_err("a stale point heartbeat must degrade the paired topology");
+    assert_eq!(stale_error.kind(), PortErrorKind::Unavailable);
+    assert!(stale_error.to_string().contains("heartbeat"));
+}
+
+#[test]
+fn coordinated_reader_freshness_rejects_a_future_health_writer() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let point_path = directory.path().join("live.shm");
+    let health_path = directory.path().join("health.shm");
+    let points = point_manifest(&[(7, [1, 0, 0, 0])]);
+    let health = health_manifest(&[7]);
+    let publication_epoch = 6;
+    let point_writer = create_point_writer(
+        ShmRuntimeConfig::new(&point_path, 32),
+        Arc::clone(&points),
+        None,
+        publication_epoch,
+    )
+    .expect("publish point generation");
+    let health_writer =
+        ShmChannelHealthWriterHandle::create(&health_path, Arc::clone(&health), publication_epoch)
+            .expect("publish health generation");
+    commit_topology_publication(&point_path, &health_path, publication_epoch)
+        .expect("commit topology publication");
+    let now_ms = aether_shm_bridge::timestamp_ms();
+    point_writer
+        .generation()
+        .expect("point generation")
+        .acquisition_writer()
+        .update_heartbeat(now_ms);
+    health_writer
+        .update_heartbeat(now_ms.saturating_add(60_000))
+        .expect("fault-inject future health heartbeat");
+    let generation = ShmReadTopologyGeneration::open(
+        ShmClientConfig::new(&point_path, points.layout_hash()),
+        ShmClientConfig::new(&health_path, health.layout_hash()),
+        points,
+        health,
+    )
+    .expect("open coherent read generation");
+
+    let error = generation
+        .validate_freshness()
+        .expect_err("a future health heartbeat must degrade the paired topology");
+    assert_eq!(error.kind(), PortErrorKind::Unavailable);
+    assert!(error.to_string().contains("heartbeat"));
+}
+
+#[test]
+fn nonblocking_freshness_probe_rejects_a_busy_topology_authority() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let point_path = directory.path().join("live.shm");
+    let health_path = directory.path().join("health.shm");
+    let points = point_manifest(&[(7, [1, 0, 0, 0])]);
+    let health = health_manifest(&[7]);
+    let publication_epoch = 8;
+    let point_writer = create_point_writer(
+        ShmRuntimeConfig::new(&point_path, 32),
+        Arc::clone(&points),
+        None,
+        publication_epoch,
+    )
+    .expect("publish point generation");
+    let health_writer =
+        ShmChannelHealthWriterHandle::create(&health_path, Arc::clone(&health), publication_epoch)
+            .expect("publish health generation");
+    commit_topology_publication(&point_path, &health_path, publication_epoch)
+        .expect("commit topology publication");
+    let now_ms = aether_shm_bridge::timestamp_ms();
+    point_writer
+        .generation()
+        .expect("point generation")
+        .acquisition_writer()
+        .update_heartbeat(now_ms);
+    health_writer
+        .update_heartbeat(now_ms)
+        .expect("publish health heartbeat");
+    let generation = ShmReadTopologyGeneration::open(
+        ShmClientConfig::new(&point_path, points.layout_hash()),
+        ShmClientConfig::new(&health_path, health.layout_hash()),
+        points,
+        health,
+    )
+    .expect("open coherent read generation");
+    let _publication = AuthorityWriteGuard::acquire(&topology_commit_path_from_shm(&point_path))
+        .expect("hold topology publication authority");
+
+    let error = generation
+        .try_validate_freshness()
+        .expect_err("readiness must not wait for a topology publisher");
+    assert_eq!(error.kind(), PortErrorKind::Unavailable);
+    assert!(error.to_string().contains("busy"));
 }
 
 #[test]
@@ -354,6 +502,11 @@ fn lazy_reader_generation_keeps_service_startup_independent_from_io() {
         .expect_err("missing io writer is a retryable read-time condition");
     assert_eq!(error.kind(), PortErrorKind::Unavailable);
     assert!(error.is_retryable());
+    let freshness_error = generation
+        .validate_freshness()
+        .expect_err("a lazy generation without IO must not report fresh");
+    assert_eq!(freshness_error.kind(), PortErrorKind::Unavailable);
+    assert!(freshness_error.is_retryable());
 }
 
 #[test]
@@ -597,7 +750,7 @@ fn retained_generation_rejects_a_committed_writer_pair_that_reuses_its_epoch() {
         .expect("fault-inject a valid replacement witness that reused the epoch");
 
     let error = generation
-        .validate_layouts()
+        .validate_freshness()
         .expect_err("a retained generation must pin the exact committed writer pair");
     assert_eq!(error.kind(), PortErrorKind::Conflict);
     assert!(error.is_retryable());

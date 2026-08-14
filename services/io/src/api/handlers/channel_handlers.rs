@@ -6,7 +6,7 @@
 
 use aether_config::io::StoredChannelConfig;
 use axum::{
-    extract::{Path, Query, RawQuery, State},
+    extract::{Path, Query, State},
     response::Json,
 };
 use chrono::{DateTime, Utc};
@@ -234,10 +234,16 @@ pub async fn get_channel_status(
             let connected = entry.is_connected();
             let diagnostics = entry.get_diagnostics();
 
-            let statistics = match diagnostics {
+            let mut statistics = match diagnostics {
                 serde_json::Value::Object(values) => values.into_iter().collect(),
                 _ => std::collections::HashMap::new(),
             };
+            if let Some(ingress) = entry.get_stats().data_event_ingress {
+                statistics.insert(
+                    "data_event_ingress".to_string(),
+                    serde_json::to_value(ingress).unwrap_or_default(),
+                );
+            }
             let status = ChannelStatusDto {
                 id: id_u16,
                 name,
@@ -284,7 +290,8 @@ pub async fn get_channel_status(
                         "host": "192.168.1.10",
                         "port": 502,
                         "connect_timeout_ms": 3000,
-                        "read_timeout_ms": 3000
+                        "read_timeout_ms": 3000,
+                        "write_timeout_ms": 3000
                     },
                     "runtime_status": {
                         "connected": true,
@@ -386,11 +393,28 @@ pub async fn get_channel_detail_handler(
     let mut counts = [0usize; 4];
     for (i, table) in point_tables.iter().enumerate() {
         let sql = format!("SELECT COUNT(*) FROM {} WHERE channel_id = ?", table);
-        counts[i] = sqlx::query_scalar::<_, i64>(&sql)
+        let count = sqlx::query_scalar::<_, i64>(&sql)
             .bind(id_u16 as i64)
             .fetch_one(&state.sqlite_pool)
             .await
-            .unwrap_or(0) as usize;
+            .map_err(|error| {
+                tracing::error!(
+                    channel_id = id_u16,
+                    point_table = *table,
+                    %error,
+                    "failed to count configured channel points"
+                );
+                AppError::internal_error("Database operation failed")
+            })?;
+        counts[i] = usize::try_from(count).map_err(|_| {
+            tracing::error!(
+                channel_id = id_u16,
+                point_table = *table,
+                count,
+                "database returned an invalid channel point count"
+            );
+            AppError::internal_error("Database returned an invalid point count")
+        })?;
     }
 
     let detail = ChannelDetail {
@@ -412,19 +436,25 @@ pub async fn get_channel_detail_handler(
     Ok(Json(SuccessResponse::new(detail)))
 }
 
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChannelSearchQuery {
+    pub keyword: Option<String>,
+    pub ids: Option<String>,
+}
+
 /// Search channels by name with fuzzy matching (no pagination)
 ///
 /// Returns all channels matching the search keyword. Use this for autocomplete
 /// or quick lookup scenarios where you need all matches without pagination.
 ///
-/// URL format: `/api/channels/search?{keyword}`
-/// - The keyword is passed directly as the raw query string (no parameter name needed)
+/// URL format: `/api/channels/search?keyword={keyword}`
 /// - Empty keyword returns all channels
 #[utoipa::path(
     get,
     path = "/api/channels/search",
     params(
-        ("keyword" = Option<String>, Query, description = "Optional fuzzy keyword (legacy raw query also supported)"),
+        ("keyword" = Option<String>, Query, description = "Optional fuzzy keyword"),
         ("ids" = Option<String>, Query, description = "Optional channel id filter, comma-separated (e.g., ids=1,2,3)")
     ),
     responses(
@@ -447,47 +477,30 @@ pub async fn get_channel_detail_handler(
 )]
 pub async fn search_channels(
     State(state): State<AppState>,
-    RawQuery(raw_query): RawQuery,
+    Query(query): Query<ChannelSearchQuery>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, AppError> {
-    // raw_query is Option<String>:
-    // /search?modbus                 => Some("modbus")                (legacy keyword-only)
-    // /search?ids=1,2,3              => Some("ids=1,2,3")             (filter by ids)
-    // /search?keyword=modbus&ids=1,2 => Some("keyword=modbus&ids=1,2") (named params)
-    // /search?modbus&ids=1,2         => Some("modbus&ids=1,2")        (mixed legacy + ids)
-    // /search?                       => Some("")
-    // /search                        => None
-
-    fn parse_ids_param(value: &str) -> Vec<u32> {
+    fn parse_ids_param(value: &str) -> Result<Vec<u32>, AppError> {
         value
             .split(',')
-            .filter_map(|s| s.trim().parse::<u32>().ok())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| {
+                value.parse::<u32>().map_err(|_| {
+                    AppError::bad_request(format!(
+                        "channel search ids must be comma-separated u32 values: {value}"
+                    ))
+                })
+            })
             .collect()
     }
 
-    let raw = raw_query.unwrap_or_default();
-    let mut keyword = String::new();
-    let mut ids: Vec<u32> = Vec::new();
-
-    if raw.contains('=') || raw.contains('&') {
-        for part in raw.split('&') {
-            if let Some((k, v)) = part.split_once('=') {
-                match k {
-                    "ids" | "id" => ids.extend(parse_ids_param(v)),
-                    "keyword" | "q" => {
-                        if keyword.is_empty() {
-                            keyword = v.to_string();
-                        }
-                    },
-                    _ => {},
-                }
-            } else if keyword.is_empty() && !part.trim().is_empty() {
-                // Legacy keyword in mixed query
-                keyword = part.to_string();
-            }
-        }
-    } else {
-        keyword = raw;
-    }
+    let keyword = query.keyword.unwrap_or_default();
+    let ids = query
+        .ids
+        .as_deref()
+        .map(parse_ids_param)
+        .transpose()?
+        .unwrap_or_default();
 
     let like_pattern = format!("%{}%", keyword);
 
@@ -621,49 +634,6 @@ pub async fn search_channels(
             }
         }));
     }
-
-    Ok(Json(SuccessResponse::new(
-        serde_json::json!({ "list": list }),
-    )))
-}
-
-/// Minimal channel list (id + name + protocol, no pagination).
-///
-/// Designed for "select a channel" scenarios such as frontend dropdowns and routing
-/// table association. Returns all channels but only three fields, avoiding a heavy
-/// query. For detailed configuration or runtime status use the paginated `/channels`
-/// endpoint or `/api/channels/{id}`.
-#[utoipa::path(
-    get,
-    path = "/api/channels/list",
-    responses(
-        (status = 200, description = "Channel list", body = serde_json::Value,
-            example = json!({
-                "list": [
-                    {"id": 1, "name": "PLC#1", "protocol": "modbus_tcp"},
-                    {"id": 2, "name": "HVAC#1", "protocol": "iec104"}
-                ]
-            })
-        )
-    ),
-    tag = "io"
-)]
-pub async fn list_channels(
-    State(state): State<AppState>,
-) -> Result<Json<SuccessResponse<serde_json::Value>>, AppError> {
-    let channels: Vec<(i64, String, Option<String>)> =
-        sqlx::query_as("SELECT channel_id, name, protocol FROM channels ORDER BY channel_id")
-            .fetch_all(&state.sqlite_pool)
-            .await
-            .map_err(|e| {
-                tracing::error!("List channels: {}", e);
-                AppError::internal_error(format!("Failed to list channels: {}", e))
-            })?;
-
-    let list: Vec<serde_json::Value> = channels
-        .into_iter()
-        .map(|(id, name, protocol)| serde_json::json!({"id": id, "name": name, "protocol": protocol}))
-        .collect();
 
     Ok(Json(SuccessResponse::new(
         serde_json::json!({ "list": list }),

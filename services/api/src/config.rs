@@ -1,5 +1,7 @@
 use std::env;
 
+use sha2::Digest as _;
+
 #[derive(Clone)]
 pub struct GatewayConfig {
     pub api_host: String,
@@ -13,6 +15,8 @@ pub struct GatewayConfig {
     pub point_watch_debounce_ms: u64,
     pub db_path: String,
     pub jwt_secret: String,
+    /// Dedicated credential accepted only by the internal alarm-event route.
+    pub alarm_broadcast_token: String,
     pub access_token_expire_minutes: i64,
     pub refresh_token_expire_days: i64,
     pub allow_public_registration: bool,
@@ -56,6 +60,7 @@ impl Default for GatewayConfig {
             point_watch_debounce_ms: common::env_or("POINT_WATCH_DEBOUNCE_MS", 25),
             db_path,
             jwt_secret: env::var("JWT_SECRET_KEY").unwrap_or_default(),
+            alarm_broadcast_token: env::var("AETHER_ALARM_BROADCAST_TOKEN").unwrap_or_default(),
             access_token_expire_minutes: common::env_or("ACCESS_TOKEN_EXPIRE_MINUTES", 30),
             refresh_token_expire_days: common::env_or("REFRESH_TOKEN_EXPIRE_DAYS", 7),
             allow_public_registration: env::var("AETHER_ALLOW_PUBLIC_REGISTRATION")
@@ -97,9 +102,15 @@ impl GatewayConfig {
         let jwt_secret = env::var("JWT_SECRET_KEY")
             .map_err(|_| anyhow::anyhow!("JWT_SECRET_KEY is required"))?;
         validate_jwt_secret(&jwt_secret).map_err(anyhow::Error::msg)?;
+        let alarm_broadcast_token = env::var("AETHER_ALARM_BROADCAST_TOKEN")
+            .map_err(|_| anyhow::anyhow!("AETHER_ALARM_BROADCAST_TOKEN is required"))?;
+        validate_alarm_broadcast_token(&alarm_broadcast_token).map_err(anyhow::Error::msg)?;
+        validate_distinct_credentials(&jwt_secret, &alarm_broadcast_token)
+            .map_err(anyhow::Error::msg)?;
 
         let config = Self {
             jwt_secret,
+            alarm_broadcast_token,
             ..Self::default()
         };
         for (name, value) in [
@@ -161,9 +172,42 @@ fn validate_jwt_secret(secret: &str) -> Result<(), &'static str> {
     Ok(())
 }
 
+fn validate_alarm_broadcast_token(token: &str) -> Result<(), &'static str> {
+    if token.len() < 32
+        || token.trim() != token
+        || token
+            .chars()
+            .any(|character| character.is_whitespace() || character.is_control())
+    {
+        return Err(
+            "AETHER_ALARM_BROADCAST_TOKEN must contain at least 32 bytes without surrounding whitespace or control characters",
+        );
+    }
+    if matches!(token, "change-me-in-production" | "your-service-token-here") {
+        return Err("AETHER_ALARM_BROADCAST_TOKEN must not use a documented placeholder");
+    }
+    Ok(())
+}
+
+fn validate_distinct_credentials(jwt_secret: &str, alarm_token: &str) -> Result<(), &'static str> {
+    use subtle::ConstantTimeEq;
+
+    let same = sha2::Sha256::digest(jwt_secret.as_bytes())
+        .ct_eq(&sha2::Sha256::digest(alarm_token.as_bytes()))
+        .unwrap_u8()
+        == 1;
+    if same {
+        return Err("AETHER_ALARM_BROADCAST_TOKEN must be distinct from JWT_SECRET_KEY");
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{explicit_opt_in, validate_internal_service_url, validate_jwt_secret};
+    use super::{
+        explicit_opt_in, validate_alarm_broadcast_token, validate_distinct_credentials,
+        validate_internal_service_url, validate_jwt_secret,
+    };
 
     #[test]
     fn jwt_secret_must_be_at_least_256_bits() {
@@ -180,6 +224,31 @@ mod tests {
         for disabled in ["", "0", "false", "no", "invalid"] {
             assert!(!explicit_opt_in(disabled));
         }
+    }
+
+    #[test]
+    fn alarm_broadcast_token_is_a_distinct_strong_service_credential() {
+        assert!(validate_alarm_broadcast_token("").is_err());
+        assert!(validate_alarm_broadcast_token("change-me-in-production").is_err());
+        assert!(
+            validate_alarm_broadcast_token(" token-that-is-at-least-thirty-two-bytes ").is_err()
+        );
+        assert!(validate_alarm_broadcast_token("token-that-is-at-least-thirty two-bytes").is_err());
+        assert!(validate_alarm_broadcast_token("alarm-service-token-0123456789abcdef").is_ok());
+        assert!(
+            validate_distinct_credentials(
+                "0123456789abcdef0123456789abcdef",
+                "0123456789abcdef0123456789abcdef"
+            )
+            .is_err()
+        );
+        assert!(
+            validate_distinct_credentials(
+                "0123456789abcdef0123456789abcdef",
+                "alarm-service-token-0123456789abcdef"
+            )
+            .is_ok()
+        );
     }
 
     #[test]

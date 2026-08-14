@@ -27,9 +27,9 @@ if bash "$BUILDER" v0-contract amd64 \
     exit 1
 fi
 
-cargo run --quiet -p aether-runtime-catalog --bin aether-runtime-manifest -- \
+cargo run --quiet --locked -p aether-runtime-catalog --bin aether-runtime-manifest -- \
     verify --path "$DEFAULT_MANIFEST" --aether-version "$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$ROOT_DIR/Cargo.toml" | head -1)" >/dev/null
-cargo run --quiet -p aether-runtime-catalog --bin aether-runtime-manifest -- \
+cargo run --quiet --locked -p aether-runtime-catalog --bin aether-runtime-manifest -- \
     verify --path "$TRIMMED_MANIFEST" --aether-version "$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$ROOT_DIR/Cargo.toml" | head -1)" >/dev/null
 grep -Fq '"modbus_tcp"' "$DEFAULT_MANIFEST"
 grep -Fq '"target_triple": "x86_64-unknown-linux-musl"' "$DEFAULT_MANIFEST"

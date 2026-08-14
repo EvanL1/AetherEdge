@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "alarm-event.schema.json",
+  "title": "Aether CloudLink durable alarm transition",
+  "allOf": [
+    {
+      "$ref": "envelope.schema.json"
+    },
+    {
+      "properties": {
+        "message_kind": {
+          "const": "alarm-event"
+        },
+        "payload": {
+          "$ref": "envelope.schema.json#/$defs/alarmEventPayload"
+        }
+      }
+    }
+  ]
+}

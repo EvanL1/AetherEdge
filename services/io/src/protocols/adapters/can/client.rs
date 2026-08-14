@@ -17,8 +17,8 @@ use crate::protocols::core::error::{GatewayError, Result};
 use async_trait::async_trait;
 
 use crate::protocols::core::traits::{
-    ConnectionState, DataEvent, DataEventReceiver, DataEventSender, Diagnostics, PollResult,
-    data_event_channel,
+    ConnectionState, DataEvent, DataEventReceiver, DataEventSink, Diagnostics, PollResult,
+    data_event_channel_with_capacity,
 };
 use crate::protocols::runtime::ChannelRuntime;
 
@@ -37,7 +37,7 @@ pub struct CanClient {
     config: CanConfig,
 
     // Connection state (lock-free)
-    connection_state: AtomicU8,
+    connection_state: Arc<AtomicU8>,
     is_connected: Arc<AtomicBool>,
 
     // Statistics (lock-free)
@@ -50,7 +50,7 @@ pub struct CanClient {
     read_handle: Option<JoinHandle<()>>,
 
     // Event queue for the unified channel task.
-    event_tx: DataEventSender,
+    event_tx: DataEventSink,
     event_rx: Option<DataEventReceiver>,
 
     // CAN frame cache
@@ -61,14 +61,14 @@ pub struct CanClient {
 }
 
 impl CanClient {
-    /// Create a new CAN client with the given configuration.
-    pub fn new(config: CanConfig) -> Self {
+    /// Create a CAN client sized from the validated runtime point generation.
+    pub fn new_with_point_capacity(config: CanConfig, point_capacity: usize) -> Self {
         let point_manager = PointManager::new();
-        let (event_tx, event_rx) = data_event_channel();
+        let (event_tx, event_rx) = data_event_channel_with_capacity(point_capacity);
 
         Self {
             config,
-            connection_state: AtomicU8::new(ConnectionState::Disconnected.into()),
+            connection_state: Arc::new(AtomicU8::new(ConnectionState::Disconnected.into())),
             is_connected: Arc::new(AtomicBool::new(false)),
             read_count: Arc::new(AtomicU64::new(0)),
             error_count: Arc::new(AtomicU64::new(0)),
@@ -106,6 +106,8 @@ impl CanClient {
         let frame_cache = Arc::clone(&self.frame_cache);
         let error_count = Arc::clone(&self.error_count);
         let last_error = Arc::clone(&self.last_error);
+        let connection_state = Arc::clone(&self.connection_state);
+        let event_tx = self.event_tx.clone();
         let rx_poll_interval = self.config.rx_poll_interval_ms;
 
         let handle = tokio::spawn(async move {
@@ -122,8 +124,14 @@ impl CanClient {
                     #[cfg(feature = "tracing-support")]
                     tracing::error!("Failed to open CAN socket on {}: {}", can_interface, e);
 
-                    last_error.store(Some(Arc::new(format!("Failed to open CAN socket: {}", e))));
-                    error_count.fetch_add(1, Ordering::Relaxed);
+                    super::fail_worker(
+                        &connection_state,
+                        &is_connected,
+                        &error_count,
+                        &last_error,
+                        &event_tx,
+                        format!("Failed to open CAN socket: {e}"),
+                    );
                     return;
                 },
             };
@@ -133,11 +141,14 @@ impl CanClient {
                 #[cfg(feature = "tracing-support")]
                 tracing::error!("Failed to set non-blocking mode: {}", e);
 
-                last_error.store(Some(Arc::new(format!(
-                    "Failed to set non-blocking mode: {}",
-                    e
-                ))));
-                error_count.fetch_add(1, Ordering::Relaxed);
+                super::fail_worker(
+                    &connection_state,
+                    &is_connected,
+                    &error_count,
+                    &last_error,
+                    &event_tx,
+                    format!("Failed to set non-blocking mode: {e}"),
+                );
                 return;
             }
 
@@ -231,9 +242,15 @@ impl CanClient {
                         #[cfg(feature = "tracing-support")]
                         tracing::error!("CAN read error: {:?}", e);
 
-                        last_error.store(Some(Arc::new(format!("CAN read error: {}", e))));
-                        error_count.fetch_add(1, Ordering::Relaxed);
-                        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                        super::fail_worker(
+                            &connection_state,
+                            &is_connected,
+                            &error_count,
+                            &last_error,
+                            &event_tx,
+                            format!("CAN read error: {e}"),
+                        );
+                        break;
                     },
                 }
             }
@@ -343,7 +360,7 @@ impl CanClient {
                             // Keep device I/O independent from consumer backpressure.
                             #[cfg(feature = "tracing-support")]
                             tracing::debug!("Sending DataUpdate event via event_tx");
-                            let _ = event_tx.try_send(DataEvent::DataUpdate(batch));
+                            event_tx.publish(DataEvent::DataUpdate(batch));
                         }
                     },
                     Err(e) => {
@@ -396,7 +413,7 @@ impl HasMetadata for CanClient {
                 ParameterMetadata::optional(
                     "device",
                     "CAN Device",
-                    "SocketCAN device name (e.g., can0, vcan0). Legacy key 'interface' is also accepted.",
+                    "SocketCAN device name (e.g., can0, vcan0)",
                     ParameterType::String,
                     serde_json::json!("can0"),
                 ),
@@ -485,11 +502,13 @@ impl ChannelRuntime for CanClient {
         // Stop receive task
         if let Some(handle) = self.receive_handle.take() {
             handle.abort();
+            let _ = handle.await;
         }
 
         // Stop read task
         if let Some(handle) = self.read_handle.take() {
             handle.abort();
+            let _ = handle.await;
         }
 
         self.connection_state
@@ -518,9 +537,11 @@ impl ChannelRuntime for CanClient {
         // Stop receive and read tasks
         if let Some(handle) = self.receive_handle.take() {
             handle.abort();
+            let _ = handle.await;
         }
         if let Some(handle) = self.read_handle.take() {
             handle.abort();
+            let _ = handle.await;
         }
         Ok(())
     }

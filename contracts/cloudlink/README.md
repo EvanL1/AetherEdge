@@ -1,22 +1,30 @@
-# Experimental CloudLink contracts
+# CloudLink contracts
 
-`v1/` is AetherEdge's integration surface for the public AetherContracts
-release. AetherContracts `v0.1.0-alpha.3`, pinned by the root consumer lock,
-is shared authority. The local files are adopted byte copies, migration
-history, or product proposals; they are not a second authority. Adoption is
-partial and is not a production release.
+This directory is the only AetherEdge CloudLink contract surface. Schema IDs,
+file paths, MQTT topics, session establishment, delivery envelopes, ACKs, and
+replay requests have one canonical form and expose no protocol negotiation or
+compatibility mode.
 
-The contract is transport neutral at the business layer. MQTT v3.1.1/QoS 1 is
-the first binding, with application-level durable acknowledgements above MQTT.
-See `docs/reference/cloudlink-mqtt-v1.md` for authority, migration, and
-compatibility findings. `v1/MIGRATION.md`, `v1/wire-profile.json`, its fixture manifest, and
-the interoperability files record product integration history and remaining
-release work; they cannot override the public core.
+The MQTT root is `{prefix}/gateways/{gateway_id}`. QoS 1 PUBACK is transport
+evidence only; a record leaves the durable Edge spool only after its matching
+CloudLink application ACK.
 
-Validate the self-contained schemas with an explicit local base URI:
+Alarm state transitions use the single `alarm-event` business kind and
+`up/alarm` MQTT route. Their `event_id` is the durable batch identity. Aggregate
+alarm counts and operator-requested state replays are reconstructable state and
+do not enter this transition stream. Edge reserves a protected identity receipt
+before accepting each alarm and retains it after Cloud ACK; other lossless
+CloudLink kinds discard their local identity receipt after ACK.
+
+The immutable AetherContracts release under `contracts/aether-contracts/` is
+retained solely as provenance. Its release-scoped names are not accepted as
+alternate AetherEdge wire identifiers. The pinned release-manifest digest is
+recorded in `contract-manifest.json`.
+
+Validate a fixture with an explicit local base URI:
 
 ```bash
-cd contracts/cloudlink/v1
+cd contracts/cloudlink
 uvx check-jsonschema \
   --base-uri "file://$PWD/" \
   --schemafile telemetry-batch.schema.json \

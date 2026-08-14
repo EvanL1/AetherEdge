@@ -21,7 +21,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::protocols::core::diagnostics::AtomicDiagnostics;
 use crate::protocols::core::error::{GatewayError, Result};
-use crate::protocols::core::traits::{ConnectionState, DataEvent, DataEventSender};
+use crate::protocols::core::traits::{ConnectionState, DataEvent, DataEventSink};
 
 /// Concurrent terminal connections one server channel will hold open.
 pub(super) const MAX_CONNECTIONS: usize = 64;
@@ -65,7 +65,7 @@ impl ReadDeadlines {
 /// What the accept loop needs in order to report its own death.
 pub(super) struct ServerContext {
     pub(super) state: Arc<AtomicU8>,
-    pub(super) event_tx: DataEventSender,
+    pub(super) event_tx: DataEventSink,
     pub(super) diagnostics: Arc<AtomicDiagnostics>,
     pub(super) max_connections: usize,
 }
@@ -131,18 +131,16 @@ const fn accept_error_is_fatal(kind: ErrorKind) -> bool {
 /// Publishes the accept loop's death so the channel supervisor can rebuild it.
 fn report_server_failure(context: &ServerContext, error: &str) {
     context.diagnostics.record_error(error.to_owned());
-    let _ = context
-        .event_tx
-        .try_send(DataEvent::Error(error.to_owned()));
+    context.event_tx.publish(DataEvent::Error(error.to_owned()));
     // The supervisor decides to reconnect from `connection_state()`. A dead
     // accept loop that left the state on Connected produced a channel that
     // reported healthy forever and never accepted another terminal again.
     context
         .state
         .store(ConnectionState::Error.into(), Ordering::SeqCst);
-    let _ = context
+    context
         .event_tx
-        .try_send(DataEvent::ConnectionChanged(ConnectionState::Error));
+        .publish(DataEvent::ConnectionChanged(ConnectionState::Error));
 }
 
 /// Why a bounded read stopped.
@@ -181,11 +179,11 @@ pub(super) async fn read_bounded(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocols::core::traits::{DataEventReceiver, data_event_channel};
+    use crate::protocols::core::traits::{DataEventReceiver, data_event_channel_with_capacity};
     use tokio::io::AsyncWriteExt;
 
     fn server_context(max_connections: usize) -> (ServerContext, DataEventReceiver) {
-        let (event_tx, event_rx) = data_event_channel();
+        let (event_tx, event_rx) = data_event_channel_with_capacity(1);
         (
             ServerContext {
                 state: Arc::new(AtomicU8::new(ConnectionState::Connected.into())),

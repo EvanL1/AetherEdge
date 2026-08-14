@@ -40,12 +40,6 @@ impl ChannelHealthObservation {
     pub const fn observed_at(self) -> TimestampMs {
         self.observed_at
     }
-
-    /// Compatibility accessor for SHM-facing callers.
-    #[must_use]
-    pub const fn timestamp_ms(self) -> u64 {
-        self.observed_at.get()
-    }
 }
 
 /// Read-only query port for per-channel connectivity.

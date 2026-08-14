@@ -145,7 +145,7 @@ fn store_fails_closed_on_corrupt_or_exhausted_state() {
         &exhausted_path,
         format!(
             r#"{{
-              "schema":"aether.edge.integration-generations.v1",
+              "schema":"aether.edge.integration-generations",
               "entries":[{{
                 "gateway_id":"gateway-home",
                 "integration_id":"home-assistant.home",

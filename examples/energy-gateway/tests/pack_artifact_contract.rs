@@ -25,11 +25,7 @@ const EXPECTED_KNOWLEDGE: [&str; 5] = [
     "product-models.md",
     "safe-operations.md",
 ];
-const EXPECTED_MAPPINGS: [&str; 3] = [
-    "energy.example-instance-channel-bindings",
-    "energy.legacy-instance-properties-v5",
-    "energy.product-name-aliases",
-];
+const EXPECTED_MAPPINGS: [&str; 1] = ["energy.example-instance-channel-bindings"];
 const EXPECTED_RULES: [&str; 1] = ["energy.battery-soc-management"];
 const EXPECTED_EVALUATIONS: [&str; 1] = ["energy.pack-safety"];
 const EXPECTED_DATA_PROCESSING_TASKS: [&str; 2] =
@@ -92,10 +88,10 @@ fn energy_pack_declares_complete_formal_asset_directories() {
     let manifest = load_pack_manifest(&root, &runtime()).expect("repository energy pack loads");
     let models = manifest
         .asset_directory("models")
-        .expect("models must be a declared Pack v1 asset");
+        .expect("models must be a declared Pack asset");
     let knowledge = manifest
         .asset_directory("knowledge")
-        .expect("knowledge must be a declared Pack v1 asset");
+        .expect("knowledge must be a declared Pack asset");
 
     assert_eq!(file_names(&root.join(models), "json"), EXPECTED_MODELS);
     assert_eq!(file_names(&root.join(knowledge), "md"), EXPECTED_KNOWLEDGE);
@@ -153,7 +149,7 @@ fn energy_pack_loads_after_copying_only_the_pack_artifact() {
     copy_tree(&source, isolated.path());
 
     let manifest = load_pack_manifest(isolated.path(), &runtime())
-        .expect("isolated Pack v1 artifact must be self-contained");
+        .expect("isolated Pack artifact must be self-contained");
 
     assert_eq!(manifest.id(), "energy");
     assert!(isolated.path().join("models").is_dir());
@@ -182,28 +178,8 @@ fn energy_pack_loads_after_copying_only_the_pack_artifact() {
 }
 
 #[test]
-fn formal_energy_assets_retain_versioned_fail_safe_payloads() {
+fn formal_energy_assets_retain_fail_safe_payloads() {
     let root = repository_pack_root();
-
-    let aliases = yaml_value(&root.join("mappings/product-name-aliases.yaml"));
-    assert_eq!(aliases["schema"], "aether.pack.mapping-set.v1");
-    assert_eq!(aliases["kind"], "product_aliases");
-    assert_eq!(aliases["compatibility"]["removed_from_kernel"], "0.5.0");
-    assert_eq!(aliases["compatibility"]["apply_before_kernel_schema"], 2);
-
-    let legacy_properties = yaml_value(&root.join("mappings/legacy-instance-properties-v5.yaml"));
-    assert_eq!(
-        legacy_properties["kind"],
-        "legacy_instance_properties_migration"
-    );
-    assert_eq!(
-        legacy_properties["compatibility"]["removed_from_kernel"],
-        "0.5.0"
-    );
-    assert_eq!(
-        legacy_properties["compatibility"]["apply_before_kernel_schema"],
-        5
-    );
 
     let bindings = yaml_value(&root.join("mappings/example-instance-channel-bindings.yaml"));
     assert_eq!(bindings["commissioned"], false);
@@ -217,12 +193,12 @@ fn formal_energy_assets_retain_versioned_fail_safe_payloads() {
         &fs::read(root.join("rules/battery_soc_management.json")).expect("read rule"),
     )
     .expect("parse rule");
-    assert_eq!(rule["schema"], "aether.pack.rule.v1");
+    assert_eq!(rule["schema"], "aether.pack.rule");
     assert_eq!(rule["enabled"], false);
     assert_eq!(rule["commissioned"], false);
 
     let evaluation = yaml_value(&root.join("evaluations/pack-safety.yaml"));
-    assert_eq!(evaluation["schema"], "aether.pack.evaluation-suite.v1");
+    assert_eq!(evaluation["schema"], "aether.pack.evaluation-suite");
     assert_eq!(evaluation["execution"], "cargo_test_evidence");
     assert!(
         evaluation["scenarios"]
@@ -232,7 +208,7 @@ fn formal_energy_assets_retain_versioned_fail_safe_payloads() {
 
     for task in ["site-load-forecast.yaml", "site-pv-forecast.yaml"] {
         let task = yaml_value(&root.join("data-processing/tasks").join(task));
-        assert_eq!(task["schema"], "aether.data-processing-task.v1");
+        assert_eq!(task["schema"], "aether.data-processing-task");
         assert_eq!(task["enabled"], false);
     }
 }

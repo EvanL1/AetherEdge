@@ -17,7 +17,7 @@ rebuilding or restarting anything.
 A rule is stored in two columns that are always produced together: `flow_json`
 (the full visual-editor graph, including layout) and `nodes_json` (the compact
 execution topology the engine actually runs). See
-[Rule Engine](../concepts/rule-engine.md) for how the parser, scheduler, and
+[Rule Engine](../../../docs/concepts/rule-engine.md) for how the parser, scheduler, and
 executor fit together.
 
 Rules fire in one of two ways:
@@ -204,5 +204,5 @@ What a strategy author can rely on:
   actions the conditions select are dispatched through shared memory to io
   and on to the device. There is no test or dry-run endpoint. Trial a
   new strategy against an isolated channel connected to `tools/simulator`
-  first (see [Connect Devices](../guides/connect-devices.md)) before pointing
+  first (see [Connect Devices](../../../docs/guides/connect-devices.md)) before pointing
   it at real hardware.

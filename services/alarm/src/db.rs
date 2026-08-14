@@ -2,6 +2,8 @@
 //!
 //! Uses runtime SQLx queries (no compile-time macros) as required by project conventions.
 
+use std::collections::HashMap;
+
 use anyhow::{Context, Result};
 use chrono::{TimeZone, Utc};
 use sqlx::SqlitePool;
@@ -90,6 +92,7 @@ pub async fn create_tables(pool: &SqlitePool) -> Result<()> {
     .context("create alert_event table")?;
 
     migrate_alert_event_to_retained_history(pool).await?;
+    crate::notification_outbox::create_table(pool).await?;
 
     info!("Alert tables ready");
     Ok(())
@@ -325,13 +328,26 @@ pub async fn get_alert_by_rule_id(pool: &SqlitePool, rule_id: i64) -> Result<Opt
         .context("get alert by rule_id")
 }
 
-pub async fn get_all_active_alerts(pool: &SqlitePool) -> Result<Vec<Alert>> {
-    sqlx::query_as::<_, Alert>(
-        "SELECT * FROM alert WHERE status = 'active' ORDER BY warning_level DESC, triggered_at DESC",
+/// Loads the active-alert state for one monitor pass in a single query.
+///
+/// More than one active row for a rule violates the monitor invariant. Fail
+/// closed instead of choosing an arbitrary row and potentially leaving the
+/// other alert orphaned.
+pub async fn get_active_alerts_by_rule_id(pool: &SqlitePool) -> Result<HashMap<i64, Alert>> {
+    let alerts = sqlx::query_as::<_, Alert>(
+        "SELECT * FROM alert WHERE status = 'active' ORDER BY rule_id ASC, id ASC",
     )
     .fetch_all(pool)
     .await
-    .context("get all active alerts")
+    .context("get active alerts for monitor pass")?;
+    let mut by_rule = HashMap::with_capacity(alerts.len());
+    for alert in alerts {
+        let rule_id = alert.rule_id;
+        if by_rule.insert(rule_id, alert).is_some() {
+            anyhow::bail!("multiple active alerts exist for rule {rule_id}");
+        }
+    }
+    Ok(by_rule)
 }
 
 pub async fn list_alerts(pool: &SqlitePool, params: &AlertFilter) -> Result<Page<Alert>> {
@@ -401,9 +417,21 @@ pub async fn list_alerts(pool: &SqlitePool, params: &AlertFilter) -> Result<Page
     })
 }
 
-pub async fn insert_alert(pool: &SqlitePool, rule: &AlertRule, current_value: f64) -> Result<i64> {
+/// Inserts an active alert only while the evaluated rule snapshot is still
+/// enabled and current.
+///
+/// The monitor intentionally evaluates outside a database transaction. This
+/// conditional write closes the resulting snapshot race: a concurrent rule
+/// disable/update either commits first and makes this statement a no-op, or
+/// commits second and atomically reconciles the newly inserted alert.
+pub async fn insert_alert(
+    pool: &SqlitePool,
+    rule: &AlertRule,
+    current_value: f64,
+) -> Result<Option<i64>> {
     let now = Utc::now().timestamp();
     let snapshot = rule.snapshot();
+    let mut transaction = pool.begin().await.context("begin alert trigger")?;
 
     let id = sqlx::query_scalar::<_, i64>(
         r#"
@@ -411,7 +439,27 @@ pub async fn insert_alert(pool: &SqlitePool, rule: &AlertRule, current_value: f6
             (rule_id, rule_snapshot, service_type, channel_id, data_type, point_id,
              rule_name, warning_level, operator, threshold_value, current_value,
              status, triggered_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
+        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?
+        WHERE EXISTS (
+            SELECT 1
+            FROM alert_rule AS current
+            WHERE current.id = ?
+              AND current.enabled = 1
+              AND current.service_type = ?
+              AND current.channel_id = ?
+              AND current.data_type = ?
+              AND current.point_id = ?
+              AND current.rule_name = ?
+              AND current.warning_level = ?
+              AND current.operator = ?
+              AND current.value = ?
+              AND current.description IS ?
+              AND current.updated_at = ?
+        )
+          AND NOT EXISTS (
+              SELECT 1 FROM alert AS active
+              WHERE active.rule_id = ? AND active.status = 'active'
+          )
         RETURNING id
         "#,
     )
@@ -427,9 +475,37 @@ pub async fn insert_alert(pool: &SqlitePool, rule: &AlertRule, current_value: f6
     .bind(rule.value)
     .bind(current_value)
     .bind(now)
-    .fetch_one(pool)
+    .bind(rule.id)
+    .bind(&rule.service_type)
+    .bind(rule.channel_id)
+    .bind(&rule.data_type)
+    .bind(rule.point_id)
+    .bind(&rule.rule_name)
+    .bind(rule.warning_level)
+    .bind(&rule.operator)
+    .bind(rule.value)
+    .bind(&rule.description)
+    .bind(rule.updated_at)
+    .bind(rule.id)
+    .fetch_optional(&mut *transaction)
     .await
     .context("insert alert")?;
+
+    if let Some(alert_id) = id {
+        let notification = crate::notification::AlarmNotification::triggered_at(
+            alert_id,
+            rule,
+            current_value,
+            now,
+        );
+        crate::notification_outbox::enqueue_alarm(&mut transaction, &notification)
+            .await
+            .context("enqueue triggered alarm notification")?;
+    }
+    transaction
+        .commit()
+        .await
+        .context("commit alert trigger and notification")?;
 
     Ok(id)
 }
@@ -448,12 +524,30 @@ pub async fn update_alert_value(
     Ok(())
 }
 
-/// Resolves an alert: inserts an alert_event record then deletes the alert row.
-pub async fn resolve_alert(pool: &SqlitePool, alert: &Alert, recovery_value: f64) -> Result<i64> {
+/// Resolves an alert after atomically claiming its active row.
+///
+/// Automatic recovery, manual recovery, and rule-disable reconciliation can
+/// all race. `DELETE .. RETURNING` gives exactly one path ownership of the row;
+/// losers return `None` and must not publish another recovery notification.
+pub async fn resolve_alert(
+    pool: &SqlitePool,
+    alert: &Alert,
+    recovery_value: f64,
+) -> Result<Option<i64>> {
     let now = Utc::now().timestamp();
-    let duration = now - alert.triggered_at;
-
     let mut tx = pool.begin().await.context("begin transaction")?;
+    let claimed = sqlx::query_as::<_, Alert>("DELETE FROM alert WHERE id = ? RETURNING *")
+        .bind(alert.id)
+        .fetch_optional(&mut *tx)
+        .await
+        .context("claim active alert")?;
+    let Some(alert) = claimed else {
+        tx.rollback()
+            .await
+            .context("rollback unclaimed alert resolution")?;
+        return Ok(None);
+    };
+    let duration = now - alert.triggered_at;
 
     let event_id = sqlx::query_scalar::<_, i64>(
         r#"
@@ -485,14 +579,19 @@ pub async fn resolve_alert(pool: &SqlitePool, alert: &Alert, recovery_value: f64
     .await
     .context("insert alert_event")?;
 
-    sqlx::query("DELETE FROM alert WHERE id = ?")
-        .bind(alert.id)
-        .execute(&mut *tx)
+    let notification = crate::notification::AlarmNotification::recovered_at(
+        event_id,
+        &alert,
+        Some(recovery_value),
+        "condition recovered",
+        now,
+    );
+    crate::notification_outbox::enqueue_alarm(&mut tx, &notification)
         .await
-        .context("delete alert")?;
+        .context("enqueue recovered alarm notification")?;
 
     tx.commit().await.context("commit resolve_alert")?;
-    Ok(event_id)
+    Ok(Some(event_id))
 }
 
 // ============================================================================
@@ -730,7 +829,193 @@ mod retention_migration_tests {
                 .fetch_one(&pool)
                 .await
                 .expect("foreign-key count");
-        assert_eq!((retained, foreign_keys), (1, 0));
+        let outbox_tables: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master
+             WHERE type = 'table' AND name = 'alarm_notification_outbox'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("notification outbox migration");
+        assert_eq!((retained, foreign_keys, outbox_tables), (1, 0, 1));
+    }
+}
+
+#[cfg(test)]
+mod alert_state_race_tests {
+    use super::*;
+
+    async fn test_pool() -> (tempfile::TempDir, SqlitePool) {
+        let directory = tempfile::tempdir().expect("temporary database directory");
+        let path = directory.path().join("alarm-races.db");
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(5)
+            .connect_with(common::bootstrap_database::sqlite_connect_options(
+                path.to_str().expect("UTF-8 database path"),
+            ))
+            .await
+            .expect("file-backed database");
+        create_tables(&pool).await.expect("alarm schema");
+        (directory, pool)
+    }
+
+    async fn enabled_rule(pool: &SqlitePool) -> AlertRule {
+        let now = Utc::now().timestamp();
+        let id = sqlx::query_scalar::<_, i64>(
+            "INSERT INTO alert_rule
+             (service_type, channel_id, data_type, point_id, rule_name,
+              warning_level, operator, value, enabled, description,
+              created_at, updated_at)
+             VALUES ('io', 7, 'T', 3, 'temperature', 2, '>', 80, 1,
+                     'test rule', ?, ?)
+             RETURNING id",
+        )
+        .bind(now)
+        .bind(now)
+        .fetch_one(pool)
+        .await
+        .expect("insert enabled rule");
+        get_rule_by_id(pool, id)
+            .await
+            .expect("read rule")
+            .expect("stored rule")
+    }
+
+    #[tokio::test]
+    async fn stale_monitor_snapshot_cannot_insert_after_rule_disable() {
+        let (_directory, pool) = test_pool().await;
+        let stale_rule = enabled_rule(&pool).await;
+        sqlx::query("UPDATE alert_rule SET enabled = 0 WHERE id = ?")
+            .bind(stale_rule.id)
+            .execute(&pool)
+            .await
+            .expect("disable rule");
+
+        let inserted = insert_alert(&pool, &stale_rule, 95.0)
+            .await
+            .expect("conditional insert");
+
+        assert_eq!(inserted, None);
+        let active: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM alert")
+            .fetch_one(&pool)
+            .await
+            .expect("active count");
+        assert_eq!(active, 0);
+    }
+
+    #[tokio::test]
+    async fn stale_monitor_snapshot_cannot_insert_after_rule_update() {
+        let (_directory, pool) = test_pool().await;
+        let stale_rule = enabled_rule(&pool).await;
+        sqlx::query("UPDATE alert_rule SET value = 100 WHERE id = ?")
+            .bind(stale_rule.id)
+            .execute(&pool)
+            .await
+            .expect("update threshold");
+
+        let inserted = insert_alert(&pool, &stale_rule, 95.0)
+            .await
+            .expect("conditional insert");
+
+        assert_eq!(inserted, None);
+    }
+
+    #[tokio::test]
+    async fn overlapping_monitor_inserts_create_one_active_alert() {
+        let (_directory, pool) = test_pool().await;
+        let rule = enabled_rule(&pool).await;
+
+        let (first, second) = tokio::join!(
+            insert_alert(&pool, &rule, 95.0),
+            insert_alert(&pool, &rule, 96.0),
+        );
+        let inserted = [
+            first.expect("first insert attempt"),
+            second.expect("second insert attempt"),
+        ]
+        .into_iter()
+        .filter(Option::is_some)
+        .count();
+        let active: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM alert WHERE rule_id = ?")
+            .bind(rule.id)
+            .fetch_one(&pool)
+            .await
+            .expect("active count");
+
+        assert_eq!((inserted, active), (1, 1));
+    }
+
+    #[tokio::test]
+    async fn monitor_active_alert_map_is_loaded_once_and_rejects_duplicates() {
+        let (_directory, pool) = test_pool().await;
+        let rule = enabled_rule(&pool).await;
+        insert_alert(&pool, &rule, 95.0)
+            .await
+            .expect("insert active alert")
+            .expect("enabled rule accepts alert");
+
+        let active = get_active_alerts_by_rule_id(&pool)
+            .await
+            .expect("load active alert map");
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[&rule.id].current_value, 95.0);
+
+        sqlx::query(
+            "INSERT INTO alert
+             (rule_id, rule_snapshot, service_type, channel_id, data_type, point_id,
+              rule_name, warning_level, operator, threshold_value, current_value,
+              status, triggered_at)
+             VALUES (?, '{}', 'io', 7, 'T', 3, 'duplicate', 2, '>', 80, 96,
+                     'active', 1)",
+        )
+        .bind(rule.id)
+        .execute(&pool)
+        .await
+        .expect("inject legacy duplicate");
+
+        let error = get_active_alerts_by_rule_id(&pool)
+            .await
+            .expect_err("duplicate active rows fail closed");
+        assert!(error.to_string().contains("multiple active alerts"));
+    }
+
+    #[tokio::test]
+    async fn concurrent_recovery_claims_create_exactly_one_history_event() {
+        let (_directory, pool) = test_pool().await;
+        let rule = enabled_rule(&pool).await;
+        let alert_id = insert_alert(&pool, &rule, 95.0)
+            .await
+            .expect("insert active alert")
+            .expect("enabled rule accepts alert");
+        let alert = get_alert_by_id(&pool, alert_id)
+            .await
+            .expect("read active alert")
+            .expect("active alert");
+
+        let (first, second) = tokio::join!(
+            resolve_alert(&pool, &alert, 70.0),
+            resolve_alert(&pool, &alert, 70.0),
+        );
+        let claimed = [
+            first.expect("first recovery attempt"),
+            second.expect("second recovery attempt"),
+        ]
+        .into_iter()
+        .filter(Option::is_some)
+        .count();
+        let history: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM alert_event WHERE rule_id = ? AND event_type = 'recovery'",
+        )
+        .bind(rule.id)
+        .fetch_one(&pool)
+        .await
+        .expect("recovery history count");
+        let active: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM alert WHERE rule_id = ?")
+            .bind(rule.id)
+            .fetch_one(&pool)
+            .await
+            .expect("active count");
+
+        assert_eq!((claimed, history, active), (1, 1, 0));
     }
 }
 

@@ -15,9 +15,7 @@ use std::sync::atomic::Ordering;
 
 use memmap2::{Mmap, MmapOptions};
 
-use crate::core::header::{
-    AETHER_SHM_MAGIC, HeaderSnapshot, SHM_LAYOUT_VERSION, ShmHeader, validate_mapping_layout,
-};
+use crate::core::header::{AETHER_SHM_MAGIC, HeaderSnapshot, ShmHeader, validate_mapping_layout};
 use crate::core::slot_io::{self, SlotIo, SlotRead};
 use crate::{DataplaneError, DataplaneResult};
 
@@ -36,7 +34,7 @@ impl SlotReader {
     ///
     /// This is the only file-to-mmap entry point required by read-side
     /// extensions. It validates the minimum file length before interpreting the
-    /// header, then validates magic, version, live slot count, and exact length
+    /// header, then validates magic, reserved bytes, live slot count, and exact length
     /// before any slot can be read.
     pub fn open(path: impl AsRef<Path>) -> DataplaneResult<Self> {
         let path = path.as_ref();
@@ -77,10 +75,9 @@ impl SlotReader {
                 snapshot.magic
             )));
         }
-        if snapshot.version != SHM_LAYOUT_VERSION {
+        if !header.reserved_bytes_are_zero() {
             return Err(DataplaneError::InvalidLayout(format!(
-                "unsupported SHM version for {path:?}: expected {SHM_LAYOUT_VERSION}, got {}",
-                snapshot.version
+                "SHM reserved header bytes are non-zero for {path:?}"
             )));
         }
         if snapshot.publication_epoch == 0 {

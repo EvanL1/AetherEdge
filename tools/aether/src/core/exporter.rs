@@ -55,6 +55,14 @@ impl ConfigExporter {
         Self { pool }
     }
 
+    fn parse_service_port(service: &str, value: &str) -> Result<u16> {
+        let port = value
+            .parse::<u16>()
+            .with_context(|| format!("{service} service.port is not an integer: {value:?}"))?;
+        anyhow::ensure!(port > 0, "{service} service.port must be in 1..=65535");
+        Ok(port)
+    }
+
     /// Export configuration for a specific service
     pub async fn export_service(
         &self,
@@ -103,32 +111,38 @@ impl ConfigExporter {
         for row in &rows {
             let key: String = row.try_get("key")?;
             let value: String = row.try_get("value")?;
-            let type_hint: Option<String> = row.try_get("type").ok();
+            let value_type: String = row
+                .try_get("type")
+                .with_context(|| format!("global configuration key {key:?} has no valid type"))?;
 
-            let yaml_value = match type_hint.as_deref() {
-                Some("integer") | Some("int") => value
-                    .parse::<i64>()
-                    .map(|n| serde_yml::Value::Number(n.into()))
-                    .unwrap_or(serde_yml::Value::String(value)),
-                Some("boolean") | Some("bool") => {
-                    serde_yml::Value::Bool(value.eq_ignore_ascii_case("true") || value == "1")
+            let yaml_value = match value_type.as_str() {
+                "string" => serde_yml::Value::String(value),
+                "number" => {
+                    let parsed =
+                        serde_json::from_str::<serde_json::Value>(&value).with_context(|| {
+                            format!("global configuration key {key:?} is not a JSON number")
+                        })?;
+                    anyhow::ensure!(
+                        parsed.is_number(),
+                        "global configuration key {key:?} is not a JSON number"
+                    );
+                    serde_yml::to_value(parsed)?
                 },
-                Some("float") => value
-                    .parse::<f64>()
-                    .ok()
-                    .map(|f| serde_yml::Value::Number(f.into()))
-                    .unwrap_or(serde_yml::Value::String(value)),
-                _ => {
-                    if let Ok(n) = value.parse::<i64>() {
-                        serde_yml::Value::Number(n.into())
-                    } else if value.eq_ignore_ascii_case("true")
-                        || value.eq_ignore_ascii_case("false")
-                    {
-                        serde_yml::Value::Bool(value.eq_ignore_ascii_case("true"))
-                    } else {
-                        serde_yml::Value::String(value)
-                    }
+                "boolean" => match value.as_str() {
+                    "true" => serde_yml::Value::Bool(true),
+                    "false" => serde_yml::Value::Bool(false),
+                    _ => anyhow::bail!(
+                        "global configuration key {key:?} must be exactly true or false"
+                    ),
                 },
+                "json" => serde_yml::to_value(
+                    serde_json::from_str::<serde_json::Value>(&value).with_context(|| {
+                        format!("global configuration key {key:?} contains invalid JSON")
+                    })?,
+                )?,
+                _ => anyhow::bail!(
+                    "global configuration key {key:?} has unsupported type {value_type:?}"
+                ),
             };
 
             let parts: Vec<&str> = key.split('.').collect();
@@ -318,9 +332,10 @@ impl ConfigExporter {
         let mut config = IoConfig::default();
 
         // Query service configuration
-        let rows = sqlx::query("SELECT key, value FROM service_config")
-            .fetch_all(&self.pool)
-            .await?;
+        let rows =
+            sqlx::query("SELECT key, value FROM service_config WHERE service_name = 'aether-io'")
+                .fetch_all(&self.pool)
+                .await?;
 
         for row in rows {
             let key: String = row.try_get("key")?;
@@ -329,9 +344,7 @@ impl ConfigExporter {
             match key.as_str() {
                 "service_name" => config.service.name = value,
                 "api_host" => config.api.host = value,
-                "service.port" | "api_port" | "port" => {
-                    config.api.port = value.parse().unwrap_or(6000)
-                },
+                "service.port" => config.api.port = Self::parse_service_port("aether-io", &value)?,
                 "log_level" => config.logging.level = value,
                 "log_file_prefix" => config.logging.file_prefix = Some(value),
                 _ => {},
@@ -491,9 +504,11 @@ impl ConfigExporter {
     async fn export_automation_config(&self) -> Result<AutomationConfig> {
         let mut config = AutomationConfig::default();
 
-        let rows = sqlx::query("SELECT key, value FROM service_config")
-            .fetch_all(&self.pool)
-            .await?;
+        let rows = sqlx::query(
+            "SELECT key, value FROM service_config WHERE service_name = 'aether-automation'",
+        )
+        .fetch_all(&self.pool)
+        .await?;
 
         for row in rows {
             let key: String = row.try_get("key")?;
@@ -502,8 +517,8 @@ impl ConfigExporter {
             match key.as_str() {
                 "service_name" => config.service.name = value,
                 "api_host" => config.api.host = value,
-                "service.port" | "api_port" | "port" => {
-                    config.api.port = value.parse().unwrap_or(common::service_ports::IO_PORT)
+                "service.port" => {
+                    config.api.port = Self::parse_service_port("aether-automation", &value)?
                 },
                 _ => {},
             }
@@ -550,21 +565,20 @@ impl ConfigExporter {
             )
             .bind(instance_id)
             .fetch_all(&self.pool)
-            .await
-            .unwrap_or_default();
+            .await?;
 
             if !prop_rows.is_empty() {
                 let mut props_map = serde_json::Map::new();
                 for pr in prop_rows {
                     let pid: i64 = pr.try_get("property_id")?;
                     let val_json: String = pr.try_get("value_json")?;
-                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&val_json) {
-                        props_map.insert(pid.to_string(), val);
-                    }
+                    let val = serde_json::from_str::<serde_json::Value>(&val_json).with_context(
+                        || format!("instance {instance_id} property {pid} contains invalid JSON"),
+                    )?;
+                    props_map.insert(pid.to_string(), val);
                 }
-                if let Ok(yaml_props) = serde_yml::to_value(serde_json::Value::Object(props_map)) {
-                    instance_data.insert("properties".to_string(), yaml_props);
-                }
+                let yaml_props = serde_yml::to_value(serde_json::Value::Object(props_map))?;
+                instance_data.insert("properties".to_string(), yaml_props);
             }
 
             instances.insert(instance_name, instance_data);
@@ -642,9 +656,11 @@ impl ConfigExporter {
     async fn export_rules_config(&self) -> Result<RulesConfig> {
         let mut config = RulesConfig::default();
 
-        let rows = sqlx::query("SELECT key, value FROM service_config")
-            .fetch_all(&self.pool)
-            .await?;
+        let rows = sqlx::query(
+            "SELECT key, value FROM service_config WHERE service_name = 'aether-automation'",
+        )
+        .fetch_all(&self.pool)
+        .await?;
 
         for row in rows {
             let key: String = row.try_get("key")?;
@@ -653,13 +669,9 @@ impl ConfigExporter {
             match key.as_str() {
                 "service_name" => config.service.name = value,
                 "api_host" => config.api.host = value,
-                "service.port" | "api_port" | "port" => {
-                    config.api.port = value
-                        .parse()
-                        .unwrap_or(common::service_ports::AUTOMATION_PORT)
+                "service.port" => {
+                    config.api.port = Self::parse_service_port("aether-automation", &value)?
                 },
-                // execution_interval and batch_size are deprecated
-                "execution_interval" | "batch_size" => {},
                 _ => {},
             }
         }
@@ -683,8 +695,10 @@ impl ConfigExporter {
             let enabled: bool = row.try_get("enabled")?;
             let priority: i64 = row.try_get("priority")?;
 
-            // Parse flow_json string to serde_json::Value
-            let flow_json = serde_json::from_str(&flow_json_str).unwrap_or(serde_json::Value::Null);
+            let flow_json = serde_json::from_str(&flow_json_str)
+                .with_context(|| format!("rule {id} has corrupt flow_json"))?;
+            let priority = u32::try_from(priority)
+                .with_context(|| format!("rule {id} has invalid priority {priority}"))?;
 
             let rule = RuleConfig {
                 core: RuleCore {
@@ -692,7 +706,7 @@ impl ConfigExporter {
                     name,
                     description,
                     enabled,
-                    priority: u32::try_from(priority).unwrap_or(0),
+                    priority,
                 },
                 flow_json,
             };
@@ -720,14 +734,17 @@ impl ConfigExporter {
             let mappings_snapshot: String = row.try_get("mappings_snapshot")?;
             let source_channel_id: Option<i64> = row.try_get("source_channel_id")?;
 
+            let points_snapshot = serde_json::from_str::<serde_json::Value>(&points_snapshot)
+                .with_context(|| format!("template {name:?} has corrupt points_snapshot"))?;
+            let mappings_snapshot =
+                serde_json::from_str::<serde_json::Value>(&mappings_snapshot)
+                    .with_context(|| format!("template {name:?} has corrupt mappings_snapshot"))?;
             let template = serde_json::json!({
                 "name": name,
                 "description": description,
                 "protocol": protocol,
-                "points_snapshot": serde_json::from_str::<serde_json::Value>(&points_snapshot)
-                    .unwrap_or(serde_json::Value::Null),
-                "mappings_snapshot": serde_json::from_str::<serde_json::Value>(&mappings_snapshot)
-                    .unwrap_or(serde_json::Value::Null),
+                "points_snapshot": points_snapshot,
+                "mappings_snapshot": mappings_snapshot,
                 "source_channel_id": source_channel_id,
             });
 
@@ -762,8 +779,10 @@ impl ConfigExporter {
             let priority: i64 = row.try_get("priority")?;
             let cooldown_ms: i64 = row.try_get("cooldown_ms")?;
 
-            let flow_json: serde_json::Value =
-                serde_json::from_str(&flow_json_str).unwrap_or(serde_json::Value::Null);
+            let flow_json: serde_json::Value = serde_json::from_str(&flow_json_str)
+                .with_context(|| format!("rule {id} has corrupt flow_json"))?;
+            let priority = u32::try_from(priority)
+                .with_context(|| format!("rule {id} has invalid priority {priority}"))?;
 
             let rule_file = serde_json::json!({
                 "name": name,
@@ -831,5 +850,111 @@ fn insert_nested(root: &mut serde_yml::Mapping, parts: &[&str], value: serde_yml
 
     if let serde_yml::Value::Mapping(nested) = entry {
         insert_nested(nested, &parts[1..], value);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    async fn exporter() -> ConfigExporter {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("open in-memory export database");
+        common::schema::init_io_schema(&pool)
+            .await
+            .expect("initialize IO schema");
+        common::schema::init_automation_schema(&pool)
+            .await
+            .expect("initialize automation schema");
+        common::schema::init_rules_schema(&pool)
+            .await
+            .expect("initialize rules schema");
+        ConfigExporter::new(pool)
+    }
+
+    #[tokio::test]
+    async fn present_invalid_service_port_fails_closed() {
+        let exporter = exporter().await;
+        sqlx::query(
+            "INSERT INTO service_config (service_name, key, value, type) VALUES (?, ?, ?, ?)",
+        )
+        .bind("aether-io")
+        .bind("service.port")
+        .bind("not-a-port")
+        .bind("number")
+        .execute(&exporter.pool)
+        .await
+        .expect("insert corrupt port fixture");
+
+        let error = exporter
+            .export_io_config()
+            .await
+            .expect_err("invalid present port must not become a default");
+        assert!(error.to_string().contains("service.port"), "{error:#}");
+    }
+
+    #[tokio::test]
+    async fn corrupt_rule_json_and_priority_fail_closed() {
+        let exporter = exporter().await;
+        sqlx::query(
+            "INSERT INTO rules (id, name, nodes_json, flow_json, priority) VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(7_i64)
+        .bind("corrupt")
+        .bind("{}")
+        .bind("not-json")
+        .bind(1_i64)
+        .execute(&exporter.pool)
+        .await
+        .expect("insert corrupt rule fixture");
+
+        let error = exporter
+            .export_rules_list()
+            .await
+            .expect_err("corrupt flow_json must not become null");
+        assert!(error.to_string().contains("flow_json"), "{error:#}");
+
+        sqlx::query("UPDATE rules SET flow_json = '{}', priority = -1 WHERE id = 7")
+            .execute(&exporter.pool)
+            .await
+            .expect("replace with corrupt priority fixture");
+        let error = exporter
+            .export_rules_list()
+            .await
+            .expect_err("negative priority must not become zero");
+        assert!(error.to_string().contains("priority"), "{error:#}");
+    }
+
+    #[tokio::test]
+    async fn corrupt_global_types_and_template_snapshots_fail_closed() {
+        let exporter = exporter().await;
+        sqlx::query(
+            "INSERT INTO service_config (service_name, key, value, type) VALUES ('global', 'limit', '1', 'integer')",
+        )
+        .execute(&exporter.pool)
+        .await
+        .expect("insert retired global type fixture");
+        let output = tempfile::tempdir().expect("temporary export directory");
+        let error = exporter
+            .export_global(output.path())
+            .await
+            .expect_err("retired global type must not be inferred");
+        assert!(error.to_string().contains("unsupported type"), "{error:#}");
+
+        sqlx::query(
+            "INSERT INTO channel_templates (name, protocol, points_snapshot, mappings_snapshot) VALUES ('corrupt', 'modbus_tcp', 'not-json', '{}')",
+        )
+        .execute(&exporter.pool)
+        .await
+        .expect("insert corrupt template fixture");
+        let error = exporter
+            .export_channel_templates()
+            .await
+            .expect_err("corrupt template snapshot must not become null");
+        assert!(error.to_string().contains("points_snapshot"), "{error:#}");
     }
 }

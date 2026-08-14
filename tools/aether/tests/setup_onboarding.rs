@@ -149,9 +149,11 @@ fn default_setup_plan_is_structured_and_persistently_read_only() {
     );
     let envelope = parse_json_output(&output);
     assert_eq!(envelope.get("success"), Some(&serde_json::json!(true)));
+    assert_eq!(envelope.pointer("/data/plan_schema_version"), None);
+    assert_eq!(envelope.pointer("/data/core_schema_version"), None);
     assert_eq!(
-        envelope.pointer("/data/plan_schema_version"),
-        Some(&serde_json::json!(2))
+        envelope.pointer("/data/database_revision"),
+        Some(&serde_json::json!(13))
     );
     assert_eq!(
         envelope.pointer("/data/aether_version"),

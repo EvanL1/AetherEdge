@@ -211,6 +211,13 @@ impl ReconnectingSlotSource {
         Ok(())
     }
 
+    /// Validates the canonical identity, pinned publication, stable generation,
+    /// and configured writer-heartbeat deadline without reading a point slot.
+    /// This is intended for readiness probes, including empty manifests.
+    pub fn validate_freshness(&self) -> PortResult<()> {
+        self.with_reader(|_| Ok(()))
+    }
+
     fn ensure_current(&self) -> PortResult<()> {
         let now = Instant::now();
         {
@@ -455,7 +462,10 @@ fn validate_writer_freshness(reader: &SlotReader, timeout: Duration) -> PortResu
         .unwrap_or_default()
         .as_millis() as u64;
     let timeout_ms = timeout.as_millis() as u64;
-    if heartbeat == 0 || now_ms.saturating_sub(heartbeat) > timeout_ms {
+    // A heartbeat from the future is not fresh. It indicates either a wall
+    // clock rollback or corrupted/stale shared state and must fail closed;
+    // `saturating_sub` alone would otherwise accept it until time caught up.
+    if heartbeat == 0 || heartbeat > now_ms || now_ms - heartbeat > timeout_ms {
         return Err(PortError::new(
             PortErrorKind::Unavailable,
             format!(
@@ -498,7 +508,8 @@ mod tests {
     use super::*;
 
     fn live_writer(path: &Path) -> SlotWriter {
-        let writer = SlotWriter::create(path, 3, 0xA37E, 11).expect("create v5 SHM test writer");
+        let writer =
+            SlotWriter::create(path, 3, 0xA37E, 11).expect("create canonical SHM test writer");
         writer.set_direct(0, 10.0, 100.0, 1_000, 0);
         writer.set_direct(1, 20.0, 200.0, 2_000, 0);
         writer.set_direct(2, 30.0, 300.0, 3_000, 0);
@@ -571,5 +582,28 @@ mod tests {
             .expect_err("post-read generation fence must reject the batch");
 
         assert_eq!(error.kind(), PortErrorKind::Conflict);
+    }
+
+    #[test]
+    fn ordinary_reads_reject_a_writer_heartbeat_from_the_future() {
+        let directory = tempfile::tempdir().expect("temporary SHM directory");
+        let path = directory.path().join("future-heartbeat.shm");
+        let writer = live_writer(&path);
+        writer.update_heartbeat(crate::timestamp_ms().saturating_add(60_000));
+        let source = ReconnectingSlotSource::new(
+            ShmClientConfig::new(&path, 0xA37E)
+                .with_identity_check_interval(Duration::from_secs(60))
+                .with_writer_stale_after(Duration::from_secs(60)),
+        );
+        source
+            .accept_publication_identity(11, writer.generation())
+            .expect("pin the physical publication");
+
+        let error = source
+            .read_slot(0)
+            .expect_err("a future heartbeat must fail closed");
+
+        assert_eq!(error.kind(), PortErrorKind::Unavailable);
+        assert!(error.to_string().contains("heartbeat"));
     }
 }

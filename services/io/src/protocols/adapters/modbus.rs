@@ -17,7 +17,7 @@ use tracing::debug;
 use voltage_modbus::{ModbusTcpClient, TcpTransport};
 
 #[cfg(feature = "modbus")]
-use voltage_modbus::{ModbusRtuClient, RtuTransport};
+use voltage_modbus::{ModbusResult, ModbusRtuClient, RtuTransport};
 
 use aether_core::PointType;
 
@@ -65,6 +65,11 @@ const DEFAULT_POLLING_INTERVAL_MS: u64 = 1000;
 pub struct ModbusChannel {
     config: ModbusChannelConfig,
     client: Option<ModbusClientWrapper>,
+    /// A serial-device open can remain blocked inside the OS after the caller's
+    /// deadline. Retain that attempt so reconnect ticks cannot spawn an
+    /// unbounded number of blocking opens for the same channel.
+    #[cfg(feature = "modbus")]
+    rtu_open_attempt: Option<tokio::task::JoinHandle<ModbusResult<RtuTransport>>>,
     state: ConnectionState,
     diagnostics: Arc<AtomicDiagnostics>,
 
@@ -83,6 +88,8 @@ impl ModbusChannel {
         Self {
             config,
             client: None,
+            #[cfg(feature = "modbus")]
+            rtu_open_attempt: None,
             state: ConnectionState::Disconnected,
             diagnostics: Arc::new(AtomicDiagnostics::new()),
             grouped_points: OnceLock::new(),
@@ -149,7 +156,9 @@ impl ModbusChannel {
             example_config: serde_json::json!({
                 "host": "192.168.1.100",
                 "port": 502,
+                "connect_timeout_ms": 5000,
                 "read_timeout_ms": 3000,
+                "write_timeout_ms": 3000,
                 "poll_interval_ms": 1000
             }),
             parameters: vec![
@@ -168,9 +177,25 @@ impl ModbusChannel {
                 )
                 .with_integer_range(1, u64::from(u16::MAX)),
                 ParameterMetadata::optional(
+                    "connect_timeout_ms",
+                    "Connect Timeout (ms)",
+                    "TCP connection timeout in milliseconds (1-86400000)",
+                    ParameterType::Integer,
+                    serde_json::json!(5000),
+                )
+                .with_integer_range(1, 86_400_000),
+                ParameterMetadata::optional(
                     "read_timeout_ms",
                     "Read Timeout (ms)",
-                    "Read operation timeout in milliseconds (1-86400000)",
+                    "Complete Modbus read-request timeout in milliseconds (1-86400000)",
+                    ParameterType::Integer,
+                    serde_json::json!(3000),
+                )
+                .with_integer_range(1, 86_400_000),
+                ParameterMetadata::optional(
+                    "write_timeout_ms",
+                    "Write Timeout (ms)",
+                    "Complete Modbus write-request timeout, including response acknowledgement, in milliseconds (1-86400000); independent default: 3000",
                     ParameterType::Integer,
                     serde_json::json!(3000),
                 )
@@ -190,7 +215,9 @@ impl ModbusChannel {
             example_config: serde_json::json!({
                 "device": "/dev/ttyUSB0",
                 "baud_rate": 9600,
+                "connect_timeout_ms": 5000,
                 "read_timeout_ms": 3000,
+                "write_timeout_ms": 3000,
                 "poll_interval_ms": 1000
             }),
             parameters: vec![
@@ -209,9 +236,25 @@ impl ModbusChannel {
                 )
                 .with_integer_range(1, u64::from(u32::MAX)),
                 ParameterMetadata::optional(
+                    "connect_timeout_ms",
+                    "Connect Timeout (ms)",
+                    "Serial device open timeout in milliseconds (1-86400000)",
+                    ParameterType::Integer,
+                    serde_json::json!(5000),
+                )
+                .with_integer_range(1, 86_400_000),
+                ParameterMetadata::optional(
                     "read_timeout_ms",
                     "Read Timeout (ms)",
-                    "Read operation timeout in milliseconds (1-86400000)",
+                    "Complete Modbus read-request timeout in milliseconds (1-86400000)",
+                    ParameterType::Integer,
+                    serde_json::json!(3000),
+                )
+                .with_integer_range(1, 86_400_000),
+                ParameterMetadata::optional(
+                    "write_timeout_ms",
+                    "Write Timeout (ms)",
+                    "Complete Modbus write-request timeout, including response acknowledgement, in milliseconds (1-86400000); independent default: 3000",
                     ParameterType::Integer,
                     serde_json::json!(3000),
                 )
@@ -243,11 +286,11 @@ impl ModbusChannel {
 
 impl ModbusChannel {
     /// Create a Modbus client based on the configured connection mode.
-    async fn create_client(&self) -> Result<ModbusClientWrapper> {
+    async fn create_client(&mut self) -> Result<ModbusClientWrapper> {
         match self.config.connection_mode {
             ConnectionMode::Tcp => self.create_tcp_client().await,
             #[cfg(feature = "modbus")]
-            ConnectionMode::Rtu => self.create_rtu_client(),
+            ConnectionMode::Rtu => self.create_rtu_client().await,
         }
     }
 
@@ -258,8 +301,14 @@ impl ModbusChannel {
             .parse()
             .map_err(|e| GatewayError::Connection(format!("Invalid address: {}", e)))?;
 
-        match TcpTransport::new(socket_addr, self.config.connect_timeout).await {
-            Ok(mut transport) => {
+        let connect_timeout = self.config.connect_timeout;
+        let transport_timeout = self.config.read_timeout.max(self.config.write_timeout);
+        let connect = TcpTransport::new(socket_addr, transport_timeout);
+        match tokio::time::timeout(connect_timeout, connect).await {
+            Err(_) => Err(GatewayError::ConnectionTimeout(
+                connect_timeout.as_millis() as u64
+            )),
+            Ok(Ok(mut transport)) => {
                 let callback = create_packet_callback(
                     self.log_context.clone(),
                     ModbusTransportType::Tcp,
@@ -267,26 +316,84 @@ impl ModbusChannel {
                 );
                 transport.set_packet_callback(callback);
                 let client = ModbusTcpClient::from_transport(transport);
-                Ok(ModbusClientWrapper::Tcp(client))
+                Ok(ModbusClientWrapper::tcp(
+                    client,
+                    self.config.read_timeout,
+                    self.config.write_timeout,
+                ))
             },
-            Err(e) => Err(GatewayError::Connection(e.to_string())),
+            Ok(Err(e)) => Err(GatewayError::Connection(e.to_string())),
         }
     }
 
     #[cfg(feature = "modbus")]
-    fn create_rtu_client(&self) -> Result<ModbusClientWrapper> {
-        match RtuTransport::new(&self.config.rtu_device, self.config.baud_rate) {
-            Ok(mut transport) => {
-                let callback = create_packet_callback(
-                    self.log_context.clone(),
-                    ModbusTransportType::Rtu,
-                    self.current_group_id.clone(),
-                );
-                transport.set_packet_callback(callback);
-                let client = ModbusRtuClient::from_transport(transport);
-                Ok(ModbusClientWrapper::Rtu(client))
+    async fn create_rtu_client(&mut self) -> Result<ModbusClientWrapper> {
+        let connect_timeout = self.config.connect_timeout;
+        if self.rtu_open_attempt.is_none() {
+            let device = self.config.rtu_device.clone();
+            let baud_rate = self.config.baud_rate;
+            let transport_timeout = self.config.read_timeout.max(self.config.write_timeout);
+            self.rtu_open_attempt = Some(tokio::task::spawn_blocking(move || {
+                RtuTransport::new_with_config(
+                    &device,
+                    baud_rate,
+                    tokio_serial::DataBits::Eight,
+                    tokio_serial::StopBits::One,
+                    tokio_serial::Parity::None,
+                    transport_timeout,
+                )
+            }));
+        }
+
+        let open_result = {
+            let open = self.rtu_open_attempt.as_mut().ok_or_else(|| {
+                GatewayError::Internal("Modbus RTU open task is unavailable".to_string())
+            })?;
+            tokio::time::timeout(connect_timeout, open).await
+        };
+        let joined = match open_result {
+            Ok(joined) => joined,
+            Err(_) => {
+                return Err(GatewayError::ConnectionTimeout(
+                    connect_timeout.as_millis() as u64
+                ));
             },
-            Err(e) => Err(GatewayError::Connection(e.to_string())),
+        };
+        self.rtu_open_attempt.take();
+        let mut transport = joined
+            .map_err(|error| {
+                GatewayError::Internal(format!("Modbus RTU open task failed: {error}"))
+            })?
+            .map_err(|error| GatewayError::Connection(error.to_string()))?;
+        let callback = create_packet_callback(
+            self.log_context.clone(),
+            ModbusTransportType::Rtu,
+            self.current_group_id.clone(),
+        );
+        transport.set_packet_callback(callback);
+        let client = ModbusRtuClient::from_transport(transport);
+        Ok(ModbusClientWrapper::rtu(
+            client,
+            self.config.read_timeout,
+            self.config.write_timeout,
+        ))
+    }
+
+    /// Return transport recovery to the channel lifecycle after any I/O
+    /// failure. `voltage_modbus` can reconnect internally on the next request,
+    /// but that path does not receive this channel's `connect_timeout`.
+    async fn discard_unusable_client(&mut self) {
+        let unusable = self
+            .client
+            .as_ref()
+            .is_some_and(|client| !client.is_usable());
+        if unusable {
+            self.client.take();
+            let old_state = self.state;
+            self.state = ConnectionState::Error;
+            self.log_context
+                .log_state_changed(old_state, ConnectionState::Error)
+                .await;
         }
     }
 }
@@ -406,6 +513,8 @@ impl ModbusChannel {
             }
         }
 
+        self.discard_unusable_client().await;
+
         self.diagnostics.add_write(success_count as u64);
         let error_count = failures.len();
         if error_count > 0 {
@@ -500,6 +609,8 @@ impl ModbusChannel {
                 )),
             }
         }
+
+        self.discard_unusable_client().await;
 
         self.diagnostics.add_write(success_count as u64);
         let error_count = failures.len();
@@ -601,7 +712,7 @@ impl ChannelRuntime for ModbusChannel {
                 .config
                 .points
                 .iter()
-                .map(|p| PointFailure::new(p.id, "Not connected"))
+                .map(|p| PointFailure::typed(p.id, p.point_type, "Not connected"))
                 .collect();
             return PollResult::failed(failures);
         }
@@ -612,7 +723,13 @@ impl ChannelRuntime for ModbusChannel {
                 self.config
                     .points
                     .iter()
-                    .map(|point| PointFailure::new(point.id, "Point grouping unavailable"))
+                    .map(|point| {
+                        PointFailure::typed(
+                            point.id,
+                            point.point_type,
+                            "Point grouping unavailable",
+                        )
+                    })
                     .collect(),
             );
         };
@@ -625,15 +742,13 @@ impl ChannelRuntime for ModbusChannel {
                 .config
                 .points
                 .iter()
-                .map(|p| PointFailure::new(p.id, "Client unavailable"))
+                .map(|p| PointFailure::typed(p.id, p.point_type, "Client unavailable"))
                 .collect();
             return PollResult::failed(failures);
         };
 
         let mut batch = DataBatch::default();
         let mut read_count = 0u64;
-        let mut error_count = 0u64;
-
         let total_points: usize = groups.values().map(Vec::len).sum();
         let mut failures = Vec::with_capacity(total_points);
 
@@ -643,7 +758,7 @@ impl ChannelRuntime for ModbusChannel {
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
                 + 1;
 
-            let results = super::modbus_poll::read_point_group(
+            let group_result = super::modbus_poll::read_point_group(
                 client,
                 point_indices,
                 &self.config.points,
@@ -652,30 +767,30 @@ impl ChannelRuntime for ModbusChannel {
             )
             .await;
 
-            if results.is_empty() && !point_indices.is_empty() {
-                error_count += 1;
-                for index in point_indices {
-                    failures.push(PointFailure::new(
-                        self.config.points[*index].id,
-                        "Read failed - no response",
-                    ));
-                }
-            }
-
-            if !results.is_empty() {
+            if !group_result.points.is_empty() {
                 self.log_context
-                    .log_point_values(&results, Some(group_id))
+                    .log_point_values(&group_result.points, Some(group_id))
                     .await;
             }
 
-            for (_point_id, data_point) in results {
+            for (_point_id, data_point) in group_result.points {
                 batch.add(data_point);
                 read_count += 1;
             }
+            failures.extend(group_result.failures);
         }
 
+        self.discard_unusable_client().await;
+
         self.diagnostics.add_read(read_count);
-        self.diagnostics.add_error(error_count);
+        let error_count = failures.len() as u64;
+        if let Some(last_failure) = failures.last() {
+            self.diagnostics.record_error(format!(
+                "point {} read failed: {}",
+                last_failure.point_id, last_failure.error
+            ));
+            self.diagnostics.add_error(error_count.saturating_sub(1));
+        }
 
         let duration_ms = start_time.elapsed().as_millis() as u64;
 
@@ -771,17 +886,105 @@ impl ChannelRuntime for ModbusChannel {
 #[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
+
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    use crate::protocols::core::point::DataFormat;
+
+    const TEST_IO_TIMEOUT: Duration = Duration::from_millis(50);
+
+    async fn silent_tcp_peer() -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind silent Modbus peer");
+        let address = listener.local_addr().expect("silent peer address");
+        let task = tokio::spawn(async move {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                return;
+            };
+            let mut request = [0u8; 12];
+            if stream.read_exact(&mut request).await.is_ok() {
+                std::future::pending::<()>().await;
+            }
+        });
+        (address, task)
+    }
+
+    async fn staged_tcp_peer() -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind staged Modbus peer");
+        let address = listener.local_addr().expect("staged peer address");
+        let task = tokio::spawn(async move {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                return;
+            };
+            let mut request = [0u8; 12];
+            if stream.read_exact(&mut request).await.is_err() {
+                return;
+            }
+
+            let response = if request[7] == 3 {
+                vec![request[0], request[1], 0, 0, 0, 5, request[6], 3, 2, 0, 42]
+            } else {
+                request.to_vec()
+            };
+
+            // Each transport read phase completes within the configured
+            // deadline, while the complete response deliberately exceeds it.
+            tokio::time::sleep(Duration::from_millis(70)).await;
+            if stream.write_all(&response[..8]).await.is_err() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(70)).await;
+            let _ = stream.write_all(&response[8..]).await;
+        });
+        (address, task)
+    }
+
+    async fn malformed_mbap_peer() -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind malformed Modbus peer");
+        let address = listener.local_addr().expect("malformed peer address");
+        let task = tokio::spawn(async move {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                return;
+            };
+            let mut request = [0u8; 12];
+            if stream.read_exact(&mut request).await.is_err() {
+                return;
+            }
+            let malformed = [request[0], request[1], 0, 0, 0, 1, request[6], request[7]];
+            let _ = stream.write_all(&malformed).await;
+        });
+        (address, task)
+    }
+
+    fn assert_io_deadline(elapsed: Duration) {
+        assert!(
+            elapsed >= Duration::from_millis(30),
+            "operation returned before the configured deadline: {elapsed:?}"
+        );
+        assert!(
+            elapsed < Duration::from_millis(500),
+            "operation ignored the configured deadline: {elapsed:?}"
+        );
+    }
 
     #[test]
     fn test_modbus_channel_config() {
         let config = ModbusChannelConfig::tcp("127.0.0.1:502")
             .with_connect_timeout(Duration::from_secs(10))
-            .with_io_timeout(Duration::from_secs(5));
+            .with_read_timeout(Duration::from_secs(5))
+            .with_write_timeout(Duration::from_secs(7));
 
         assert_eq!(config.address, "127.0.0.1:502");
         assert_eq!(config.connect_timeout, Duration::from_secs(10));
-        assert_eq!(config.io_timeout, Duration::from_secs(5));
+        assert_eq!(config.read_timeout, Duration::from_secs(5));
+        assert_eq!(config.write_timeout, Duration::from_secs(7));
     }
 
     #[test]
@@ -790,6 +993,204 @@ mod tests {
         let channel = ModbusChannel::new(config, 1);
 
         assert_eq!(channel.name(), "Modbus TCP");
+    }
+
+    #[tokio::test]
+    async fn silent_tcp_read_uses_read_timeout_not_connect_or_write_timeout() {
+        let (address, peer) = silent_tcp_peer().await;
+        let config = ModbusChannelConfig::tcp(address.to_string())
+            .with_connect_timeout(Duration::from_secs(2))
+            .with_read_timeout(TEST_IO_TIMEOUT)
+            .with_write_timeout(Duration::from_millis(400))
+            .with_points(vec![PointConfig::telemetry(
+                1,
+                ModbusAddress::holding_register(1, 0, DataFormat::UInt16),
+            )]);
+        let mut channel = ModbusChannel::new(config, 1);
+        channel.connect().await.expect("connect silent peer");
+
+        let started = Instant::now();
+        let result = tokio::time::timeout(Duration::from_millis(750), channel.poll_once())
+            .await
+            .expect("adapter-level read deadline");
+
+        assert_io_deadline(started.elapsed());
+        assert_eq!(result.failure_count(), 1);
+        assert!(result.failures[0].error.contains("Timeout after 50ms"));
+        peer.abort();
+    }
+
+    #[tokio::test]
+    async fn silent_tcp_write_acknowledgement_uses_write_timeout() {
+        let (address, peer) = silent_tcp_peer().await;
+        let config = ModbusChannelConfig::tcp(address.to_string())
+            .with_connect_timeout(Duration::from_secs(2))
+            .with_read_timeout(Duration::from_millis(400))
+            .with_write_timeout(TEST_IO_TIMEOUT)
+            .with_points(vec![PointConfig::control(
+                7,
+                ModbusAddress {
+                    slave_id: 1,
+                    function_code: 5,
+                    register: 0,
+                    format: DataFormat::Bool,
+                    byte_order: Default::default(),
+                    bit_position: None,
+                },
+            )]);
+        let mut channel = ModbusChannel::new(config, 2);
+        channel.connect().await.expect("connect silent peer");
+
+        let started = Instant::now();
+        let result = tokio::time::timeout(
+            Duration::from_millis(750),
+            channel.write_control(&[ControlCommand::latching(7, true)]),
+        )
+        .await
+        .expect("adapter-level write deadline")
+        .expect("typed write result");
+
+        assert_io_deadline(started.elapsed());
+        assert_eq!(result.success_count, 0);
+        assert_eq!(result.failures.len(), 1);
+        assert!(result.failures[0].1.contains("Timeout after 50ms"));
+        peer.abort();
+    }
+
+    #[tokio::test]
+    async fn tcp_read_deadline_covers_the_complete_staged_response() {
+        let (address, peer) = staged_tcp_peer().await;
+        let config = ModbusChannelConfig::tcp(address.to_string())
+            .with_connect_timeout(Duration::from_secs(2))
+            .with_read_timeout(Duration::from_millis(100))
+            .with_write_timeout(Duration::from_millis(400))
+            .with_points(vec![PointConfig::telemetry(
+                1,
+                ModbusAddress::holding_register(1, 0, DataFormat::UInt16),
+            )]);
+        let mut channel = ModbusChannel::new(config, 1);
+        channel.connect().await.expect("connect staged peer");
+
+        let result = tokio::time::timeout(Duration::from_millis(500), channel.poll_once())
+            .await
+            .expect("adapter-level complete request deadline");
+
+        assert_eq!(result.failure_count(), 1);
+        assert!(
+            result.failures[0]
+                .error
+                .contains("complete FC03 batch read request"),
+            "unexpected error: {}",
+            result.failures[0].error
+        );
+        assert_eq!(channel.connection_state(), ConnectionState::Error);
+        assert!(
+            channel.client.is_none(),
+            "timed-out transport must not be reused for an implicit reconnect"
+        );
+        peer.abort();
+    }
+
+    #[tokio::test]
+    async fn tcp_write_deadline_covers_the_complete_staged_acknowledgement() {
+        let (address, peer) = staged_tcp_peer().await;
+        let config = ModbusChannelConfig::tcp(address.to_string())
+            .with_connect_timeout(Duration::from_secs(2))
+            .with_read_timeout(Duration::from_millis(400))
+            .with_write_timeout(Duration::from_millis(100))
+            .with_points(vec![PointConfig::control(
+                7,
+                ModbusAddress {
+                    slave_id: 1,
+                    function_code: 5,
+                    register: 0,
+                    format: DataFormat::Bool,
+                    byte_order: Default::default(),
+                    bit_position: None,
+                },
+            )]);
+        let mut channel = ModbusChannel::new(config, 2);
+        channel.connect().await.expect("connect staged peer");
+
+        let result = tokio::time::timeout(
+            Duration::from_millis(500),
+            channel.write_control(&[ControlCommand::latching(7, true)]),
+        )
+        .await
+        .expect("adapter-level complete write deadline")
+        .expect("typed write result");
+
+        assert_eq!(result.success_count, 0);
+        assert_eq!(result.failures.len(), 1);
+        assert!(
+            result.failures[0].1.contains("complete FC05 write request"),
+            "unexpected error: {}",
+            result.failures[0].1
+        );
+        assert_eq!(channel.connection_state(), ConnectionState::Error);
+        assert!(
+            channel.client.is_none(),
+            "timed-out transport must not be reused for an implicit reconnect"
+        );
+        peer.abort();
+    }
+
+    #[tokio::test]
+    async fn malformed_tcp_frame_invalidates_transport_even_when_error_is_not_io_typed() {
+        let (address, peer) = malformed_mbap_peer().await;
+        let config = ModbusChannelConfig::tcp(address.to_string())
+            .with_connect_timeout(Duration::from_secs(2))
+            .with_read_timeout(Duration::from_millis(100))
+            .with_points(vec![PointConfig::telemetry(
+                1,
+                ModbusAddress::holding_register(1, 0, DataFormat::UInt16),
+            )]);
+        let mut channel = ModbusChannel::new(config, 3);
+        channel.connect().await.expect("connect malformed peer");
+
+        let result = channel.poll_once().await;
+
+        assert_eq!(result.failure_count(), 1);
+        assert!(result.failures[0].error.contains("Invalid MBAP length"));
+        assert_eq!(channel.connection_state(), ConnectionState::Error);
+        assert!(
+            channel.client.is_none(),
+            "a broken transport must not enter the dependency's implicit reconnect path"
+        );
+        peer.abort();
+    }
+
+    // macOS pseudo terminals cannot be reopened with the serial settings used
+    // by tokio-serial (ENOTTY). Linux CI exercises the real RTU transport path.
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn silent_rtu_read_uses_read_timeout() {
+        use tokio_serial::SerialPort;
+
+        let (_master, mut slave) = tokio_serial::SerialStream::pair().expect("create pseudo TTY");
+        slave
+            .set_exclusive(false)
+            .expect("allow RTU transport to open pseudo TTY");
+        let device = slave.name().expect("pseudo TTY device path");
+        drop(slave);
+        let config = ModbusChannelConfig::rtu(device, 9_600)
+            .with_connect_timeout(Duration::from_secs(2))
+            .with_read_timeout(TEST_IO_TIMEOUT)
+            .with_points(vec![PointConfig::telemetry(
+                1,
+                ModbusAddress::holding_register(1, 0, DataFormat::UInt16),
+            )]);
+        let mut channel = ModbusChannel::new(config, 3);
+        channel.connect().await.expect("open pseudo TTY");
+
+        let started = Instant::now();
+        let result = tokio::time::timeout(Duration::from_millis(750), channel.poll_once())
+            .await
+            .expect("adapter-level RTU read deadline");
+
+        assert_io_deadline(started.elapsed());
+        assert_eq!(result.failure_count(), 1);
+        assert!(result.failures[0].error.contains("Timeout after 50ms"));
     }
 
     #[test]
@@ -851,5 +1252,40 @@ mod tests {
 
         let channel = ModbusChannel::new(config, 1);
         assert_eq!(channel.name(), "Modbus RTU");
+    }
+
+    #[cfg(feature = "modbus")]
+    #[tokio::test]
+    async fn repeated_rtu_connect_timeouts_reuse_one_inflight_open() {
+        let config = ModbusChannelConfig::rtu("/dev/test-blocked", 9_600)
+            .with_connect_timeout(Duration::from_millis(10));
+        let mut channel = ModbusChannel::new(config, 4);
+        let pending_open = tokio::spawn(async {
+            std::future::pending::<voltage_modbus::ModbusResult<RtuTransport>>().await
+        });
+        let original_task_id = pending_open.id();
+        channel.rtu_open_attempt = Some(pending_open);
+
+        for _ in 0..3 {
+            assert!(matches!(
+                channel.create_rtu_client().await,
+                Err(GatewayError::ConnectionTimeout(10))
+            ));
+            assert_eq!(
+                channel
+                    .rtu_open_attempt
+                    .as_ref()
+                    .expect("pending RTU open remains single-flight")
+                    .id(),
+                original_task_id
+            );
+        }
+
+        let handle = channel
+            .rtu_open_attempt
+            .take()
+            .expect("pending RTU open task");
+        handle.abort();
+        let _ = handle.await;
     }
 }

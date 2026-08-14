@@ -7,7 +7,7 @@
 use crate::config::CreateInstanceRequest;
 use axum::{
     extract::{Path, Query, State},
-    http::HeaderMap,
+    http::{HeaderMap, HeaderValue},
     response::Json,
 };
 use common::SuccessResponse;
@@ -139,7 +139,7 @@ pub async fn create_instance(
         (status = 400, description = "No fields to update"),
         (status = 404, description = "Instance not found"),
         (status = 409, description = "Instance name already exists"),
-        (status = 500, description = "Database error")
+        (status = 500, description = "Database or post-commit response projection error; verify the instance by ID before retrying")
     ),
     security(
         ("bearer_auth" = [])
@@ -171,7 +171,7 @@ pub async fn update_instance(
         },
     )
     .await?;
-    let InstanceConfigurationPayload::Updated { instance_name, .. } = acceptance.payload() else {
+    let InstanceConfigurationPayload::Updated { .. } = acceptance.payload() else {
         return Err(AutomationError::InternalError(
             "instance update returned an unexpected payload".to_string(),
         ));
@@ -179,23 +179,19 @@ pub async fn update_instance(
 
     info!("Instance {} updated successfully", id);
 
-    // Query and return updated instance
-    match state.instance_manager.get_instance(id).await {
-        Ok(instance) => Ok(Json(SuccessResponse::new(json!({
-            "instance": instance,
-            "governance": governance_response(&acceptance)
-        })))),
-        Err(e) => {
-            error!("Failed to query updated instance {}: {}", id, e);
-            // Update succeeded but query failed - return id as fallback
-            Ok(Json(SuccessResponse::new(json!({
-                "instance_id": id,
-                "instance_name": instance_name,
-                "message": "Instance updated successfully but failed to retrieve details",
-                "governance": governance_response(&acceptance)
-            }))))
-        },
-    }
+    let instance = state.instance_manager.get_instance(id).await.map_err(|error| {
+        error!(
+            "Instance {} was updated but its canonical response projection failed: {}",
+            id, error
+        );
+        AutomationError::InternalError(format!(
+            "instance {id} was updated but its response projection failed; verify current state before retrying: {error}"
+        ))
+    })?;
+    Ok(Json(SuccessResponse::new(json!({
+        "instance": instance,
+        "governance": governance_response(&acceptance)
+    }))))
 }
 
 /// Delete an instance
@@ -267,7 +263,7 @@ pub(crate) async fn apply_instance_mutation(
         headers,
         confirmed,
         timestamp,
-    );
+    )?;
     let acceptance = state
         .instance_configuration_application
         .mutate(invocation.context(), mutation)
@@ -322,27 +318,25 @@ pub(crate) fn governance_response(
     path = "/api/instances/{id}/action",
     params(
         ("id" = u32, Path, description = "Instance ID"),
-        ("x-request-id" = Option<String>, Header, description = "Optional UUID audit correlation ID")
+        ("x-request-id" = String, Header, description = "Required canonical UUID; reused as the durable CommandId for safe outcome lookup")
     ),
     request_body = crate::api::dto::ActionRequest,
     responses(
-        (status = 200, description = "Action accepted by the local command plane. `completed_at_ms` is the local transport-acceptance timestamp retained for compatibility; it is not a device completion time. A terminal-audit append failure is returned here as `audit.status=incomplete` with `retryable=false`, never as a retryable dispatch error.", body = serde_json::Value,
+        (status = 200, description = "Action accepted by the local command plane. `accepted_at_ms` is the local transport-acceptance timestamp; it is not a device completion time. A terminal-audit append failure is returned here as `audit.status=incomplete` with `retryable=false`, never as a retryable dispatch error.", body = serde_json::Value,
             example = json!({
                 "message": "Action accepted by local command plane",
                 "command_id": "018f0000000070008000000000000007",
                 "request_id": "018f0000-0000-7000-8000-000000000007",
                 "audit": { "status": "recorded", "retryable": false },
-                "completed_at_ms": 1720000000000_u64
+                "accepted_at_ms": 1720000000000_u64
             })
         ),
+        (status = 400, description = "Missing, repeated, or malformed x-request-id"),
         (status = 403, description = "Credentials or permission denied the action"),
         (status = 422, description = "Invalid action request or required confirmation was not provided"),
         (status = 503, description = "The required attempted audit or downstream dispatch failed before command acceptance")
     ),
-    security(
-        ("bearer_auth" = []),
-        ("aether_service_auth" = [])
-    ),
+    security(("bearer_auth" = [])),
     tag = "automation"
 )]
 pub async fn execute_instance_action(
@@ -350,9 +344,16 @@ pub async fn execute_instance_action(
     Path(id): Path<u32>,
     headers: HeaderMap,
     Json(req): Json<ActionRequest>,
-) -> Result<Json<SuccessResponse<serde_json::Value>>, AutomationError> {
+) -> Result<Json<SuccessResponse<serde_json::Value>>, (HeaderMap, AutomationError)> {
+    require_device_action_request_id(&headers).map_err(|error| (HeaderMap::new(), error))?;
     let point_id = req.point_id.parse::<u32>().map_err(|_| {
-        AutomationError::InvalidData(format!("action point_id must be numeric: {}", req.point_id))
+        (
+            HeaderMap::new(),
+            AutomationError::InvalidData(format!(
+                "action point_id must be numeric: {}",
+                req.point_id
+            )),
+        )
     })?;
     let timestamp_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
     let invocation = crate::api::http_boundary::command_invocation_from_headers(
@@ -360,7 +361,10 @@ pub async fn execute_instance_action(
         &headers,
         req.confirmed,
         aether_domain::TimestampMs::new(timestamp_ms),
-    );
+    )
+    .map_err(|error| (HeaderMap::new(), error))?;
+    let identity_headers =
+        command_identity_headers(invocation.context().request_id(), invocation.command_id());
     let target = aether_domain::PointAddress::new(
         aether_domain::InstanceId::new(id),
         aether_domain::PointKind::Action,
@@ -375,7 +379,7 @@ pub async fn execute_instance_action(
             req.value,
         )
         .await
-        .map_err(AutomationError::from)?;
+        .map_err(|error| (identity_headers, AutomationError::from(error)))?;
     if let Some(failure) = acceptance.completion_audit().failure() {
         error!(
             request_id = acceptance.request_id(),
@@ -394,6 +398,64 @@ pub async fn execute_instance_action(
         "audit": crate::api::http_boundary::completion_audit_response(
             acceptance.completion_audit()
         ),
-        "completed_at_ms": acceptance.completed_at().get()
+        "accepted_at_ms": acceptance.accepted_at().get()
     }))))
+}
+
+fn require_device_action_request_id(headers: &HeaderMap) -> Result<(), AutomationError> {
+    if headers.contains_key("x-request-id") {
+        return Ok(());
+    }
+    Err(AutomationError::InvalidData(
+        "x-request-id is required for device actions and must be reused after an ambiguous response"
+            .to_string(),
+    ))
+}
+
+fn command_identity_headers(request_id: &str, command_id: aether_domain::CommandId) -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    if let Ok(value) = HeaderValue::from_str(request_id) {
+        headers.insert("x-request-id", value);
+    }
+    if let Ok(value) = HeaderValue::from_str(&format!("{:032x}", command_id.get())) {
+        headers.insert("x-command-id", value);
+    }
+    headers
+}
+
+#[cfg(test)]
+mod command_identity_tests {
+    use super::*;
+
+    #[test]
+    fn ambiguous_dispatch_headers_expose_the_outcome_lookup_identity() {
+        let request_id = "018f0000-0000-7000-8000-000000000041";
+        let command_id = aether_domain::CommandId::new(
+            uuid::Uuid::parse_str(request_id)
+                .expect("canonical request UUID")
+                .as_u128(),
+        );
+        let headers = command_identity_headers(request_id, command_id);
+
+        assert_eq!(
+            headers
+                .get("x-request-id")
+                .and_then(|value| value.to_str().ok()),
+            Some(request_id)
+        );
+        assert_eq!(
+            headers
+                .get("x-command-id")
+                .and_then(|value| value.to_str().ok()),
+            Some("018f0000000070008000000000000041")
+        );
+    }
+
+    #[test]
+    fn device_action_requires_a_caller_owned_request_identity() {
+        assert!(matches!(
+            require_device_action_request_id(&HeaderMap::new()),
+            Err(AutomationError::InvalidData(_))
+        ));
+    }
 }

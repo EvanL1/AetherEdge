@@ -6,7 +6,6 @@
   "additionalProperties": false,
   "required": [
     "$schema",
-    "schema_version",
     "project",
     "repository",
     "scope",
@@ -16,9 +15,6 @@
   "properties": {
     "$schema": {
       "const": "https://raw.githubusercontent.com/EvanL1/AetherEdge/main/ai/docs-manifest.schema.json"
-    },
-    "schema_version": {
-      "const": 3
     },
     "project": {
       "const": "AetherEdge"

@@ -1,7 +1,7 @@
 [package]
 name = "aether-shm"
 publish = false
-version = "0.3.0"
+version = "0.0.2"
 edition = "2024"
 description = "Firmware-only shared-memory abstraction for AetherEdge"
 license = "MIT OR Apache-2.0"

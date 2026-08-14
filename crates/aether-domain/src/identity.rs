@@ -52,9 +52,9 @@ const FORBIDDEN_INSTANCE_NAME_CHARACTERS: &[char] = &['/', '\\', ':', '*', '?', 
 
 /// A validated operator-visible instance identifier.
 ///
-/// The accepted representation deliberately matches the legacy persisted/API
-/// contract: up to 64 UTF-8 bytes, no control characters, and no characters
-/// unsafe in file-system or shell-derived identifiers.
+/// The canonical representation is up to 64 UTF-8 bytes, contains no control
+/// characters, and excludes characters unsafe in file-system or shell-derived
+/// identifiers.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct InstanceName(String);
 
@@ -86,13 +86,13 @@ impl InstanceName {
         Ok(())
     }
 
-    /// Returns the stable string representation used at compatibility boundaries.
+    /// Returns the canonical string representation.
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
 
-    /// Consumes the value and returns its compatibility representation.
+    /// Consumes the value and returns its canonical representation.
     #[must_use]
     pub fn into_inner(self) -> String {
         self.0

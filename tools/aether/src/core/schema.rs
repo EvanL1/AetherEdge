@@ -235,11 +235,10 @@ async fn migrate_v1(conn: &mut sqlx::pool::PoolConnection<Sqlite>) -> Result<()>
 
 /// v2 marker retained for schema-number continuity.
 ///
-/// Domain product aliases were removed from the generic kernel in 0.5.0.
-/// Distributions that used them must apply their Pack-owned compatibility
-/// mapping before running the kernel schema upgrade.
+/// The marker performs no product-name rewriting. Product names are interpreted
+/// only by the active Pack's current manifest.
 async fn migrate_v2(_conn: &mut sqlx::pool::PoolConnection<Sqlite>) -> Result<()> {
-    info!("Migration v2: domain product aliases are Pack-owned (kernel no-op)");
+    info!("Migration v2: schema continuity marker (no-op)");
     Ok(())
 }
 
@@ -306,10 +305,10 @@ async fn migrate_v4(conn: &mut sqlx::pool::PoolConnection<Sqlite>) -> Result<()>
 /// read-modify-write of the whole map (last-write-wins on concurrent edits)
 /// and left no schema-level constraint on which keys are valid.
 ///
-/// New shape: one row per (instance_id, property_id) in `instance_properties`
-/// — mirrors `measurement_routing` / `action_routing`. Resolving legacy names
-/// to Pack-owned numeric property IDs is a distribution migration. The generic
-/// kernel performs only the structural drop after all legacy maps are empty.
+/// Canonical shape: one row per (instance_id, property_id) in
+/// `instance_properties` — mirrors `measurement_routing` / `action_routing`.
+/// The generic kernel cannot infer numeric property IDs from a name-keyed JSON
+/// map, so it performs the structural drop only after that column is empty.
 async fn migrate_v5(conn: &mut sqlx::pool::PoolConnection<Sqlite>) -> Result<()> {
     info!("Migration v5: instance properties JSON column -> instance_properties table");
 
@@ -379,8 +378,10 @@ async fn migrate_v5(conn: &mut sqlx::pool::PoolConnection<Sqlite>) -> Result<()>
     }
 
     // 4) A generic kernel cannot resolve domain property names to Pack-owned
-    //    numeric templates. Refuse to drop non-empty legacy data. The owning
-    //    distribution must first apply its versioned Pack migration asset.
+    //    numeric templates. Refuse to drop non-empty non-canonical data. An
+    //    operator must export it offline, map every value to a current numeric
+    //    property ID, and import canonical instance_properties rows before
+    //    retrying. This migration never guesses or performs that conversion.
     let legacy_property_rows: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM instances \
          WHERE properties IS NOT NULL AND TRIM(properties) NOT IN ('', '{}')",
@@ -393,8 +394,10 @@ async fn migrate_v5(conn: &mut sqlx::pool::PoolConnection<Sqlite>) -> Result<()>
             .execute(&mut **conn)
             .await?;
         anyhow::bail!(
-            "{legacy_property_rows} instances still contain Pack-owned legacy properties; \
-             apply the distribution's pre-v5 property migration before upgrading"
+            "{legacy_property_rows} instances still contain non-canonical properties JSON; \
+             fail closed: export the values offline, convert them to canonical \
+             instance_properties rows with current numeric property IDs, clear the old column, \
+             and retry the schema upgrade"
         );
     }
 
@@ -2698,7 +2701,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn generic_schema_refuses_to_drop_pack_owned_legacy_properties() -> Result<()> {
+    async fn generic_schema_refuses_to_drop_noncanonical_properties() -> Result<()> {
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
             .connect("sqlite::memory:")
@@ -2729,7 +2732,17 @@ mod tests {
             .err()
             .context("generic v5 migration unexpectedly consumed Pack-owned properties")?;
 
-        assert!(format!("{error:#}").contains("Pack-owned legacy properties"));
+        let message = format!("{error:#}");
+        assert!(message.contains("fail closed"), "{message}");
+        assert!(
+            message.contains("convert them to canonical instance_properties rows"),
+            "{message}"
+        );
+        assert!(
+            !message.contains("Pack-owned compatibility")
+                && !message.contains("pre-v5 property migration"),
+            "{message}"
+        );
         let properties: String =
             sqlx::query_scalar("SELECT properties FROM instances WHERE instance_id = 1")
                 .fetch_one(&mut *connection)

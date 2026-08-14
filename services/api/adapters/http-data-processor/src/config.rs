@@ -59,7 +59,7 @@ pub struct HttpDataProcessorConfig {
 impl HttpDataProcessorConfig {
     /// Creates an explicit configuration rooted at one processor origin.
     ///
-    /// The adapter derives `POST /v1/process` and `GET /v1/health`. Plain HTTP
+    /// The adapter derives `POST /process` and `GET /health`. Plain HTTP
     /// is accepted only for a local boundary on `localhost` or an IP loopback.
     pub fn new(
         base_url: impl AsRef<str>,
@@ -73,10 +73,10 @@ impl HttpDataProcessorConfig {
         }
         let base_url = validate_base_url(base_url.as_ref(), descriptor.data_boundary())?;
         let process_url = base_url
-            .join("v1/process")
+            .join("process")
             .map_err(|_| permanent("HTTP processor endpoint is invalid"))?;
         let health_url = base_url
-            .join("v1/health")
+            .join("health")
             .map_err(|_| permanent("HTTP processor endpoint is invalid"))?;
         Ok(Self {
             base_url,

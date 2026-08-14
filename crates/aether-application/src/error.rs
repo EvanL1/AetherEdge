@@ -62,7 +62,7 @@ pub enum ApplicationError {
     /// Canonical processing request encoding or digest calculation failed.
     #[error("data-processing codec failed: {0}")]
     ProcessingCodec(#[source] CodecError),
-    /// The exact v1 processor request exceeds the commissioned adapter limit.
+    /// The exact processor request exceeds the commissioned adapter limit.
     #[error("encoded processor request is {encoded_bytes} bytes; limit is {max_bytes} bytes")]
     ProcessingRequestTooLarge {
         /// Exact encoded request size.

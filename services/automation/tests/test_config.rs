@@ -216,40 +216,41 @@ fn test_product_with_parent() {
 }
 
 #[test]
-fn test_measurement_point_aliases() {
+fn measurement_point_accepts_only_canonical_id() {
     use aether_automation::config::MeasurementPoint;
 
-    // Test "id" alias
-    let json_id = r#"{"id": 1, "name": "Test"}"#;
-    let point: MeasurementPoint = serde_json::from_str(json_id).expect("Failed with id alias");
-    assert_eq!(point.measurement_id, 1);
-
-    // Test "index" alias
-    let json_index = r#"{"index": 2, "name": "Test2"}"#;
-    let point: MeasurementPoint =
-        serde_json::from_str(json_index).expect("Failed with index alias");
-    assert_eq!(point.measurement_id, 2);
-
-    // Test canonical name
     let json_canonical = r#"{"measurement_id": 3, "name": "Test3"}"#;
     let point: MeasurementPoint =
         serde_json::from_str(json_canonical).expect("Failed with canonical name");
     assert_eq!(point.measurement_id, 3);
+
+    for retired in [
+        r#"{"id": 1, "name": "Test"}"#,
+        r#"{"index": 2, "name": "Test2"}"#,
+        r#"{"measurement_id": 3, "id": 3, "name": "Test3"}"#,
+    ] {
+        assert!(serde_json::from_str::<MeasurementPoint>(retired).is_err());
+    }
 }
 
 #[test]
-fn test_action_point_aliases() {
-    use aether_automation::config::ActionPoint;
+fn action_and_property_points_accept_only_canonical_ids() {
+    use aether_automation::config::{ActionPoint, PropertyTemplate};
 
-    // Test "id" alias
-    let json_id = r#"{"id": 1, "name": "Start"}"#;
-    let point: ActionPoint = serde_json::from_str(json_id).expect("Failed with id alias");
+    let point: ActionPoint =
+        serde_json::from_str(r#"{"action_id": 1, "name": "Start"}"#).expect("canonical action ID");
     assert_eq!(point.action_id, 1);
+    assert!(serde_json::from_str::<ActionPoint>(r#"{"id": 1, "name": "Start"}"#).is_err());
+    assert!(serde_json::from_str::<ActionPoint>(r#"{"index": 2, "name": "Stop"}"#).is_err());
 
-    // Test "index" alias
-    let json_index = r#"{"index": 2, "name": "Stop"}"#;
-    let point: ActionPoint = serde_json::from_str(json_index).expect("Failed with index alias");
-    assert_eq!(point.action_id, 2);
+    let property: PropertyTemplate =
+        serde_json::from_str(r#"{"property_id": 4, "name": "Capacity"}"#)
+            .expect("canonical property ID");
+    assert_eq!(property.property_id, 4);
+    assert!(serde_json::from_str::<PropertyTemplate>(r#"{"id": 4, "name": "Capacity"}"#).is_err());
+    assert!(
+        serde_json::from_str::<PropertyTemplate>(r#"{"index": 4, "name": "Capacity"}"#).is_err()
+    );
 }
 
 // ============================================================================

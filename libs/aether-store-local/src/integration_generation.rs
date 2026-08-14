@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 
-const FILE_SCHEMA: &str = "aether.edge.integration-generations.v1";
+const FILE_SCHEMA: &str = "aether.edge.integration-generations";
 const MAX_FILE_BYTES: u64 = 4 * 1_024 * 1_024;
 const MAX_ENTRIES: usize = 65_536;
 

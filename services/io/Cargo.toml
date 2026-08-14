@@ -13,6 +13,21 @@ path = "src/lib.rs"
 name = "aether-io"
 path = "src/main.rs"
 
+[[bench]]
+name = "command_path"
+harness = false
+required-features = ["bench-support"]
+
+[[bench]]
+name = "io_resilience"
+harness = false
+required-features = ["bench-support"]
+
+[[bench]]
+name = "capacity_rss"
+harness = false
+required-features = ["bench-support"]
+
 [dependencies]
 # Local dependencies
 common = { path = "../../libs/common", default-features = false, features = ["sqlite", "axum", "openapi"] }
@@ -102,7 +117,8 @@ hex = "0.4"
 
 [features]
 default = ["modbus", "gpio", "openapi", "iec61850", "can"]
-modbus = ["dep:voltage_modbus"]
+bench-support = []
+modbus = ["dep:voltage_modbus", "dep:tokio-serial"]
 iec104 = ["dep:voltage_iec104"]
 opcua = ["dep:async-opcua"]
 can = ["dep:socketcan"]

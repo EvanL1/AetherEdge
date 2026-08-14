@@ -495,7 +495,7 @@ mod tests {
                 signal_name: "voltage".to_string(),
                 description: None,
                 unit: Some("V".to_string()),
-                protocol_mappings: Some(r#"{"slave_id":"1","function_code":"3","register_address":"0","data_type":"F32","byte_order":"big_endian"}"#.to_string()),
+                protocol_mappings: Some(r#"{"slave_id":1,"function_code":3,"register_address":0,"data_type":"float32","byte_order":"ABCD"}"#.to_string()),
             },
             scale: 1.0,
             offset: 0.0,
@@ -613,7 +613,7 @@ mod tests {
                 description: None,
                 unit: Some("V".to_string()),
                 protocol_mappings: Some(
-                    r#"{"can_id":"0x351","start_bit":0,"bit_length":16}"#.to_string(),
+                    r#"{"can_id":849,"start_bit":0,"bit_length":16}"#.to_string(),
                 ),
             },
             scale: 1.0,
@@ -628,7 +628,7 @@ mod tests {
         assert_eq!(points[0].can_id, 0x351);
 
         runtime_config.telemetry_points[0].base.protocol_mappings =
-            Some(r#"{"can_id":"0x351","start_bit":0,"bit_length":16,"unknown":true}"#.to_string());
+            Some(r#"{"can_id":849,"start_bit":0,"bit_length":16,"unknown":true}"#.to_string());
         assert!(convert_to_can_point_configs(&runtime_config).is_err());
     }
 

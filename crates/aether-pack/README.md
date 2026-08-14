@@ -1,6 +1,6 @@
 # aether-pack
 
-Versioned, industry-neutral domain-pack manifest loading for the Aether edge
+Industry-neutral domain-pack manifest loading for the Aether edge
 kernel. The crate validates a pack's own release identity, distribution
 identity, compatible Aether range, required capability and protocol IDs,
 explicitly uncommissioned examples, and pack-root-confined asset directories.
@@ -54,18 +54,18 @@ product catalog is embedded in the kernel.
 
 Pack-owned `mappings`, `rules`, `evaluations`, and `data_processing` tasks are
 formal indexed asset categories. Each directory contains `index.yaml` using
-`aether.pack.asset-index.v1`; manifest capability IDs, index IDs, and actual
+`aether.pack.asset-index`; manifest capability IDs, index IDs, and actual
 regular files must match exactly. Unknown fields/files, duplicate IDs or paths,
 symlinks, path escapes, media/schema mismatches, and oversized files fail
-closed. Pack v1 fixes each category to its corresponding v1 payload schema;
-changing a payload contract requires a Pack contract version change. Only
+closed. The Pack contract fixes each category to one corresponding payload
+schema. Only
 explicitly active Packs contribute namespaced
 `<pack>/<category>/<asset>` identities.
 
 The machine-readable contracts are the
-[`Pack manifest v1`](https://github.com/EvanL1/AetherEdge/blob/main/contracts/pack/pack-manifest.v1.schema.json)
+[`Pack manifest`](https://github.com/EvanL1/AetherEdge/blob/main/contracts/pack/pack-manifest.schema.json)
 and
-[`Pack asset index v1`](https://github.com/EvanL1/AetherEdge/blob/main/contracts/pack/pack-asset-index.v1.schema.json)
+[`Pack asset index`](https://github.com/EvanL1/AetherEdge/blob/main/contracts/pack/pack-asset-index.schema.json)
 schemas.
 
 Licensed under either MIT or Apache-2.0, at your option.

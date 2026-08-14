@@ -36,16 +36,12 @@ fn channel_route_key(channel_id: u32, point_kind: PointKind, point_id: &str) -> 
 }
 
 fn parse_channel_point_kind(value: &str) -> Option<PointKind> {
-    if value.eq_ignore_ascii_case("T") || value.eq_ignore_ascii_case("YC") {
-        Some(PointKind::Telemetry)
-    } else if value.eq_ignore_ascii_case("S") || value.eq_ignore_ascii_case("YX") {
-        Some(PointKind::Status)
-    } else if value.eq_ignore_ascii_case("C") || value.eq_ignore_ascii_case("YK") {
-        Some(PointKind::Command)
-    } else if value.eq_ignore_ascii_case("A") || value.eq_ignore_ascii_case("YT") {
-        Some(PointKind::Action)
-    } else {
-        None
+    match value {
+        "T" => Some(PointKind::Telemetry),
+        "S" => Some(PointKind::Status),
+        "C" => Some(PointKind::Command),
+        "A" => Some(PointKind::Action),
+        _ => None,
     }
 }
 
@@ -280,5 +276,18 @@ mod tests {
         assert!(maps.m2c.is_empty());
         assert!(maps.c2c.is_empty());
         assert_eq!(maps.total_routes(), 0);
+    }
+
+    #[test]
+    fn point_kind_parser_rejects_retired_spellings() {
+        assert_eq!(parse_channel_point_kind("T"), Some(PointKind::Telemetry));
+        assert_eq!(parse_channel_point_kind("A"), Some(PointKind::Action));
+        for retired in ["t", "YC", "yx", "control", "adjustment"] {
+            assert_eq!(
+                parse_channel_point_kind(retired),
+                None,
+                "accepted {retired}"
+            );
+        }
     }
 }

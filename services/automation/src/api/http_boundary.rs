@@ -4,6 +4,7 @@ use aether_application::{Actor, CompletionAuditStatus, RequestContext};
 use aether_domain::{CommandId, TimestampMs};
 use axum::http::HeaderMap;
 
+use crate::error::AutomationError;
 use crate::infra::application_control::ControlAuthenticator;
 
 const AUTHORIZATION_HEADER: &str = "authorization";
@@ -33,20 +34,45 @@ pub fn command_invocation_from_headers(
     headers: &HeaderMap,
     confirmed: bool,
     timestamp: TimestampMs,
-) -> CommandInvocation {
-    let request_uuid = header_text(headers, REQUEST_ID_HEADER)
-        .and_then(|value| uuid::Uuid::parse_str(value).ok())
-        .unwrap_or_else(uuid::Uuid::new_v4);
+) -> Result<CommandInvocation, AutomationError> {
+    let mut request_ids = headers.get_all(REQUEST_ID_HEADER).iter();
+    let request_id = request_ids.next();
+    if request_ids.next().is_some() {
+        return Err(AutomationError::InvalidData(
+            "x-request-id must appear exactly once".to_string(),
+        ));
+    }
+    let request_uuid = match request_id {
+        Some(value) => {
+            let value = value.to_str().map(str::trim).map_err(|_| {
+                AutomationError::InvalidData(
+                    "x-request-id must be a canonical lowercase UUID".to_string(),
+                )
+            })?;
+            let parsed = uuid::Uuid::parse_str(value).map_err(|_| {
+                AutomationError::InvalidData(
+                    "x-request-id must be a canonical lowercase UUID".to_string(),
+                )
+            })?;
+            if parsed.to_string() != value {
+                return Err(AutomationError::InvalidData(
+                    "x-request-id must be a canonical lowercase UUID".to_string(),
+                ));
+            }
+            parsed
+        },
+        None => uuid::Uuid::new_v4(),
+    };
     // Authentication failures still enter the application as a denied actor
     // so the mandatory audit sink records the rejected attempt.
     let actor = header_text(headers, AUTHORIZATION_HEADER)
         .and_then(|authorization| authenticator.authenticate(authorization).ok())
         .unwrap_or_else(|| Actor::new("unauthenticated"));
 
-    CommandInvocation {
+    Ok(CommandInvocation {
         context: RequestContext::new(request_uuid.to_string(), actor, confirmed, timestamp),
         command_id: CommandId::new(request_uuid.as_u128()),
-    }
+    })
 }
 
 fn header_text<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {

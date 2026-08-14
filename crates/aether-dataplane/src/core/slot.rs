@@ -516,7 +516,7 @@ mod tests {
 
     #[test]
     fn test_point_slot_layout_stability() {
-        // The v5 slot ABI is exactly 32 bytes and 32-byte aligned.
+        // The canonical slot ABI is exactly 32 bytes and 32-byte aligned.
         assert_eq!(std::mem::size_of::<PointSlot>(), 32);
         assert_eq!(std::mem::align_of::<PointSlot>(), 32);
     }

@@ -1,9 +1,8 @@
 //! Stable default ports for the six-process AetherEdge runtime.
 //!
 //! These are deployment/configuration identifiers, not business-domain types.
-//! Runtime configuration may override them, but tooling and compatibility
-//! loaders share these defaults rather than depending on the retired model
-//! compatibility crate.
+//! Runtime configuration may override them, but tooling shares these defaults
+//! rather than depending on a retired model crate.
 
 /// Default port for `aether-io`.
 pub const IO_PORT: u16 = 6001;

@@ -1,7 +1,7 @@
 ---
 title: HTTP API
-description: The single remote gateway, service-local OpenAPI, authentication, and compatibility conventions
-updated: 2026-07-14
+description: The single remote gateway, service-local OpenAPI, authentication, and canonical path conventions
+updated: 2026-08-14
 ---
 
 # HTTP API
@@ -35,7 +35,7 @@ include the single gateway UI in an installer build, use:
 
 When enabled, `http://<edge-host>:6005/docs` offers a document selector for
 the gateway and all five loopback services. The gateway re-bases service paths
-onto its authenticated `/api/v1/<service>` namespace so Swagger "Try it out"
+onto its authenticated `/api/<service>` namespace so Swagger "Try it out"
 never targets a loopback port. The gateway documents are public routes, but
 protected operations still require their declared credentials. Enable the UI
 only on a trusted commissioning or development network.
@@ -48,11 +48,11 @@ loopback services:
 
 | Remote namespace | Service-local owner |
 |---|---|
-| `/api/v1/io/*` | `aether-io` |
-| `/api/v1/automation/*` | `aether-automation` |
-| `/api/v1/history/*` | `aether-history` |
-| `/api/v1/uplink/*` | `aether-uplink` |
-| `/api/v1/alarm/*` | `aether-alarm` |
+| `/api/io/*` | `aether-io` |
+| `/api/automation/*` | `aether-automation` |
+| `/api/history/*` | `aether-history` |
+| `/api/uplink/*` | `aether-uplink` |
+| `/api/alarm/*` | `aether-alarm` |
 
 The target is selected by the namespace, never by caller input. Startup
 validation accepts only explicit loopback HTTP origins. The gateway preserves
@@ -77,7 +77,7 @@ direct service port is safe to expose because some of its operations declare a
 Bearer scheme.
 
 The current full channel-configuration query can include protocol parameters
-and per-channel logging configuration. It remains compatibility debt pending a
+and per-channel logging configuration. It remains exposure debt pending a
 redacted, authenticated application query capability. Keep the io port on
 loopback and do not proxy that response to an untrusted client.
 
@@ -129,8 +129,10 @@ The owning service then applies operation-specific authorization:
 
 - io channel create, update, delete, enable, and disable require an Admin or
   Engineer Bearer JWT with `io.channel.manage`;
-- automation device actions accept a Bearer access JWT or the dedicated
-  `AetherService <token>` uplink credential;
+- io capability `device.command_outcome.read` requires a Bearer JWT with
+  `device.read`;
+- automation device actions require a Bearer access JWT with the governed
+  device-control permission;
 - automation rule management and manual execution require an Admin or Engineer
   Bearer JWT with the capability documented for the operation;
 - alarm rule mutation and alert resolution require an Admin or Engineer Bearer
@@ -148,8 +150,11 @@ declarations; the HTTP handler must not write SHM or storage directly.
 For a protected mutation, follow the operation schema exactly. Depending on the
 operation, explicit confirmation is carried as `x-aether-confirmed: true` or in
 the request body. Supply `x-request-id` when documented so retries and audit
-records share a stable correlation ID. Never assume that confirmation or
-identity may be forwarded in an undeclared header.
+records share a stable correlation ID. A physical instance action requires the
+caller to create a canonical UUID before the first request; a missing, repeated,
+or non-canonical ID is rejected. This preserves an identifier even when the
+entire HTTP response is lost. Never assume that confirmation or identity may be
+forwarded in an undeclared header.
 
 An accepted governed command includes its `request_id` and audit outcome in the
 response described by OpenAPI. If dispatch or persistence succeeded but the
@@ -158,9 +163,23 @@ state is marked incomplete and non-retryable. Retain the correlation ID and do
 not automatically submit the command again. Failure to record the attempted
 audit fails closed before dispatch.
 
-Device-command acceptance means the local command plane accepted the request;
-it is not proof that physical equipment executed it. Use feedback telemetry for
-closed-loop confirmation.
+For a device command, acceptance means io durably bound the 128-bit
+`CommandId` to the exact target, point kind, and value and admitted it to the
+owning channel queue;
+it is not proof that physical equipment executed it. Retain the returned ID
+and query `GET /api/io/api/commands/{command_id}/outcome`. States can end in
+`succeeded`, `failed`, `expired`, or `possibly_applied`; the last state means
+the physical result is unknowable and must not be automatically replayed. Use
+feedback telemetry for closed-loop confirmation even after `succeeded`, which
+is the protocol adapter's result rather than device-state proof. The default
+ledger protects a terminal identity through its expiry plus at least 24 hours;
+do not present reuse outside that bounded window as an idempotent retry.
+
+CloudLink writes require a non-empty `msgId`. Uplink deterministically maps the
+product/device domain plus that `msgId` to the caller-owned UUID and returns it
+as `commandId` in the write reply. The target and value are deliberately not
+part of this identity: reusing a `msgId` with a changed command reaches IO as
+the same CommandId and is rejected by the payload-digest conflict check.
 
 For channel commissioning, SQLite desired configuration and the active
 protocol runtime are deliberately distinct. Existing-resource mutations may
@@ -174,10 +193,10 @@ mutation. The exact headers, receipt fields, and per-operation status codes are
 defined by the I/O OpenAPI document.
 
 Automation-rule mutation bodies likewise require `expected_revision` from the
-latest rule query ETag or `x-aether-configuration-revision`. The service never
+latest rule query ETag. The service never
 substitutes its current head for a caller that omitted the revision.
 
-## Response compatibility
+## Response contracts
 
 Most business handlers return the shared success envelope:
 
@@ -189,17 +208,11 @@ Most business handlers return the shared success envelope:
 upgrades, CSV exports, and strict Data Processing responses intentionally use
 their own representations.
 
-Error responses are still migrating and may use one of these compatibility
-shapes:
-
-- `{ "success": false, "error": { "code": 400, "message": "..." } }`;
-- `{ "success": false, "message": "..." }`;
-- the versioned Data Processing `{ "error": { "code": "...", ... } }` form;
-- the flat `AetherError` mapping with `error_code`, `category`, and `retryable`.
-
-Clients must treat the operation's OpenAPI status and response content type as
-authoritative and tolerate the documented compatibility shape. Do not infer a
-universal error schema from another service.
+Each operation has exactly one response representation for each documented
+status and content type. The fixed Data Processing error object and service
+health representations are endpoint-specific contracts, not alternate
+fallback envelopes. Clients must use the operation's OpenAPI response schema;
+they must not probe or accept a second first-party wire shape.
 
 ## Contributor contract
 

@@ -10,7 +10,7 @@ Aether Data Processing is the industry-neutral application capability for
 turning governed IoT observations into validated derived data. It assembles a
 bounded input frame from Aether-owned data sources, invokes a local or remote
 processor, validates the response, and makes the result available through one
-transport-neutral application boundary. Version 1 exposes authenticated HTTP
+transport-neutral application boundary. The runtime exposes authenticated HTTP
 routes in `aether-api`; CLI and MCP bindings are not implemented yet. Any
 future transport, scheduler, or automation integration must use the same
 application boundary.
@@ -122,7 +122,7 @@ authenticated HTTP / in-process application work
                     │ validate and stamp
                     ▼
                DerivedData
-        └─ v1 direct query response
+        └─ direct query response
 ```
 
 The capability is a vertical slice through Aether's existing layers:
@@ -186,7 +186,7 @@ itself provide leakage-safe historical model backtesting.
 
 ### Current quality limitation
 
-The domain, wire contracts, and SHM v5 live path preserve sample quality. Live
+The domain, wire contracts, and current SHM live path preserve sample quality. Live
 reads combine the stored source quality with freshness policy rather than
 rewriting every finite value to `good`. The embedded history schema still
 stores numeric observations without device quality, so historical and mixed
@@ -301,7 +301,7 @@ The word "processing" is intentionally broad, so its limits must be explicit.
 | Planning / optimization | Turn observations and derived data into a proposed operating plan | Stops at validated derived data; it does not choose or schedule device actions |
 | Control | Authorize, confirm, audit, route, and dispatch device commands | A later caller must enter `ControlApplication`; processor output grants no control permission |
 
-The current v1 composition requires commissioned physical unit, scale, offset,
+The composition requires commissioned physical unit, scale, offset,
 and target sign metadata to match the task exactly. It performs alignment and
 aggregation but no runtime unit/sign conversion. A future explicit transform
 would create a task-specific view without changing the authoritative
@@ -316,20 +316,20 @@ measurement and would require its own tests and provenance.
 | External or future covariates | Configured `CovariateSource` | Copied with event-time and issue-time provenance |
 | Task and point binding | Aether configuration after sync | Resolved before the processor request |
 | Algorithm/model artifact and private transforms | Selected `DataProcessor` | Returned as processor and artifact provenance |
-| Processing output | Validated `DerivedData` | Derived, quality-bounded, expiring, and returned directly by the v1 API |
+| Processing output | Validated `DerivedData` | Derived, quality-bounded, expiring, and returned directly by the API |
 | Device action | Existing control application and dispatcher | Created only by a separate decision and control use case |
 
 `ProcessingResult` must identify the request, task and binding revision, input
 digest, processor and artifact version, issue time, expiry, status, and quality.
-Consumers reject unsupported contract versions, non-finite values, mismatched
-shapes or units, timestamps outside the task range, expired results, and
-results that cannot be tied to the submitted frame.
+Consumers accept only the configured current contract identifier and reject
+non-finite values, mismatched shapes or units, timestamps outside the task
+range, expired results, and results that cannot be tied to the submitted frame.
 
 ## AI-native governance
 
 Data Processing is AI-native because task contracts, allowed inputs, quality,
 processor provenance, permissions, egress, and failure states are
-machine-readable—not because an LLM sits in the data path. The v1 authenticated
+machine-readable—not because an LLM sits in the data path. The authenticated
 HTTP surface invokes `DataProcessingApplication`; future CLI, MCP, and scheduled
 interfaces must invoke the same use cases.
 

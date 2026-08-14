@@ -43,6 +43,7 @@ fn administrative_access_tokens_receive_the_shared_command_permissions() {
             .expect("valid access token");
         assert_eq!(actor.id(), "user:17");
         for permission in [
+            aether_auth_jwt::DEVICE_READ,
             "device.control",
             "automation.rule.execute",
             "automation.rule.manage",
@@ -67,6 +68,7 @@ fn viewer_refresh_and_malformed_credentials_never_gain_command_permissions() {
     assert!(!viewer.has_permission("automation.routing.manage"));
     assert!(!viewer.has_permission("automation.instance.manage"));
     assert!(!viewer.has_permission("io.channel.manage"));
+    assert!(viewer.has_permission(aether_auth_jwt::DEVICE_READ));
 
     assert_eq!(
         authenticator.authenticate(&format!("Bearer {}", token("Admin", "refresh"))),
@@ -165,6 +167,26 @@ fn a_scope_never_grants_what_the_role_itself_lacks() {
 
     assert!(!actor.has_permission("device.control"));
     assert!(!actor.has_permission("io.channel.manage"));
+}
+
+#[test]
+fn device_read_is_shared_by_all_supported_roles_but_remains_scope_bounded() {
+    let authenticator = AccessTokenAuthenticator::new(SECRET).expect("valid secret");
+
+    for role in ["Admin", "Engineer", "Viewer"] {
+        let actor = authenticator
+            .authenticate(&format!("Bearer {}", token(role, "access")))
+            .expect("valid role token");
+        assert!(actor.has_permission(aether_auth_jwt::DEVICE_READ));
+    }
+
+    let narrowed = authenticator
+        .authenticate(&format!(
+            "Bearer {}",
+            scoped_token("Viewer", vec![aether_auth_jwt::DATA_PROCESSING_READ])
+        ))
+        .expect("valid narrowed viewer token");
+    assert!(!narrowed.has_permission(aether_auth_jwt::DEVICE_READ));
 }
 
 #[test]

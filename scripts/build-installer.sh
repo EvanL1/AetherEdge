@@ -9,8 +9,7 @@
 #   --enable-swagger: Enable the single gateway Swagger UI
 #
 # Service names: aether-io, aether-automation, aether-history, aether-api,
-# aether-uplink, aether-alarm, timescaledb (the canonical
-# aether-timescaledb name is accepted as an alias)
+# aether-uplink, aether-alarm, timescaledb
 # Service groups: rust (all six Rust services)
 #
 # Examples:
@@ -264,7 +263,7 @@ service_to_image() {
         aether-io|aether-automation|aether-history|aether-api|aether-uplink|aether-alarm)
             echo "aetherems:latest"
             ;;
-        aether-timescaledb|timescaledb)
+        timescaledb)
             echo "timescale/timescaledb:2.25.2-pg17"
             ;;
         *)

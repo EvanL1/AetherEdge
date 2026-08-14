@@ -25,7 +25,7 @@ aether-sqlite-topology = { path = "../../libs/aether-sqlite-topology" }
 
 # Async runtime
 tokio = { workspace = true }
-tokio-util = { workspace = true }
+tokio-util = { workspace = true, features = ["io"] }
 async-trait = { workspace = true }
 
 # Web framework
@@ -38,6 +38,7 @@ tracing = { workspace = true }
 # Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }
+serde_json_canonicalizer = { workspace = true }
 serde_yml = { workspace = true }
 
 # Database
@@ -45,15 +46,19 @@ sqlx = { workspace = true }
 
 # Error handling
 anyhow = { workspace = true }
+thiserror = { workspace = true }
 
 # Utilities
 chrono = { workspace = true }
 futures = { workspace = true }
 dashmap = { workspace = true }
 uuid = { workspace = true }
+sha2 = { workspace = true }
+subtle = "2.6"
 bytes = { workspace = true }
 arc-swap = "1.7"
 reqwest = { workspace = true }
+tempfile = { workspace = true }
 
 # JWT authentication
 jsonwebtoken = "9"
@@ -76,7 +81,6 @@ openapi = ["common/openapi"]
 swagger-ui = ["openapi", "dep:utoipa-swagger-ui"]
 
 [dev-dependencies]
-tempfile = { workspace = true }
 tower = { workspace = true }
 
 [lints]

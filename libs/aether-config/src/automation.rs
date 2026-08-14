@@ -122,9 +122,9 @@ pub struct Product {
 
 /// Measurement point definition (M type)
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct MeasurementPoint {
     /// Measurement point ID (unique within product)
-    #[serde(alias = "id", alias = "index")]
     pub measurement_id: u32,
 
     /// Point name
@@ -139,9 +139,9 @@ pub struct MeasurementPoint {
 
 /// Action point definition (A type)
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ActionPoint {
     /// Action point ID (unique within product)
-    #[serde(alias = "id", alias = "index")]
     pub action_id: u32,
 
     /// Action name
@@ -156,9 +156,9 @@ pub struct ActionPoint {
 
 /// Property template for instance configuration
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct PropertyTemplate {
     /// Property ID (unique within product)
-    #[serde(alias = "id", alias = "index")]
     pub property_id: i32,
 
     /// Property name

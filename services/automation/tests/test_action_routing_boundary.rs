@@ -169,7 +169,7 @@ impl RoutingFixture {
             ),
         );
         let authenticator =
-            Arc::new(ControlAuthenticator::new(JWT_SECRET, None).expect("routing authenticator"));
+            Arc::new(ControlAuthenticator::new(JWT_SECRET).expect("routing authenticator"));
         let state = Arc::new(AppState::new(
             Arc::new(aether_automation::config::AutomationConfig::default()),
             Arc::clone(&self.manager),

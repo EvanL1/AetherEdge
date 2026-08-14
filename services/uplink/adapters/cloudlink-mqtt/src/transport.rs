@@ -15,6 +15,7 @@ use rumqttc::{
     Transport,
 };
 use tokio::sync::{Mutex, mpsc};
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     CLOUDLINK_MQTT_QOS, CLOUDLINK_MQTT_RETAIN, CloudLinkMqttConfig, CloudLinkMqttError,
@@ -32,23 +33,55 @@ pub struct MqttCloudLinkTransport {
     maximum_packet_bytes: usize,
 }
 
+/// Explicit reconnecting MQTT owner driven by the service task supervisor.
+pub struct MqttCloudLinkManager {
+    config: CloudLinkMqttConfig,
+    topics: TopicNamespace,
+    outbound: mpsc::Receiver<ManagerCommand>,
+    events: mpsc::Sender<PortResult<CloudLinkTransportEvent>>,
+}
+
+impl MqttCloudLinkManager {
+    /// Owns all broker I/O until service cancellation or a permanent failure.
+    pub async fn run(self, shutdown: CancellationToken) -> PortResult<()> {
+        run_manager(
+            self.config,
+            self.topics,
+            self.outbound,
+            self.events,
+            shutdown,
+        )
+        .await
+    }
+}
+
 impl MqttCloudLinkTransport {
-    /// Validates configuration and starts one isolated reconnecting MQTT owner.
-    pub fn connect(
+    /// Validates configuration and returns an inert transport plus its manager.
+    ///
+    /// No task or network I/O starts until [`MqttCloudLinkManager::run`] is
+    /// polled by the composition root.
+    pub fn new(
         config: CloudLinkMqttConfig,
         topics: TopicNamespace,
         security: DeploymentSecurity,
-    ) -> Result<Arc<Self>, CloudLinkMqttError> {
+    ) -> Result<(Arc<Self>, MqttCloudLinkManager), CloudLinkMqttError> {
         config.validate(security)?;
         let (outbound, outbound_rx) = mpsc::channel(config.request_capacity);
         let (event_tx, events) = mpsc::channel(config.request_capacity);
         let maximum_packet_bytes = config.maximum_packet_bytes;
-        tokio::spawn(run_manager(config, topics, outbound_rx, event_tx));
-        Ok(Arc::new(Self {
-            outbound,
-            events: Mutex::new(events),
-            maximum_packet_bytes,
-        }))
+        Ok((
+            Arc::new(Self {
+                outbound,
+                events: Mutex::new(events),
+                maximum_packet_bytes,
+            }),
+            MqttCloudLinkManager {
+                config,
+                topics,
+                outbound: outbound_rx,
+                events: event_tx,
+            },
+        ))
     }
 }
 
@@ -62,6 +95,7 @@ impl CloudLinkTransport for MqttCloudLinkTransport {
                 | CloudLinkTransportRoute::HeartbeatUp
                 | CloudLinkTransportRoute::ManifestUp
                 | CloudLinkTransportRoute::TelemetryUp
+                | CloudLinkTransportRoute::AlarmUp
                 | CloudLinkTransportRoute::IntegrationTopologyUp
                 | CloudLinkTransportRoute::IntegrationObservationsUp
                 | CloudLinkTransportRoute::DataLossUp
@@ -76,6 +110,7 @@ impl CloudLinkTransport for MqttCloudLinkTransport {
             message.route(),
             CloudLinkTransportRoute::ManifestUp
                 | CloudLinkTransportRoute::TelemetryUp
+                | CloudLinkTransportRoute::AlarmUp
                 | CloudLinkTransportRoute::IntegrationTopologyUp
                 | CloudLinkTransportRoute::IntegrationObservationsUp
                 | CloudLinkTransportRoute::DataLossUp
@@ -87,9 +122,11 @@ impl CloudLinkTransport for MqttCloudLinkTransport {
             ));
         }
         self.outbound
-            .send(ManagerCommand::Baseline(message))
-            .await
-            .map_err(|_| manager_unavailable())
+            .try_send(ManagerCommand::Baseline(message))
+            .map_err(|error| match error {
+                mpsc::error::TrySendError::Full(_) => outbound_backpressure(),
+                mpsc::error::TrySendError::Closed(_) => manager_unavailable(),
+            })
     }
 
     async fn receive(&self) -> PortResult<CloudLinkTransportEvent> {
@@ -107,65 +144,83 @@ async fn run_manager(
     topics: TopicNamespace,
     mut outbound: mpsc::Receiver<ManagerCommand>,
     events: mpsc::Sender<PortResult<CloudLinkTransportEvent>>,
-) {
+    shutdown: CancellationToken,
+) -> PortResult<()> {
+    // A command which has left the service-facing channel but has not yet
+    // entered rumqttc must survive request-channel backpressure and reconnects.
+    // In particular, the task which owns `event_loop.poll()` must never await a
+    // full rumqttc request queue: only polling the event loop can make space in
+    // that queue.
+    let mut pending_outbound = None::<ManagerCommand>;
     loop {
         let (client, mut event_loop) = match mqtt_client(&config) {
             Ok(value) => value,
             Err(error) => {
-                let _ = events
-                    .send(Err(PortError::new(
-                        PortErrorKind::Permanent,
-                        error.to_string(),
-                    )))
-                    .await;
-                return;
+                let error = PortError::new(PortErrorKind::Permanent, error.to_string());
+                let _ = emit_event(
+                    &events,
+                    Err(PortError::new(PortErrorKind::Permanent, error.to_string())),
+                );
+                return Err(error);
             },
         };
         let mut waiting_packet_id = VecDeque::<Option<CloudLinkRecordIdentity>>::new();
         let mut inflight = BTreeMap::<u16, CloudLinkRecordIdentity>::new();
         let mut outbound_closed = false;
+        let mut connection_acknowledged = false;
+        let mut connected_announced = false;
+        let mut pending_subscriptions = VecDeque::<String>::new();
 
         loop {
+            if connection_acknowledged {
+                while let Some(topic) = pending_subscriptions.front() {
+                    if client
+                        .try_subscribe(topic.clone(), CLOUDLINK_MQTT_QOS)
+                        .is_err()
+                    {
+                        break;
+                    }
+                    pending_subscriptions.pop_front();
+                }
+                if pending_subscriptions.is_empty() && !connected_announced {
+                    emit_event(&events, Ok(CloudLinkTransportEvent::Connected))?;
+                    connected_announced = true;
+                }
+            }
+
+            if connected_announced
+                && let Some(ManagerCommand::Baseline(message)) = pending_outbound.as_ref()
+                && client
+                    .try_publish(
+                        topics.topic(message.route()),
+                        CLOUDLINK_MQTT_QOS,
+                        CLOUDLINK_MQTT_RETAIN,
+                        message.payload().to_vec(),
+                    )
+                    .is_ok()
+            {
+                waiting_packet_id.push_back(message.delivery().cloned());
+                pending_outbound = None;
+            }
+
             tokio::select! {
-                outgoing = outbound.recv() => {
+                _ = shutdown.cancelled() => {
+                    let _ = client.try_disconnect();
+                    return Ok(());
+                },
+                outgoing = outbound.recv(), if pending_outbound.is_none() => {
                     let Some(command) = outgoing else {
                         outbound_closed = true;
                         break;
                     };
-                    match command {
-                        ManagerCommand::Baseline(message) => {
-                            waiting_packet_id.push_back(message.delivery().cloned());
-                            if client
-                                .publish(
-                                    topics.topic(message.route()),
-                                    CLOUDLINK_MQTT_QOS,
-                                    CLOUDLINK_MQTT_RETAIN,
-                                    message.payload(),
-                                )
-                                .await
-                                .is_err()
-                            {
-                                waiting_packet_id.pop_back();
-                                break;
-                            }
-                        },
-                    }
+                    pending_outbound = Some(command);
                 },
                 event = event_loop.poll() => {
                     match event {
                         Ok(Event::Incoming(Incoming::ConnAck(_))) => {
-                            let subscriptions = topics.subscribe_topics();
-                            let mut failed = false;
-                            for topic in subscriptions {
-                                if client.subscribe(topic, CLOUDLINK_MQTT_QOS).await.is_err() {
-                                    failed = true;
-                                    break;
-                                }
-                            }
-                            if failed {
-                                break;
-                            }
-                            let _ = events.send(Ok(CloudLinkTransportEvent::Connected)).await;
+                            connection_acknowledged = true;
+                            connected_announced = false;
+                            pending_subscriptions = topics.subscribe_topics().into();
                         },
                         Ok(Event::Outgoing(Outgoing::Publish(packet_id))) => {
                             if let Some(Some(identity)) = waiting_packet_id.pop_front() {
@@ -174,9 +229,10 @@ async fn run_manager(
                         },
                         Ok(Event::Incoming(Incoming::PubAck(ack))) => {
                             if let Some(identity) = inflight.remove(&ack.pkid) {
-                                let _ = events
-                                    .send(Ok(CloudLinkTransportEvent::TransportPublished(identity)))
-                                    .await;
+                                emit_event(
+                                    &events,
+                                    Ok(CloudLinkTransportEvent::TransportPublished(identity)),
+                                )?;
                             }
                         },
                         Ok(Event::Incoming(Incoming::Publish(publication))) => {
@@ -184,15 +240,11 @@ async fn run_manager(
                                 && !publication.retain
                                 && publication.payload.len() <= config.maximum_packet_bytes;
                             let Some(route) = topics.inbound_route(&publication.topic) else {
-                                let _ = events
-                                    .send(Err(invalid_inbound_publication()))
-                                    .await;
+                                emit_event(&events, Err(invalid_inbound_publication()))?;
                                 continue;
                             };
                             if !valid_transport {
-                                let _ = events
-                                    .send(Err(invalid_inbound_publication()))
-                                    .await;
+                                emit_event(&events, Err(invalid_inbound_publication()))?;
                                 continue;
                             }
                             let message = CloudLinkTransportMessage::new(
@@ -200,9 +252,7 @@ async fn run_manager(
                                 publication.payload.to_vec(),
                                 None,
                             );
-                            let _ = events
-                                .send(Ok(CloudLinkTransportEvent::Inbound(message)))
-                                .await;
+                            emit_event(&events, Ok(CloudLinkTransportEvent::Inbound(message)))?;
                         },
                         Ok(Event::Incoming(Incoming::Disconnect)) | Err(_) => break,
                         Ok(_) => {},
@@ -210,12 +260,16 @@ async fn run_manager(
                 }
             }
         }
-        let _ = client.disconnect().await;
-        let _ = events.send(Ok(CloudLinkTransportEvent::Disconnected)).await;
+        let _ = client.try_disconnect();
+        emit_event(&events, Ok(CloudLinkTransportEvent::Disconnected))?;
         if outbound_closed {
-            return;
+            return Ok(());
         }
-        tokio::time::sleep(Duration::from_secs(config.reconnect_delay_secs)).await;
+        tokio::select! {
+            biased;
+            _ = shutdown.cancelled() => return Ok(()),
+            _ = tokio::time::sleep(Duration::from_secs(config.reconnect_delay_secs)) => {},
+        }
     }
 }
 
@@ -234,6 +288,26 @@ fn manager_unavailable() -> PortError {
         PortErrorKind::Unavailable,
         "CloudLink MQTT transport manager is unavailable",
     )
+}
+
+fn outbound_backpressure() -> PortError {
+    PortError::new(
+        PortErrorKind::Unavailable,
+        "CloudLink MQTT outbound queue is full; durable delivery remains pending",
+    )
+}
+
+fn emit_event(
+    events: &mpsc::Sender<PortResult<CloudLinkTransportEvent>>,
+    event: PortResult<CloudLinkTransportEvent>,
+) -> PortResult<()> {
+    events.try_send(event).map_err(|error| match error {
+        mpsc::error::TrySendError::Full(_) => PortError::new(
+            PortErrorKind::Unavailable,
+            "CloudLink MQTT event consumer exceeded its bounded capacity",
+        ),
+        mpsc::error::TrySendError::Closed(_) => manager_unavailable(),
+    })
 }
 
 fn invalid_inbound_publication() -> PortError {
@@ -304,4 +378,21 @@ fn mqtt_client(
     network_options.set_connection_timeout(30);
     event_loop.set_network_options(network_options);
     Ok((client, event_loop))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn event_backpressure_fails_closed_without_blocking_the_poll_owner() {
+        let (events, _receiver) = mpsc::channel(1);
+        emit_event(&events, Ok(CloudLinkTransportEvent::Connected)).expect("first event");
+
+        let error = emit_event(&events, Ok(CloudLinkTransportEvent::Disconnected))
+            .expect_err("a full event queue must fail the manager");
+
+        assert_eq!(error.kind(), PortErrorKind::Unavailable);
+        assert!(error.is_retryable());
+    }
 }

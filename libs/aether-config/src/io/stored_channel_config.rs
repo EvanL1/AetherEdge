@@ -26,8 +26,9 @@ pub struct StoredChannelConfig {
 impl StoredChannelConfig {
     /// Decode a nullable SQLite `channels.config` value.
     ///
-    /// A SQL `NULL` payload is treated as an empty payload. Unknown top-level
-    /// fields are ignored for compatibility with older writers.
+    /// A SQL `NULL` payload is treated as an empty payload. JSON payloads must
+    /// contain only the canonical `description`, `parameters`, and `logging`
+    /// fields.
     pub fn decode(raw: Option<&str>) -> Result<Self, StoredChannelConfigError> {
         match raw {
             Some(raw) => {
@@ -41,9 +42,6 @@ impl StoredChannelConfig {
 
     /// Extract the persisted payload fields from a JSON object.
     ///
-    /// This also accepts a complete serialized [`super::ChannelConfig`];
-    /// identity fields are ignored because they are stored in dedicated
-    /// columns.
     pub fn from_value(value: Value) -> Result<Self, StoredChannelConfigError> {
         let Value::Object(mut object) = value else {
             return Err(StoredChannelConfigError::ExpectedObject);
@@ -72,6 +70,10 @@ impl StoredChannelConfig {
                 serde_json::from_value(value).map_err(StoredChannelConfigError::InvalidLogging)?
             },
         };
+
+        if let Some(field) = object.keys().next() {
+            return Err(StoredChannelConfigError::UnknownField(field.clone()));
+        }
 
         Ok(Self {
             description,
@@ -129,6 +131,8 @@ pub enum StoredChannelConfigError {
     InvalidDescription,
     /// `parameters` is not an object.
     InvalidParameters,
+    /// The payload contains a non-canonical top-level field.
+    UnknownField(String),
     /// A parameter integer cannot be represented by the governed channel API.
     ParameterIntegerOutOfRange,
     /// The logging policy does not match [`ChannelLoggingConfig`].
@@ -144,6 +148,12 @@ impl fmt::Display for StoredChannelConfigError {
             Self::ExpectedObject => "stored channel configuration must be a JSON object",
             Self::InvalidDescription => "stored channel description must be a string or null",
             Self::InvalidParameters => "stored channel parameters must be a JSON object",
+            Self::UnknownField(field) => {
+                return write!(
+                    formatter,
+                    "stored channel configuration contains unknown field {field:?}"
+                );
+            },
             Self::ParameterIntegerOutOfRange => {
                 "stored channel parameter integer exceeds the supported range"
             },
@@ -163,6 +173,7 @@ impl Error for StoredChannelConfigError {
             Self::ExpectedObject
             | Self::InvalidDescription
             | Self::InvalidParameters
+            | Self::UnknownField(_)
             | Self::ParameterIntegerOutOfRange => None,
         }
     }
@@ -248,24 +259,20 @@ mod tests {
     }
 
     #[test]
-    fn unknown_top_level_fields_are_ignored() {
-        let decoded = StoredChannelConfig::decode(Some(
+    fn unknown_top_level_fields_are_rejected() {
+        let error = StoredChannelConfig::decode(Some(
             r#"{
                 "description":"edge",
                 "parameters":{"port":502},
                 "future":{"enabled":true}
             }"#,
         ))
-        .expect("compatible payload");
+        .expect_err("unknown fields must fail closed");
 
-        assert_eq!(decoded.description.as_deref(), Some("edge"));
-        assert_eq!(decoded.parameters.get("port"), Some(&Value::from(502)));
-        assert!(
-            !decoded
-                .encode()
-                .expect("canonical payload")
-                .contains("future")
-        );
+        assert!(matches!(
+            error,
+            StoredChannelConfigError::UnknownField(field) if field == "future"
+        ));
     }
 
     #[test]

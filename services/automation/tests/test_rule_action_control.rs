@@ -186,7 +186,7 @@ fn action_rule(id: i64, point_type: &str, value: Value) -> Rule {
                             "type": "single",
                             "instance": 42,
                             "pointType": point_type,
-                            "point": 7
+                            "point_id": 7
                         }],
                         "rule": [{ "Variables": "TARGET", "value": value }],
                         "wires": { "default": ["end"] }
@@ -209,7 +209,7 @@ fn action_rule(id: i64, point_type: &str, value: Value) -> Rule {
 }
 
 #[tokio::test]
-async fn production_rule_actions_use_control_application_without_legacy_dispatch() {
+async fn production_rule_actions_use_control_application() {
     let dispatcher = Arc::new(RecordingDispatcher::default());
     let audit = Arc::new(RecordingAudit::default());
     let executor = executor(Arc::clone(&dispatcher), Arc::clone(&audit));

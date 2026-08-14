@@ -16,37 +16,19 @@ use core::fmt;
 #[repr(u8)]
 pub enum PointType {
     /// T - Telemetry - Analog measurements
-    #[cfg_attr(
-        feature = "serde",
-        serde(rename = "T", alias = "YC", alias = "yc", alias = "telemetry")
-    )]
+    #[cfg_attr(feature = "serde", serde(rename = "T"))]
     Telemetry = 0,
 
     /// S - Signal - Digital status
-    #[cfg_attr(
-        feature = "serde",
-        serde(rename = "S", alias = "YX", alias = "yx", alias = "signal")
-    )]
+    #[cfg_attr(feature = "serde", serde(rename = "S"))]
     Signal = 1,
 
     /// C - Control - Digital commands
-    #[cfg_attr(
-        feature = "serde",
-        serde(rename = "C", alias = "YK", alias = "yk", alias = "control")
-    )]
+    #[cfg_attr(feature = "serde", serde(rename = "C"))]
     Control = 2,
 
     /// A - Adjustment - Analog setpoints
-    #[cfg_attr(
-        feature = "serde",
-        serde(
-            rename = "A",
-            alias = "YT",
-            alias = "yt",
-            alias = "adjustment",
-            alias = "setpoint"
-        )
-    )]
+    #[cfg_attr(feature = "serde", serde(rename = "A"))]
     Adjustment = 3,
 }
 
@@ -63,19 +45,10 @@ impl schemars::JsonSchema for PointType {
         SchemaObject {
             instance_type: Some(InstanceType::String.into()),
             string: Some(Box::new(StringValidation {
-                pattern: Some(r"^[TSCAtsca]$|^Y[CXKT]$|^y[cxkt]$".to_owned()),
+                pattern: Some(r"^[TSCA]$".to_owned()),
                 ..Default::default()
             })),
-            enum_values: Some(vec![
-                "T".into(),
-                "S".into(),
-                "C".into(),
-                "A".into(),
-                "YC".into(),
-                "YX".into(),
-                "YK".into(),
-                "YT".into(),
-            ]),
+            enum_values: Some(vec!["T".into(), "S".into(), "C".into(), "A".into()]),
             ..Default::default()
         }
         .into()
@@ -141,15 +114,15 @@ impl PointType {
 
     /// Parse from string (returns Option for convenience).
     ///
-    /// Supports: T/S/C/A, YC/YX/YK/YT (case-insensitive)
+    /// Accepts the canonical T/S/C/A representation.
     #[inline]
     #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
-            "T" | "t" | "YC" | "yc" | "Yc" | "yC" => Some(Self::Telemetry),
-            "S" | "s" | "YX" | "yx" | "Yx" | "yX" => Some(Self::Signal),
-            "C" | "c" | "YK" | "yk" | "Yk" | "yK" => Some(Self::Control),
-            "A" | "a" | "YT" | "yt" | "Yt" | "yT" => Some(Self::Adjustment),
+            "T" => Some(Self::Telemetry),
+            "S" => Some(Self::Signal),
+            "C" => Some(Self::Control),
+            "A" => Some(Self::Adjustment),
             _ => None,
         }
     }
@@ -176,18 +149,6 @@ impl PointType {
     #[inline]
     pub const fn is_digital(&self) -> bool {
         matches!(self, Self::Signal | Self::Control)
-    }
-
-    /// Check if this is an input type (T or S) - alias for is_measurement.
-    #[inline]
-    pub const fn is_input(&self) -> bool {
-        self.is_measurement()
-    }
-
-    /// Check if this is an output type (C or A) - alias for is_action.
-    #[inline]
-    pub const fn is_output(&self) -> bool {
-        self.is_action()
     }
 
     /// Get the type offset for this point type.
@@ -239,7 +200,7 @@ pub struct ParsePointTypeError;
 
 impl fmt::Display for ParsePointTypeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("invalid point type, expected: T/S/C/A or YC/YX/YK/YT")
+        f.write_str("invalid point type, expected: T/S/C/A")
     }
 }
 
@@ -471,23 +432,36 @@ mod tests {
         assert_eq!(PointType::from_str("S"), Some(PointType::Signal));
         assert_eq!(PointType::from_str("C"), Some(PointType::Control));
         assert_eq!(PointType::from_str("A"), Some(PointType::Adjustment));
-        // IEC synonyms
-        assert_eq!(PointType::from_str("YC"), Some(PointType::Telemetry));
-        assert_eq!(PointType::from_str("YX"), Some(PointType::Signal));
-        assert_eq!(PointType::from_str("YK"), Some(PointType::Control));
-        assert_eq!(PointType::from_str("YT"), Some(PointType::Adjustment));
-        // Case insensitive
-        assert_eq!(PointType::from_str("yc"), Some(PointType::Telemetry));
-        assert_eq!(PointType::from_str("t"), Some(PointType::Telemetry));
-        // Invalid
-        assert_eq!(PointType::from_str("invalid"), None);
+        for retired in ["t", "YC", "yc", "telemetry", "setpoint", "invalid"] {
+            assert_eq!(PointType::from_str(retired), None, "accepted {retired}");
+        }
     }
 
     #[test]
     fn test_point_type_parse_trait() {
         assert_eq!("T".parse::<PointType>(), Ok(PointType::Telemetry));
-        assert_eq!("YC".parse::<PointType>(), Ok(PointType::Telemetry));
+        assert!("YC".parse::<PointType>().is_err());
         assert!("invalid".parse::<PointType>().is_err());
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn point_type_serde_rejects_retired_spellings() {
+        assert_eq!(
+            serde_json::from_str::<PointType>("\"T\"").unwrap(),
+            PointType::Telemetry
+        );
+        assert_eq!(
+            serde_json::to_string(&PointType::Telemetry).unwrap(),
+            "\"T\""
+        );
+        for retired in ["t", "YC", "telemetry"] {
+            let json = format!("\"{retired}\"");
+            assert!(
+                serde_json::from_str::<PointType>(&json).is_err(),
+                "accepted {retired}"
+            );
+        }
     }
 
     #[test]
@@ -508,17 +482,6 @@ mod tests {
         assert!(PointType::Signal.is_digital());
         assert!(PointType::Control.is_digital());
         assert!(!PointType::Telemetry.is_digital());
-    }
-
-    #[test]
-    fn test_point_type_input_output() {
-        assert!(PointType::Telemetry.is_input());
-        assert!(PointType::Signal.is_input());
-        assert!(!PointType::Control.is_input());
-
-        assert!(!PointType::Telemetry.is_output());
-        assert!(PointType::Control.is_output());
-        assert!(PointType::Adjustment.is_output());
     }
 
     #[test]

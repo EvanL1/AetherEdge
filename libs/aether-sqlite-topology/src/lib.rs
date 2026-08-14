@@ -5,6 +5,7 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use std::time::Duration;
 
+use aether_config::io::{MAX_CHANNEL_TIMING_MS, StoredChannelConfig};
 use aether_domain::{ChannelCommandAddress, CommandConstraints, PointKind};
 use aether_ports::{PortError, PortErrorKind, PortResult};
 use aether_shm_bridge::{
@@ -22,6 +23,12 @@ const CONFIGURED_POINT_QUERY: &str = "SELECT channel_id, 0 AS kind_index, point_
      UNION ALL \
      SELECT channel_id, 3 AS kind_index, point_id FROM adjustment_points \
      ORDER BY channel_id, kind_index, point_id";
+
+/// Minimum rule-control sample lifetime shared with IO's connection freshness policy.
+pub const DEFAULT_CHANNEL_FRESHNESS_TIMEOUT_MS: u64 = 90_000;
+const CHANNEL_FRESHNESS_POLL_MULTIPLIER: u64 = 3;
+const MAX_CHANNEL_FRESHNESS_TIMEOUT_MS: u64 =
+    MAX_CHANNEL_TIMING_MS.saturating_mul(CHANNEL_FRESHNESS_POLL_MULTIPLIER);
 
 /// Point and channel-health manifests observed from one SQLite read transaction.
 #[derive(Debug, Clone)]
@@ -75,6 +82,14 @@ impl RoutedCommandTarget {
 /// Deterministically ordered logical command route map.
 pub type LogicalCommandRoutes = BTreeMap<(u32, u32), RoutedCommandTarget>;
 
+/// Per-channel sample lifetime derived from the persisted polling policy.
+///
+/// Channels without an explicit `poll_interval_ms`, including event-driven
+/// adapters, receive a conservative 90-second budget. Every currently
+/// composed IO protocol defaults to at most five seconds, so that floor also
+/// covers the registry defaults without duplicating protocol selection here.
+pub type ChannelFreshnessTimeouts = BTreeMap<u32, u64>;
+
 /// Point, health, and logical routing observed from one SQLite transaction.
 #[derive(Debug)]
 pub struct SqliteLiveTopologySnapshot {
@@ -82,6 +97,7 @@ pub struct SqliteLiveTopologySnapshot {
     configured_physical_points: Vec<PhysicalPointAddress>,
     measurement_routes: LogicalPointRoutes,
     action_routes: LogicalCommandRoutes,
+    channel_freshness_timeouts: ChannelFreshnessTimeouts,
     digest: u64,
 }
 
@@ -147,6 +163,18 @@ impl SqliteLiveTopologySnapshot {
             .map(|(&(instance_id, point_id), &target)| {
                 (instance_id, point_id, target.physical_target())
             })
+    }
+
+    /// Returns one channel's rule-control sample lifetime in milliseconds.
+    #[must_use]
+    pub fn channel_freshness_timeout_ms(&self, channel_id: u32) -> Option<u64> {
+        self.channel_freshness_timeouts.get(&channel_id).copied()
+    }
+
+    /// Returns all channel sample lifetimes captured in this SQLite snapshot.
+    #[must_use]
+    pub const fn channel_freshness_timeouts(&self) -> &ChannelFreshnessTimeouts {
+        &self.channel_freshness_timeouts
     }
 
     /// Returns the deterministic physical/logical topology digest.
@@ -250,20 +278,86 @@ pub async fn load_sqlite_live_topology(
     )
     .await?;
     let action_routes = load_command_routes(&mut transaction, action_routes).await?;
+    let channel_freshness_timeouts =
+        load_channel_freshness_timeouts(&mut transaction, shm.health_manifest()).await?;
     transaction.commit().await.map_err(topology_unavailable)?;
     let digest = live_topology_digest(
         &shm,
         &configured_physical_points,
         &measurement_routes,
         &action_routes,
+        &channel_freshness_timeouts,
     );
     Ok(SqliteLiveTopologySnapshot {
         shm,
         configured_physical_points,
         measurement_routes,
         action_routes,
+        channel_freshness_timeouts,
         digest,
     })
+}
+
+async fn load_channel_freshness_timeouts(
+    connection: &mut SqliteConnection,
+    health_manifest: &ChannelHealthManifest,
+) -> PortResult<ChannelFreshnessTimeouts> {
+    let has_config_column = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM pragma_table_info('channels') WHERE name = 'config'",
+    )
+    .fetch_one(&mut *connection)
+    .await
+    .map_err(topology_unavailable)?
+        != 0;
+    if !has_config_column {
+        return Ok(health_manifest
+            .channel_ids()
+            .map(|channel_id| (channel_id, DEFAULT_CHANNEL_FRESHNESS_TIMEOUT_MS))
+            .collect());
+    }
+
+    let rows = sqlx::query_as::<_, (i64, Option<String>)>(
+        "SELECT channel_id, config FROM channels ORDER BY channel_id",
+    )
+    .fetch_all(&mut *connection)
+    .await
+    .map_err(topology_unavailable)?;
+    let mut timeouts = ChannelFreshnessTimeouts::new();
+    for (raw_channel_id, raw_config) in rows {
+        let channel_id = stored_u32(raw_channel_id, "channel_id", "channels")?;
+        let stored = StoredChannelConfig::decode(raw_config.as_deref()).map_err(|error| {
+            invalid_topology(format!(
+                "channel {channel_id} has invalid stored configuration: {error}"
+            ))
+        })?;
+        let timeout_ms = match stored.parameters.get("poll_interval_ms") {
+            None => DEFAULT_CHANNEL_FRESHNESS_TIMEOUT_MS,
+            Some(value) => {
+                let poll_interval_ms = value.as_u64().ok_or_else(|| {
+                    invalid_topology(format!(
+                        "channel {channel_id} poll_interval_ms must be an integer between 1 and {MAX_CHANNEL_TIMING_MS}"
+                    ))
+                })?;
+                if !(1..=MAX_CHANNEL_TIMING_MS).contains(&poll_interval_ms) {
+                    return Err(invalid_topology(format!(
+                        "channel {channel_id} poll_interval_ms must be an integer between 1 and {MAX_CHANNEL_TIMING_MS}"
+                    )));
+                }
+                poll_interval_ms
+                    .saturating_mul(CHANNEL_FRESHNESS_POLL_MULTIPLIER)
+                    .clamp(
+                        DEFAULT_CHANNEL_FRESHNESS_TIMEOUT_MS,
+                        MAX_CHANNEL_FRESHNESS_TIMEOUT_MS,
+                    )
+            },
+        };
+        if timeouts.insert(channel_id, timeout_ms).is_some() {
+            return Err(invalid_topology(format!(
+                "channels contains duplicate channel id {channel_id}"
+            )));
+        }
+    }
+    Ok(timeouts)
 }
 
 async fn load_shm_topology(
@@ -642,9 +736,10 @@ fn live_topology_digest(
     configured_physical_points: &[PhysicalPointAddress],
     measurements: &LogicalPointRoutes,
     actions: &LogicalCommandRoutes,
+    channel_freshness_timeouts: &ChannelFreshnessTimeouts,
 ) -> u64 {
     let mut hasher = FxHasher::default();
-    "aether.sqlite-live-topology.v5".hash(&mut hasher);
+    "aether.sqlite-live-topology".hash(&mut hasher);
     shm.point_manifest().layout_hash().hash(&mut hasher);
     shm.point_manifest().slot_count().hash(&mut hasher);
     shm.health_manifest().layout_hash().hash(&mut hasher);
@@ -652,6 +747,7 @@ fn live_topology_digest(
     configured_physical_points.hash(&mut hasher);
     hash_routes(0, measurements, &mut hasher);
     hash_command_routes(1, actions, &mut hasher);
+    channel_freshness_timeouts.hash(&mut hasher);
     hasher.finish()
 }
 

@@ -27,8 +27,8 @@ mod raw_ptr;
 mod traits;
 
 pub use layout::{
-    FIRMWARE_HEADER_SIZE, FIRMWARE_SHM_MAGIC, FIRMWARE_SHM_VERSION, FIRMWARE_SLOT_SIZE,
-    MAX_FIRMWARE_SLOT_COUNT, firmware_shm_size,
+    FIRMWARE_HEADER_SIZE, FIRMWARE_SHM_MAGIC, FIRMWARE_SLOT_SIZE, MAX_FIRMWARE_SLOT_COUNT,
+    firmware_shm_size,
 };
 pub use raw_ptr::RawPtrShm;
 pub use traits::{ShmOps, ShmOpsExt};

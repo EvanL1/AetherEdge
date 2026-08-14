@@ -4,7 +4,9 @@
 
 #![allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
 
-use aether_rules::{Result, delete_rule, extract_rule_flow, get_rule, list_rules, upsert_rule};
+use aether_rules::{
+    Result, delete_rule, extract_rule_flow, get_rule, list_rules, load_all_rules, upsert_rule,
+};
 use serde_json::json;
 use sqlx::SqlitePool;
 
@@ -68,7 +70,7 @@ fn sample_flow_json() -> serde_json::Value {
                                 "type": "single",
                                 "instance": "battery_01",
                                 "pointType": "M",
-                                "point": 3
+                                "point_id": 3
                             }
                         ],
                         "rule": [
@@ -99,7 +101,7 @@ fn sample_flow_json() -> serde_json::Value {
                     "type": "action-changeValue",
                     "config": {
                         "variables": [
-                            { "name": "Y1", "type": "single", "instance": "pv_01", "pointType": "A", "point": 1 }
+                            { "name": "Y1", "type": "single", "instance": "pv_01", "pointType": "A", "point_id": 1 }
                         ],
                         "rule": [
                             { "Variables": "Y1", "value": 0 }
@@ -134,8 +136,24 @@ fn create_rule_json(
         "enabled": enabled,
         "priority": priority,
         "cooldown_ms": cooldown_ms,
+        "trigger_config": {"type": "interval", "interval_ms": 1000},
         "flow_json": sample_flow_json()
     })
+}
+
+#[tokio::test]
+async fn upsert_rejects_retired_implicit_rule_shapes() {
+    let pool = setup_test_db().await;
+    let mut missing_flow = create_rule_json(10, "missing-flow", "test", true, 1, 0);
+    missing_flow.as_object_mut().unwrap().remove("flow_json");
+    assert!(upsert_rule(&pool, 10, &missing_flow).await.is_err());
+
+    let mut missing_trigger = create_rule_json(11, "missing-trigger", "test", true, 1, 0);
+    missing_trigger
+        .as_object_mut()
+        .unwrap()
+        .remove("trigger_config");
+    assert!(upsert_rule(&pool, 11, &missing_trigger).await.is_err());
 }
 
 #[tokio::test]
@@ -240,4 +258,37 @@ async fn test_rule_flow_parsing_edge_cases() {
         "Minimal flow should parse: {:?}",
         result.err()
     );
+}
+
+#[tokio::test]
+async fn execution_hydration_rejects_corrupt_persisted_numeric_fields() {
+    let pool = setup_test_db().await;
+    let rule = create_rule_json(9, "persisted-corruption", "test", true, 1, 1);
+    upsert_rule(&pool, 9, &rule)
+        .await
+        .expect("insert valid rule");
+
+    for (column, corrupt, restore) in [
+        ("enabled", 2_i64, 1_i64),
+        ("priority", -1_i64, 1_i64),
+        ("cooldown_ms", -1_i64, 1_i64),
+    ] {
+        let update = format!("UPDATE rules SET {column} = ? WHERE id = 9");
+        sqlx::query(&update)
+            .bind(corrupt)
+            .execute(&pool)
+            .await
+            .expect("inject corrupt persisted value");
+
+        assert!(
+            load_all_rules(&pool).await.is_err(),
+            "{column} corruption must fail closed instead of being coerced"
+        );
+
+        sqlx::query(&update)
+            .bind(restore)
+            .execute(&pool)
+            .await
+            .expect("restore valid persisted value");
+    }
 }

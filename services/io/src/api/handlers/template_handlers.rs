@@ -287,16 +287,26 @@ async fn snapshot_channel_mappings(
         let mappings: Vec<serde_json::Value> = rows
             .into_iter()
             .map(|(point_id, signal_name, pm_json)| {
-                let protocol_data = pm_json
-                    .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-                    .unwrap_or_else(|| json!({}));
-                json!({
+                let protocol_data = match pm_json {
+                    Some(serialized) => serde_json::from_str::<serde_json::Value>(&serialized)
+                        .map_err(|error| {
+                            tracing::error!(
+                                table,
+                                point_id,
+                                %error,
+                                "persisted protocol mapping is corrupt"
+                            );
+                            AppError::internal_error("Persisted point mapping is corrupted")
+                        })?,
+                    None => json!({}),
+                };
+                Ok(json!({
                     "point_id": point_id,
                     "signal_name": signal_name,
                     "protocol_data": protocol_data,
-                })
+                }))
             })
-            .collect();
+            .collect::<Result<_, AppError>>()?;
 
         result[key] = json!(mappings);
     }
@@ -498,19 +508,34 @@ pub async fn list_templates(
         .map(
             |(template_id, name, description, protocol, points_json, created_at)| {
                 let snapshot: serde_json::Value =
-                    serde_json::from_str(&points_json).unwrap_or_else(|_| json!({}));
+                    serde_json::from_str(&points_json).map_err(|error| {
+                        tracing::error!(
+                            template_id,
+                            %error,
+                            "persisted template point snapshot is corrupt"
+                        );
+                        AppError::internal_error("Template data is corrupted")
+                    })?;
+                validate_snapshot_structure(&snapshot).map_err(|error| {
+                    tracing::error!(
+                        template_id,
+                        ?error,
+                        "persisted template point snapshot has an invalid shape"
+                    );
+                    AppError::internal_error("Template data is corrupted")
+                })?;
                 let point_counts = count_points_from_snapshot(&snapshot);
-                TemplateListItem {
+                Ok(TemplateListItem {
                     template_id,
                     name,
                     description,
                     protocol,
                     point_counts,
                     created_at,
-                }
+                })
             },
         )
-        .collect();
+        .collect::<Result<_, AppError>>()?;
 
     Ok(Json(SuccessResponse::new(items)))
 }

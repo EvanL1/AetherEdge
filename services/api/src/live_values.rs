@@ -394,7 +394,7 @@ impl GatewayValueSource for ShmGatewayValueSource {
                         owner_id.to_string(),
                         SlotSnapshot::new(
                             if sample.online() { 1.0 } else { 0.0 },
-                            sample.timestamp_ms(),
+                            sample.observed_at().get(),
                             aether_domain::PointQuality::Good,
                         ),
                     )])
@@ -434,7 +434,7 @@ impl GatewayValueSource for ShmGatewayValueSource {
                 .map(|sample| {
                     SlotSnapshot::new(
                         if sample.online() { 1.0 } else { 0.0 },
-                        sample.timestamp_ms(),
+                        sample.observed_at().get(),
                         aether_domain::PointQuality::Good,
                     )
                 })),

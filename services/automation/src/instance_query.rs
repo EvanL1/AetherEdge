@@ -18,12 +18,9 @@ pub struct InstanceLiveSample {
 }
 
 #[derive(Debug)]
-pub enum InstanceLiveDataView {
-    Values(BTreeMap<u32, InstanceLiveSample>),
-    Complete {
-        measurements: BTreeMap<u32, InstanceLiveSample>,
-        actions: BTreeMap<u32, InstanceLiveSample>,
-    },
+pub struct InstanceLiveDataView {
+    pub measurements: BTreeMap<u32, InstanceLiveSample>,
+    pub actions: BTreeMap<u32, InstanceLiveSample>,
 }
 
 #[derive(Debug)]

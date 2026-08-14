@@ -30,7 +30,6 @@ Runtime 已可使用，但部分生产路径仍在从兼容层迁移，AetherEMS
 - [协议适配器参考](./reference/protocol-adapters.md) — 精确构建能力、传输角色与安全边界
 - [MCP 工具参考](./reference/mcp-tools.md) — 默认只读的 AI 能力面
 - [连接 AI 助手](./guides/ai-assistants.md) — MCP 接入与写操作门槛
-- [旧版 API 汇编](./API_REFERENCE.md) — 仅供迁移查阅，不是当前契约
 
 Swagger UI 是可选构建能力。安装包使用 `--enable-swagger` 后，只有
 `aether-api:6005/docs` 提供一个聚合文档选择器；五个内部服务仍只在 loopback 提供
@@ -47,10 +46,12 @@ Swagger UI 是可选构建能力。安装包使用 `--enable-swagger` 后，只�
 
 Data Processing 是可选能力，不属于采集或硬实时安全闭环。
 
-## 实验性 CloudLink MQTT
+## CloudLink MQTT
 
-- [Edge contract 与兼容性边界](./reference/cloudlink-mqtt-v1.md)
-- [严格 candidate schemas 与 fixtures](../contracts/cloudlink/README.md)
+- [CloudLink MQTT contract](./reference/cloudlink-mqtt.md)
+- [严格 schemas 与 fixtures](../contracts/cloudlink/README.md)
 
-该能力目前只代表可独立验证的 AetherEdge edge foundation；默认仍运行 legacy MQTT。
-AetherCloud 尚未接受 wire candidate，因此不得表述为正式协议或已经完成生产联调。
+CloudLink 是 `aether-uplink` 唯一编译进生产服务的云传输路径；不存在通用 MQTT
+回退或第二套配置接口。CloudLink 默认关闭，只有完成 Gateway enrollment、TLS、
+Cloud 验证密钥和 credential binding 后才可显式启用。当前本地证据不能替代
+AetherCloud 生产联调或 Cloud 侧签名确认。

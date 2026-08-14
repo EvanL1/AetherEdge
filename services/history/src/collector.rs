@@ -234,13 +234,13 @@ impl HistoryGeneration {
                     format!("history SHM slot {} timestamp is invalid", series.slot),
                 )
             })?;
-            points.push(DataPoint {
+            points.push(DataPoint::new(
                 time,
-                series_key: series.logical_key.clone(),
-                point_id: series.point_id.clone(),
-                value: Some(sample.value()),
-                string_value: None,
-            });
+                series.logical_key.clone(),
+                series.point_id.clone(),
+                Some(sample.value()),
+                None,
+            ));
         }
         Ok(points)
     }

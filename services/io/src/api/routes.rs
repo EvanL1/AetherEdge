@@ -52,6 +52,8 @@ pub struct AppState {
     /// Channel manager with O(1) lock-free access
     pub channel_manager: Arc<ChannelManager>,
     pub sqlite_pool: sqlx::SqlitePool,
+    /// Bearer-token verifier for authenticated query-only service endpoints.
+    pub access_authenticator: Option<Arc<AccessTokenAuthenticator>>,
     /// Internal runtime convergence facade shared with the governed HTTP boundary.
     pub channel_reconciliation: Option<Arc<ChannelReconciliationApplication>>,
 }
@@ -61,6 +63,7 @@ impl Clone for AppState {
         Self {
             channel_manager: self.channel_manager.clone(),
             sqlite_pool: self.sqlite_pool.clone(),
+            access_authenticator: self.access_authenticator.clone(),
             channel_reconciliation: self.channel_reconciliation.clone(),
         }
     }
@@ -72,10 +75,12 @@ impl AppState {
         channel_manager: Arc<ChannelManager>,
         sqlite_pool: sqlx::SqlitePool,
         channel_reconciliation: Option<Arc<ChannelReconciliationApplication>>,
+        access_authenticator: Option<Arc<AccessTokenAuthenticator>>,
     ) -> Self {
         Self {
             channel_manager,
             sqlite_pool,
+            access_authenticator,
             channel_reconciliation,
         }
     }
@@ -93,15 +98,14 @@ impl AppState {
 
         // Channel queries and status
         crate::api::handlers::channel_handlers::get_all_channels,
-        crate::api::handlers::channel_handlers::list_channels,
         crate::api::handlers::channel_handlers::search_channels,
         crate::api::handlers::channel_handlers::get_channel_detail_handler,
         crate::api::handlers::channel_handlers::get_channel_status,
         crate::api::handlers::channel_handlers::list_all_points,
         crate::api::handlers::audit_handlers::list_audit_events,
+        crate::api::handlers::command_handlers::get_command_outcome,
 
-        // Control operations
-        crate::api::handlers::control_handlers::control_channel,
+        // Runtime administration
         crate::api::handlers::control_handlers::set_channel_log_level,
 
         // Point information
@@ -160,6 +164,8 @@ impl AppState {
     components(
         schemas(
             crate::api::dto::ServiceStatus,
+            crate::api::dto::DataEventIngressStatus,
+            crate::api::dto::CommandListenerStatus,
             crate::api::dto::ChannelStatusResponse,
             crate::api::dto::ChannelStatusDto,
             crate::api::dto::ChannelDetail,
@@ -167,11 +173,6 @@ impl AppState {
             crate::api::dto::PointCounts,
             crate::api::dto::ChannelListQuery,
             crate::api::dto::PaginatedResponse<crate::api::dto::ChannelStatusResponse>,
-            crate::api::dto::ChannelOperation,
-            crate::api::dto::ChannelOperationKind,
-            crate::api::dto::ChannelControlOperationResult,
-            crate::api::dto::ChannelControlResult,
-            crate::api::dto::ChannelControlResponse,
             crate::api::dto::ChannelCreateRequest,
             crate::api::dto::ChannelConfigUpdateRequest,
             crate::api::dto::ChannelEnabledRequest,
@@ -269,12 +270,14 @@ pub fn create_api_routes_with_point_topology(
     point_topology: Arc<crate::point_topology::PointTopologyApplication>,
     access_authenticator: Arc<AccessTokenAuthenticator>,
 ) -> Router {
+    let state_authenticator = Arc::clone(&access_authenticator);
     create_api_routes_with_boundary(
         channel_manager,
         sqlite_pool,
         None,
         ChannelManagementHttpBoundary::unavailable(),
         PointTopologyHttpBoundary::governed(point_topology, access_authenticator),
+        state_authenticator,
     )
 }
 
@@ -291,6 +294,7 @@ pub fn create_api_routes_with_channel_applications(
 ) -> Router {
     let state_reconciliation = Arc::clone(&channel_reconciliation);
     let point_authenticator = Arc::clone(&access_authenticator);
+    let state_authenticator = Arc::clone(&access_authenticator);
     create_api_routes_with_boundary(
         channel_manager,
         sqlite_pool,
@@ -301,6 +305,7 @@ pub fn create_api_routes_with_channel_applications(
             access_authenticator,
         ),
         PointTopologyHttpBoundary::governed(point_topology, point_authenticator),
+        state_authenticator,
     )
 }
 
@@ -310,27 +315,35 @@ fn create_api_routes_with_boundary(
     channel_reconciliation: Option<Arc<ChannelReconciliationApplication>>,
     channel_management: ChannelManagementHttpBoundary,
     point_topology: PointTopologyHttpBoundary,
+    access_authenticator: Arc<AccessTokenAuthenticator>,
 ) -> Router {
-    let state = AppState::new(channel_manager, sqlite_pool, channel_reconciliation);
+    let state = AppState::new(
+        channel_manager,
+        sqlite_pool,
+        channel_reconciliation,
+        Some(access_authenticator),
+    );
 
     let router = Router::new()
         // Health check (top-level for monitoring systems)
         .route("/health", get(health_check))
         // Service management
         .route("/api/status", get(get_service_status))
+        .route(
+            "/api/commands/{command_id}/outcome",
+            get(crate::api::handlers::command_handlers::get_command_outcome),
+        )
         // Protocol discovery
         .route("/api/protocols", get(list_protocols))
         // Channel management (CRUD)
         .route("/api/channels", get(get_all_channels).post(create_channel_handler))
-        .route("/api/channels/list", get(list_channels))
         .route("/api/channels/search", get(search_channels))
         .route("/api/points", get(list_all_points))
         .route("/api/audit/events", get(crate::api::handlers::audit_handlers::list_audit_events))
         .route("/api/channels/reconcile", post(reconcile_channels_handler))
         .route("/api/channels/{id}/reconcile", post(reconcile_channel_handler))
-        .route("/api/channels/{id}", get(get_channel_detail_handler).put(update_channel_handler).delete(delete_channel_handler))
+        .route("/api/channels/{id}", get(get_channel_detail_handler).patch(update_channel_handler).delete(delete_channel_handler))
         .route("/api/channels/{id}/status", get(get_channel_status))
-        .route("/api/channels/{id}/control", post(control_channel))
         .route("/api/channels/{id}/enabled", axum::routing::put(set_channel_enabled_handler))
         .route("/api/channels/{id}/logging", axum::routing::put(set_channel_log_level))
         .route("/api/channels/{id}/points", get(get_channel_points_handler))

@@ -17,7 +17,7 @@ use crate::managed::map_dataplane_error;
 use crate::topology_commit::validate_topology_publication_epoch;
 use crate::{ReconnectingSlotSource, ShmClientConfig, SlotSource};
 
-const CHANNEL_HEALTH_MANIFEST_DOMAIN: &str = "aether.channel-health.layout.v5";
+const CHANNEL_HEALTH_MANIFEST_DOMAIN: &str = "aether.channel-health.layout";
 const HEALTH_QUALITY_GOOD: u32 = 0;
 
 /// Immutable dense mapping from configured channel identifiers to health slots.
@@ -523,6 +523,12 @@ impl ShmChannelHealthReader {
     /// Eagerly validates the health-plane layout for topology publication.
     pub fn validate_layout(&self) -> PortResult<()> {
         self.source.validate_layout(self.manifest.slot_count())
+    }
+
+    /// Validates canonical identity, the pinned publication, generation, and
+    /// writer heartbeat without requiring a configured channel slot.
+    pub fn validate_freshness(&self) -> PortResult<()> {
+        self.source.validate_freshness()
     }
 
     pub(crate) fn require_coordinated_publication(&self) {

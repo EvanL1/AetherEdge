@@ -1,17 +1,6 @@
 //! Shared closed-field validation helpers.
 
-use crate::{CLOUDLINK_PROTOCOL_VERSION, CloudLinkCodecError};
-
-pub(crate) fn protocol_version(value: &str) -> Result<(), CloudLinkCodecError> {
-    if value == CLOUDLINK_PROTOCOL_VERSION {
-        Ok(())
-    } else {
-        Err(CloudLinkCodecError::UnsupportedProtocolVersion {
-            found: value.to_string(),
-            supported: CLOUDLINK_PROTOCOL_VERSION,
-        })
-    }
-}
+use crate::CloudLinkCodecError;
 
 pub(crate) fn canonical_u64(value: &str, field: &'static str) -> Result<u64, CloudLinkCodecError> {
     let canonical = value == "0"

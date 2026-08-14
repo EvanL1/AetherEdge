@@ -4,10 +4,11 @@
 
 use anyhow::Result;
 use clap::Subcommand;
+use serde_json::Value;
+use std::collections::HashMap;
 use tracing::info;
 
 pub mod client;
-pub mod csv_loader;
 
 #[derive(Subcommand)]
 pub enum ModelCommands {
@@ -32,10 +33,6 @@ pub enum ProductCommands {
     #[command(about = "Show products selected by aether-automation")]
     List,
 
-    /// Show available products in products/ directory (for development)
-    #[command(about = "List product definitions in the products/ directory")]
-    Available,
-
     /// Get product details
     #[command(about = "Show detailed information about a selected product")]
     Get {
@@ -58,39 +55,63 @@ pub enum InstanceCommands {
     #[command(about = "Create a new device instance from a product template")]
     Create {
         /// Product name
-        product: String,
+        product_name: String,
         /// Instance name
-        name: String,
-        /// Properties in key=value format
+        instance_name: String,
+        /// Optional explicit instance ID; omit to allocate one
+        #[arg(long)]
+        instance_id: Option<u32>,
+        /// Properties as key=<JSON literal>; JSON strings must be quoted
         #[arg(short, long, value_parser = parse_property)]
-        props: Vec<(String, String)>,
+        props: Vec<(String, Value)>,
+        /// Current instances revision from GET /api/instances/revision
+        #[arg(long)]
+        expected_revision: u64,
+        /// Explicitly confirm this desired-state mutation
+        #[arg(long)]
+        confirmed: bool,
     },
 
     /// Get instance details
     #[command(about = "Show detailed information about an instance")]
     Get {
-        /// Instance name
-        name: String,
+        /// Instance ID
+        instance_id: u32,
     },
 
     /// Update an instance
-    #[command(about = "Update instance properties")]
+    #[command(about = "Rename an instance and/or replace its properties")]
     Update {
-        /// Instance name
-        name: String,
-        /// Properties to update in key=value format
+        /// Instance ID
+        instance_id: u32,
+        /// New instance name
+        #[arg(long)]
+        instance_name: Option<String>,
+        /// Replacement properties as key=<JSON literal>; JSON strings must be quoted
         #[arg(short, long, value_parser = parse_property)]
-        props: Vec<(String, String)>,
+        props: Vec<(String, Value)>,
+        /// Current instances revision from GET /api/instances/revision
+        #[arg(long)]
+        expected_revision: u64,
+        /// Explicitly confirm this desired-state mutation
+        #[arg(long)]
+        confirmed: bool,
     },
 
     /// Delete an instance
     #[command(about = "Delete a device instance")]
     Delete {
-        /// Instance name
-        name: String,
-        /// Force deletion without confirmation
+        /// Instance ID
+        instance_id: u32,
+        /// Skip the interactive prompt; --confirmed is still required
         #[arg(short, long)]
         force: bool,
+        /// Current instances revision from GET /api/instances/revision
+        #[arg(long)]
+        expected_revision: u64,
+        /// Explicitly confirm this desired-state mutation
+        #[arg(long)]
+        confirmed: bool,
     },
 
     /// Get instance runtime data
@@ -98,9 +119,9 @@ pub enum InstanceCommands {
     Data {
         /// Instance ID
         instance_id: u32,
-        /// Point type filter (M for measurements, A for actions, both if not specified)
-        #[arg(short = 't', long)]
-        point_type: Option<String>,
+        /// Point type filter (measurement or action; both if omitted)
+        #[arg(short = 't', long, value_enum)]
+        point_type: Option<InstanceDataType>,
     },
 
     /// Execute a control action on an instance
@@ -120,15 +141,23 @@ pub enum InstanceCommands {
     },
 }
 
-fn parse_property(s: &str) -> Result<(String, String), String> {
-    let parts: Vec<&str> = s.splitn(2, '=').collect();
-    if parts.len() != 2 {
-        return Err(format!(
-            "Invalid property format: '{}'. Expected key=value",
-            s
-        ));
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum InstanceDataType {
+    Measurement,
+    Action,
+}
+
+fn parse_property(s: &str) -> Result<(String, Value), String> {
+    let (key, raw_value) = s
+        .split_once('=')
+        .ok_or_else(|| format!("Invalid property format: '{s}'. Expected key=<JSON literal>"))?;
+    if key.is_empty() {
+        return Err("Property key must not be empty".to_string());
     }
-    Ok((parts[0].to_string(), parts[1].to_string()))
+    let value = serde_json::from_str(raw_value).map_err(|error| {
+        format!("Invalid JSON literal for property '{key}': {error}. JSON strings must be quoted")
+    })?;
+    Ok((key.to_string(), value))
 }
 
 pub async fn handle_command(cmd: ModelCommands, base_url: &str, json: bool) -> Result<()> {
@@ -144,12 +173,6 @@ pub async fn handle_command(cmd: ModelCommands, base_url: &str, json: bool) -> R
 
 async fn handle_product_command(cmd: ProductCommands, base_url: &str, json: bool) -> Result<()> {
     match cmd {
-        ProductCommands::Available => {
-            if json {
-                eprintln!("warning: --json is not fully supported for 'products available'");
-            }
-            csv_loader::list_available_products()?;
-        },
         ProductCommands::List => {
             let client = client::ModelClient::new(base_url)?;
             let products = client.list_products().await?;
@@ -189,43 +212,74 @@ async fn handle_instance_command(cmd: InstanceCommands, base_url: &str, json: bo
             }
         },
         InstanceCommands::Create {
-            product,
-            name,
+            product_name,
+            instance_name,
+            instance_id,
             props,
+            expected_revision,
+            confirmed,
         } => {
-            let props_map: std::collections::HashMap<String, String> = props.into_iter().collect();
-            client.create_instance(&product, &name, props_map).await?;
+            let properties: HashMap<String, Value> = props.into_iter().collect();
+            client
+                .create_instance(
+                    instance_id,
+                    &instance_name,
+                    &product_name,
+                    properties,
+                    expected_revision,
+                    confirmed,
+                )
+                .await?;
             if json {
                 crate::output::print_ok();
             } else {
-                info!("Instance '{}' created", name);
+                info!("Instance '{}' created", instance_name);
             }
         },
-        InstanceCommands::Get { name } => {
-            let instance = client.get_instance(&name).await?;
+        InstanceCommands::Get { instance_id } => {
+            let instance = client.get_instance(instance_id).await?;
             if json {
                 crate::output::print_success(&instance);
             } else {
                 println!(
                     "Instance '{}': {}",
-                    name,
+                    instance_id,
                     serde_json::to_string_pretty(&instance)?
                 );
             }
         },
-        InstanceCommands::Update { name, props } => {
-            let props_map: std::collections::HashMap<String, String> = props.into_iter().collect();
-            client.update_instance(&name, props_map).await?;
+        InstanceCommands::Update {
+            instance_id,
+            instance_name,
+            props,
+            expected_revision,
+            confirmed,
+        } => {
+            let properties = (!props.is_empty()).then(|| props.into_iter().collect());
+            client
+                .update_instance(
+                    instance_id,
+                    instance_name.as_deref(),
+                    properties,
+                    expected_revision,
+                    confirmed,
+                )
+                .await?;
             if json {
                 crate::output::print_ok();
             } else {
-                info!("Instance '{}' updated", name);
+                info!("Instance '{}' updated", instance_id);
             }
         },
-        InstanceCommands::Delete { name, force } => {
+        InstanceCommands::Delete {
+            instance_id,
+            force,
+            expected_revision,
+            confirmed,
+        } => {
             // In json mode, skip interactive confirmation (agents can't prompt)
             if !force && !json {
-                println!("Delete instance '{}'? [y/N]", name);
+                println!("Delete instance '{}'? [y/N]", instance_id);
                 let mut input = String::new();
                 std::io::stdin().read_line(&mut input)?;
                 if !input.trim().eq_ignore_ascii_case("y") {
@@ -234,24 +288,23 @@ async fn handle_instance_command(cmd: InstanceCommands, base_url: &str, json: bo
                 }
             }
 
-            client.delete_instance(&name).await?;
+            client
+                .delete_instance(instance_id, expected_revision, confirmed)
+                .await?;
             if json {
                 crate::output::print_ok();
             } else {
-                info!("Instance '{}' deleted", name);
+                info!("Instance '{}' deleted", instance_id);
             }
         },
         InstanceCommands::Data {
             instance_id,
             point_type,
         } => {
-            let data_type = match point_type.as_deref() {
+            let data_type = match point_type {
                 None => None,
-                Some("M" | "m" | "measurement") => Some("measurement"),
-                Some("A" | "a" | "action") => Some("action"),
-                Some(other) => {
-                    anyhow::bail!("invalid point type '{other}'; use M/measurement or A/action")
-                },
+                Some(InstanceDataType::Measurement) => Some("measurement"),
+                Some(InstanceDataType::Action) => Some("action"),
             };
             let data = client.get_instance_data(instance_id, data_type).await?;
             if json {
@@ -279,4 +332,164 @@ async fn handle_instance_command(cmd: InstanceCommands, base_url: &str, json: bo
         },
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    use super::{InstanceCommands, InstanceDataType, ModelCommands, ProductCommands};
+
+    #[derive(Parser)]
+    struct ModelsCli {
+        #[command(subcommand)]
+        command: ModelCommands,
+    }
+
+    #[test]
+    fn products_exposes_only_automation_backed_commands() {
+        assert!(ModelsCli::try_parse_from(["models", "products", "available"]).is_err());
+        let parsed = ModelsCli::try_parse_from(["models", "products", "list"])
+            .expect("canonical product list command");
+        assert!(matches!(
+            parsed.command,
+            ModelCommands::Products {
+                command: ProductCommands::List
+            }
+        ));
+    }
+
+    #[test]
+    fn instance_data_point_type_accepts_only_canonical_words() {
+        for (value, expected) in [
+            ("measurement", InstanceDataType::Measurement),
+            ("action", InstanceDataType::Action),
+        ] {
+            let parsed = ModelsCli::try_parse_from([
+                "models",
+                "instances",
+                "data",
+                "9",
+                "--point-type",
+                value,
+            ])
+            .expect("canonical point type");
+            let ModelCommands::Instances {
+                command:
+                    InstanceCommands::Data {
+                        point_type: Some(actual),
+                        ..
+                    },
+            } = parsed.command
+            else {
+                panic!("expected instance data command")
+            };
+            assert_eq!(actual, expected);
+        }
+
+        for retired in ["M", "m", "A", "a"] {
+            assert!(
+                ModelsCli::try_parse_from([
+                    "models",
+                    "instances",
+                    "data",
+                    "9",
+                    "--point-type",
+                    retired,
+                ])
+                .is_err(),
+                "retired point type {retired} was accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn instance_create_parses_canonical_identity_governance_and_json_properties() {
+        let parsed = ModelsCli::try_parse_from([
+            "models",
+            "instances",
+            "create",
+            "pump",
+            "pump-1",
+            "--instance-id",
+            "9",
+            "--props",
+            "capacity=100",
+            "--props",
+            r#"owner="ops""#,
+            "--expected-revision",
+            "7",
+            "--confirmed",
+        ])
+        .expect("canonical create command");
+        let ModelCommands::Instances {
+            command:
+                InstanceCommands::Create {
+                    product_name,
+                    instance_name,
+                    instance_id,
+                    props,
+                    expected_revision,
+                    confirmed,
+                },
+        } = parsed.command
+        else {
+            panic!("expected create command")
+        };
+        assert_eq!(product_name, "pump");
+        assert_eq!(instance_name, "pump-1");
+        assert_eq!(instance_id, Some(9));
+        assert_eq!(props[0].1, serde_json::json!(100));
+        assert_eq!(props[1].1, serde_json::json!("ops"));
+        assert_eq!(expected_revision, 7);
+        assert!(confirmed);
+    }
+
+    #[test]
+    fn properties_reject_unquoted_string_values() {
+        let error = ModelsCli::try_parse_from([
+            "models",
+            "instances",
+            "create",
+            "pump",
+            "pump-1",
+            "--props",
+            "owner=ops",
+            "--expected-revision",
+            "7",
+            "--confirmed",
+        ])
+        .err()
+        .expect("unquoted JSON string must fail closed");
+        assert!(error.to_string().contains("JSON strings must be quoted"));
+    }
+
+    #[test]
+    fn instance_identity_commands_reject_retired_name_paths() {
+        for args in [
+            vec!["models", "instances", "get", "pump-1"],
+            vec![
+                "models",
+                "instances",
+                "update",
+                "pump-1",
+                "--props",
+                "capacity=100",
+                "--expected-revision",
+                "7",
+                "--confirmed",
+            ],
+            vec![
+                "models",
+                "instances",
+                "delete",
+                "pump-1",
+                "--expected-revision",
+                "7",
+                "--confirmed",
+            ],
+        ] {
+            assert!(ModelsCli::try_parse_from(args).is_err());
+        }
+    }
 }

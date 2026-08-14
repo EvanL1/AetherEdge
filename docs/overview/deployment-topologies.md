@@ -28,9 +28,9 @@ AetherContracts defines the shared CloudLink behavior. AetherCloud records a
 time-stamped projection and sends desired state or governed jobs. AetherEdge
 validates, accepts, rejects, expires, or applies that intent under local policy.
 
-The current CloudLink alpha path is experimental. The legacy edge uplink remains
-the default until authentication, signed acknowledgement, crash durability, and
-joint conformance gates pass.
+CloudLink has one Edge wire path. Production enablement remains gated on
+authentication, signed acknowledgement, crash durability, and joint
+conformance evidence.
 
 ## Multi-cloud control-plane cell
 

@@ -105,6 +105,43 @@ async fn writes_validated_telemetry_and_status_with_source_fields() {
     assert_eq!(status.quality_code, 0);
 }
 
+#[test]
+fn quality_update_preserves_the_last_committed_sample() {
+    let manifest = ChannelPointManifest::dense_test_fixture([(7, [1, 0, 0, 0])]);
+    let layout_hash = manifest.layout_hash();
+    let (_directory, writer, adapter) = fixture(manifest, layout_hash);
+    let original = sample(7, PointKind::Telemetry, 0, 42.5, 4_250.0, 1_001);
+    adapter
+        .commit_batch(&[original])
+        .expect("seed the last-known sample");
+
+    let updated = adapter
+        .degrade_quality_preserving_value(&[(original.address(), PointQuality::Bad)])
+        .expect("degrade the existing sample");
+
+    assert_eq!(updated, 1);
+    let degraded = writer.read_slot(0).expect("telemetry slot");
+    assert_eq!(degraded.value, 42.5);
+    assert_eq!(degraded.raw, 4_250.0);
+    assert_eq!(degraded.timestamp_ms, 1_001);
+    assert_eq!(degraded.quality_code, 2);
+}
+
+#[test]
+fn quality_update_does_not_invent_a_value_for_an_unwritten_slot() {
+    let manifest = ChannelPointManifest::dense_test_fixture([(7, [1, 0, 0, 0])]);
+    let layout_hash = manifest.layout_hash();
+    let (_directory, writer, adapter) = fixture(manifest, layout_hash);
+    let address = sample(7, PointKind::Telemetry, 0, 1.0, 1.0, 1).address();
+
+    let updated = adapter
+        .degrade_quality_preserving_value(&[(address, PointQuality::Bad)])
+        .expect("unwritten slot is a no-op");
+
+    assert_eq!(updated, 0);
+    assert!(writer.read_slot(0).expect("telemetry slot").value.is_nan());
+}
+
 #[tokio::test]
 async fn unknown_address_rejects_the_whole_batch_before_any_write() {
     let manifest = ChannelPointManifest::dense_test_fixture([(7, [1, 0, 0, 0])]);

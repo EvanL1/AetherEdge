@@ -2,7 +2,7 @@
 //!
 //! This test suite covers the channel management CRUD handlers:
 //! - POST /api/channels - Create channel
-//! - PUT /api/channels/{id} - Update channel configuration
+//! - PATCH /api/channels/{id} - Update channel configuration
 //! - PUT /api/channels/{id}/enabled - Enable/disable channel
 //! - DELETE /api/channels/{id} - Delete channel
 //! - POST /api/channels/reconcile - Reconcile all channel runtimes
@@ -168,12 +168,10 @@ async fn test_create_channel_with_auto_id() -> Result<()> {
     assert_eq!(status, StatusCode::OK, "Response: {:?}", body);
     assert_eq!(body["success"], true);
     assert!(
-        body["data"]["id"].as_u64().is_some(),
+        body["data"]["channel_id"].as_u64().is_some(),
         "Should have auto-assigned ID"
     );
-    assert_eq!(body["data"]["name"], "Test Modbus Channel");
-    assert_eq!(body["data"]["protocol"], "modbus_tcp");
-    assert_eq!(body["data"]["enabled"], true);
+    assert_eq!(body["data"]["desired_enabled"], true);
 
     Ok(())
 }
@@ -200,8 +198,7 @@ async fn test_create_channel_with_manual_id() -> Result<()> {
 
     assert_eq!(status, StatusCode::OK, "Response: {:?}", body);
     assert_eq!(body["success"], true);
-    assert_eq!(body["data"]["id"], 5001);
-    assert_eq!(body["data"]["name"], "Manual ID Channel");
+    assert_eq!(body["data"]["channel_id"], 5001);
 
     Ok(())
 }
@@ -294,8 +291,8 @@ async fn test_create_channel_disabled() -> Result<()> {
 
     assert_eq!(status, StatusCode::OK, "Response: {:?}", body);
     assert_eq!(body["success"], true);
-    assert_eq!(body["data"]["enabled"], false);
-    assert_eq!(body["data"]["runtime_status"], "stopped");
+    assert_eq!(body["data"]["desired_enabled"], false);
+    assert_eq!(body["data"]["runtime_projection"], "stopped");
 
     Ok(())
 }
@@ -327,7 +324,7 @@ async fn test_update_channel_name() -> Result<()> {
 
     let (status, body) = make_revisioned_request(
         &mut app,
-        "PUT",
+        "PATCH",
         "/api/channels/2001",
         Some(update_payload),
         1,
@@ -336,7 +333,7 @@ async fn test_update_channel_name() -> Result<()> {
 
     assert_eq!(status, StatusCode::OK, "Response: {:?}", body);
     assert_eq!(body["success"], true);
-    assert_eq!(body["data"]["name"], "Updated Name");
+    assert_eq!(body["data"]["operation"], "update");
 
     Ok(())
 }
@@ -370,7 +367,7 @@ async fn test_update_channel_parameters() -> Result<()> {
 
     let (status, body) = make_revisioned_request(
         &mut app,
-        "PUT",
+        "PATCH",
         "/api/channels/2002",
         Some(update_payload),
         1,
@@ -403,7 +400,7 @@ async fn test_update_channel_not_found() -> Result<()> {
 
     let (status, body) = make_revisioned_request(
         &mut app,
-        "PUT",
+        "PATCH",
         "/api/channels/9998",
         Some(update_payload),
         1,
@@ -452,7 +449,7 @@ async fn test_update_channel_name_conflict() -> Result<()> {
 
     let (status, body) = make_revisioned_request(
         &mut app,
-        "PUT",
+        "PATCH",
         "/api/channels/3002",
         Some(update_payload),
         1,
@@ -498,8 +495,8 @@ async fn test_enable_disable_channel() -> Result<()> {
 
     assert_eq!(status, StatusCode::OK, "Response: {:?}", body);
     assert_eq!(body["success"], true);
-    assert_eq!(body["data"]["enabled"], false);
-    assert_eq!(body["data"]["runtime_status"], "stopped");
+    assert_eq!(body["data"]["desired_enabled"], false);
+    assert_eq!(body["data"]["runtime_projection"], "stopped");
 
     // Re-enable the channel
     let enable_payload = json!({ "enabled": true });
@@ -514,7 +511,7 @@ async fn test_enable_disable_channel() -> Result<()> {
 
     assert_eq!(status, StatusCode::OK, "Response: {:?}", body);
     assert_eq!(body["success"], true);
-    assert_eq!(body["data"]["enabled"], true);
+    assert_eq!(body["data"]["desired_enabled"], true);
 
     Ok(())
 }
@@ -764,7 +761,7 @@ async fn test_update_channel_logging_config() -> Result<()> {
 
     let (status, body) = make_revisioned_request(
         &mut app,
-        "PUT",
+        "PATCH",
         "/api/channels/7001",
         Some(update_payload),
         1,
@@ -792,7 +789,7 @@ async fn test_sequential_channel_id_assignment() -> Result<()> {
     let (status, body1) =
         make_request(&mut app, "POST", "/api/channels", Some(create_payload1)).await?;
     assert_eq!(status, StatusCode::OK);
-    let first_id = body1["data"]["id"].as_u64().unwrap();
+    let first_id = body1["data"]["channel_id"].as_u64().unwrap();
 
     // Create second channel with auto-assigned ID
     let create_payload2 = json!({
@@ -805,7 +802,7 @@ async fn test_sequential_channel_id_assignment() -> Result<()> {
     let (status, body2) =
         make_request(&mut app, "POST", "/api/channels", Some(create_payload2)).await?;
     assert_eq!(status, StatusCode::OK);
-    let second_id = body2["data"]["id"].as_u64().unwrap();
+    let second_id = body2["data"]["channel_id"].as_u64().unwrap();
 
     // Second ID should be greater than first
     assert!(

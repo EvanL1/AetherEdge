@@ -66,7 +66,7 @@ Storage remains split by intent rather than database vocabulary:
 | `HistorySink` | Append historical samples | History-owned embedded storage |
 | `HistoryQuery` | Bounded historical windows | History service boundary |
 | `DurableOutbox` | Offline store-and-forward | local append-only journal |
-| `UplinkPublisher` | Transport delivery | Uplink-owned transport |
+| `CloudLinkSpool` | Durable Cloud application delivery | Uplink-owned journal |
 | `AuditSink` | Durable operation audit | local file/SQLite |
 
 SHM remains the only live-state authority. A downstream mirror may implement a
@@ -83,7 +83,7 @@ Concrete mechanisms belong to the process that owns their lifecycle:
   internal application boundary rather than opening the database directly.
 - API owns authenticated remote transport and any retained API-private HTTP
   clients.
-- Uplink owns CloudLink and legacy cloud transport sessions, spool draining,
+- Uplink owns CloudLink transport sessions, spool draining,
   acknowledgement, and replay.
 
 Shared `libs/` packages provide kernel implementation used by more than one
@@ -98,7 +98,7 @@ Aether Data Processing remains opt-in and does not add a seventh process:
 aether-domain                    task identity, values, quality, provenance
 aether-ports                     HistoryQuery, CovariateSource, Clock, DataProcessor
 aether-application               frame assembly, policy, invocation, validation
-aether-data-processing           strict v1 DTOs and canonical digest
+aether-data-processing           strict DTOs and canonical digest
 services/api/adapters/           transitional concrete query/processor clients
 services/api                     authenticated composition and HTTP routes
 packs/<industry>/data-processing declarative task and semantic binding assets

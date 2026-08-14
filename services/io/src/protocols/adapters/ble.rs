@@ -44,8 +44,8 @@ use crate::protocols::core::metadata::{
 };
 use crate::protocols::core::point::{DataFormat, TransformConfig};
 use crate::protocols::core::traits::{
-    ConnectionState, DataEvent, DataEventReceiver, DataEventSender, Diagnostics, PollResult,
-    data_event_channel,
+    ConnectionState, DataEvent, DataEventReceiver, DataEventSink, Diagnostics, PollResult,
+    data_event_channel_with_capacity,
 };
 
 /// Expand a short BLE UUID (e.g., "180f") to full 128-bit format.
@@ -351,7 +351,7 @@ pub(crate) struct BleChannel {
     peripheral: Option<Peripheral>,
     notify_handle: Option<tokio::task::JoinHandle<()>>,
     state: Arc<AtomicU8>,
-    event_tx: DataEventSender,
+    event_tx: DataEventSink,
     event_rx: Option<DataEventReceiver>,
     diagnostics: Arc<AtomicDiagnostics>,
 }
@@ -364,7 +364,11 @@ impl BleChannel {
         points: Vec<BlePointConfig>,
     ) -> Result<Self> {
         validate_point_set(&points)?;
-        let (event_tx, event_rx) = data_event_channel();
+        let acquisition_points = points
+            .iter()
+            .filter(|point| is_acquisition_point(point.point_type))
+            .count();
+        let (event_tx, event_rx) = data_event_channel_with_capacity(acquisition_points);
 
         Ok(Self {
             config,
@@ -382,7 +386,7 @@ impl BleChannel {
     /// Set connection state and queue an event.
     fn set_state(&self, state: ConnectionState) {
         self.state.store(state as u8, Ordering::SeqCst);
-        let _ = self.event_tx.try_send(DataEvent::ConnectionChanged(state));
+        self.event_tx.publish(DataEvent::ConnectionChanged(state));
     }
 
     /// Find the Bluetooth adapter.
@@ -567,18 +571,18 @@ impl BleChannel {
         points: Vec<BlePointConfig>,
         channel_id: u32,
         state: Arc<AtomicU8>,
-        event_tx: DataEventSender,
+        event_tx: DataEventSink,
         diagnostics: Arc<AtomicDiagnostics>,
     ) {
         let mut notification_stream = match peripheral.notifications().await {
             Ok(stream) => stream,
             Err(error) => {
                 state.store(ConnectionState::Error as u8, Ordering::SeqCst);
-                let _ = event_tx.try_send(DataEvent::ConnectionChanged(ConnectionState::Error));
+                event_tx.publish(DataEvent::ConnectionChanged(ConnectionState::Error));
                 let message = format!("Failed to get BLE notification stream: {error}");
                 error!(channel_id, error = %error, "Failed to get BLE notification stream");
                 diagnostics.record_error(message.clone());
-                let _ = event_tx.try_send(DataEvent::Error(message));
+                event_tx.publish(DataEvent::Error(message));
                 return;
             },
         };
@@ -629,14 +633,14 @@ impl BleChannel {
                 }
                 if !batch.is_empty() {
                     diagnostics.add_read(batch.len() as u64);
-                    let _ = event_tx.try_send(DataEvent::DataUpdate(batch));
+                    event_tx.publish(DataEvent::DataUpdate(batch));
                 }
             }
         }
 
         warn!(channel_id, "BLE notification stream ended");
         state.store(ConnectionState::Disconnected as u8, Ordering::SeqCst);
-        let _ = event_tx.try_send(DataEvent::ConnectionChanged(ConnectionState::Disconnected));
+        event_tx.publish(DataEvent::ConnectionChanged(ConnectionState::Disconnected));
     }
 
     /// Write a value to a BLE characteristic for the given point ID.
@@ -702,6 +706,7 @@ impl ChannelRuntime for BleChannel {
         }
         if let Some(handle) = self.notify_handle.take() {
             handle.abort();
+            let _ = handle.await;
         }
         if let Some(peripheral) = self.peripheral.take() {
             let _ = peripheral.disconnect().await;
@@ -834,6 +839,7 @@ impl ChannelRuntime for BleChannel {
         // Abort notification loop
         if let Some(handle) = self.notify_handle.take() {
             handle.abort();
+            let _ = handle.await;
         }
 
         // Disconnect peripheral

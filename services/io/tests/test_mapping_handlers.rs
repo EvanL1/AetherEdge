@@ -349,7 +349,7 @@ async fn test_update_mappings_multiple_points() -> Result<()> {
                     "function_code": 3,
                     "register_address": 102,
                     "data_type": "uint16",
-                    "byte_order": "AB"
+                    "byte_order": "ABCD"
                 }
             }
         ],

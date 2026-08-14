@@ -16,8 +16,7 @@ use std::sync::Arc;
 
 use crate::api::dto::{
     DataTypeQuery, InstanceDataResponseDto, InstanceDetailResponseDto, InstanceListResponseDto,
-    InstancePickerItemDto, InstancePickerResponseDto, InstancePointsResponse,
-    InstanceSearchResponseDto, InstanceSummaryDto,
+    InstancePointsResponse, InstanceSearchResponseDto, InstanceSummaryDto,
 };
 use crate::app_state::AppState;
 use crate::error::AutomationError;
@@ -244,48 +243,6 @@ pub async fn search_instances(
     })))
 }
 
-/// Minimal instance list (id + name only, no pagination).
-///
-/// For dropdown menus, routing-bind pickers, and other "pick an instance"
-/// scenarios. Returns all instances in one shot with only two fields,
-/// minimising response size. For full details use the paginated endpoint.
-#[utoipa::path(
-    get,
-    path = "/api/instances/list",
-    responses(
-        (status = 200, description = "Instance list", body = common::SuccessResponse<InstancePickerResponseDto>,
-            example = json!({
-                "success": true,
-                "data": {
-                    "list": [
-                        {"id": 1, "name": "pump_01"},
-                        {"id": 2, "name": "conveyor_01"}
-                    ]
-                }
-            })
-        )
-    ),
-    tag = "automation"
-)]
-pub async fn list_instances_slim(
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<SuccessResponse<InstancePickerResponseDto>>, AutomationError> {
-    let list = state
-        .instance_manager
-        .list_instance_identities()
-        .await
-        .map_err(|error| {
-            AutomationError::InternalError(format!("Failed to list instances: {error}"))
-        })?
-        .into_iter()
-        .map(|(id, name)| InstancePickerItemDto { id, name })
-        .collect();
-
-    Ok(Json(SuccessResponse::new(InstancePickerResponseDto {
-        list,
-    })))
-}
-
 /// Get product-model details for a single instance.
 ///
 /// Returns the full instance definition: base fields, properties, measurement
@@ -343,7 +300,8 @@ pub async fn get_instance(
 /// Get real-time data for an instance
 ///
 /// Returns current measurement and action values from the authoritative SHM
-/// generation. A plane filter returns only that plane's point-value map.
+/// generation. The response always contains both plane maps; a plane filter
+/// leaves the unrequested map empty.
 #[utoipa::path(
     get,
     path = "/api/instances/{id}/data",

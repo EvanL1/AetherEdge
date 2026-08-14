@@ -12,9 +12,9 @@ keywords = ["iot", "edge", "gateway", "automation"]
 categories = ["embedded", "asynchronous"]
 
 [dependencies]
-aether-data-processing = { version = "0.0.1", path = "../aether-data-processing" }
-aether-domain = { version = "0.0.1", path = "../aether-domain" }
-aether-ports = { version = "0.0.1", path = "../aether-ports" }
+aether-data-processing = { version = "0.0.2", path = "../aether-data-processing" }
+aether-domain = { version = "0.0.2", path = "../aether-domain" }
+aether-ports = { version = "0.0.2", path = "../aether-ports" }
 thiserror = { workspace = true }
 sha2 = { workspace = true }
 tokio = { workspace = true, features = ["time"] }

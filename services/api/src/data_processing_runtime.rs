@@ -238,7 +238,7 @@ async fn validate_sqlite_history_authority(
         anyhow::bail!("Data Processing requires enabled history storage");
     }
     if !backend.eq_ignore_ascii_case("sqlite") {
-        anyhow::bail!("Data Processing v1 supports only the authoritative SQLite historian");
+        anyhow::bail!("Data Processing supports only the authoritative SQLite historian");
     }
     if configured_path.is_empty() || Path::new(storage_url) != Path::new(configured_path) {
         anyhow::bail!("Data Processing history path does not match the authoritative historian");
@@ -416,7 +416,7 @@ impl RuntimeConfig {
             .with_context(|| format!("read Data Processing config at {}", path.display()))?;
         let value: Self = serde_yml::from_str(&contents)
             .context("parse strict Data Processing runtime config")?;
-        if value.schema != "aether.data-processing-runtime.v1" || value.routes.is_empty() {
+        if value.schema != "aether.data-processing-runtime" || value.routes.is_empty() {
             anyhow::bail!("Data Processing runtime schema or route set is invalid");
         }
         Ok(value)
@@ -1112,7 +1112,7 @@ mod tests {
 
     #[test]
     fn runtime_config_rejects_unknown_fields_and_uncommissioned_bindings() {
-        let invalid = "schema: aether.data-processing-runtime.v1\nunknown: true\nroutes: []\n";
+        let invalid = "schema: aether.data-processing-runtime\nunknown: true\nroutes: []\n";
         assert!(serde_yml::from_str::<RuntimeConfig>(invalid).is_err());
     }
 

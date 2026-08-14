@@ -119,8 +119,12 @@ impl From<&crate::protocols::ParameterMetadata> for ParameterInfo {
 /// fallback for missing/invalid required values. The Modbus contracts are:
 /// TCP `host: non-empty string`, `port: integer 1..65535`; RTU
 /// `device: non-empty string`, `baud_rate: integer 1..4294967295`.
-/// Both transports accept optional `poll_interval_ms: integer 1..86400000`
-/// and `read_timeout_ms: integer 1..86400000`.
+/// Both transports accept optional `poll_interval_ms: integer 1..86400000`,
+/// `connect_timeout_ms: integer 1..86400000`, and
+/// `read_timeout_ms: integer 1..86400000`, plus
+/// `write_timeout_ms: integer 1..86400000`. The write deadline includes its
+/// response acknowledgement. Read and write deadlines are independent and each
+/// defaults to 3000 ms.
 #[utoipa::path(
     get,
     path = "/api/protocols",
@@ -217,7 +221,9 @@ mod tests {
                 &[
                     "host",
                     "port",
+                    "connect_timeout_ms",
                     "read_timeout_ms",
+                    "write_timeout_ms",
                     "poll_interval_ms",
                     "zero_data_threshold",
                     "reconnect_max_attempts",
@@ -227,7 +233,14 @@ mod tests {
                     "watchdog_recovery_cooldown_secs",
                     "watchdog_max_recovery_rounds",
                 ],
-                &["host", "port", "read_timeout_ms", "poll_interval_ms"],
+                &[
+                    "host",
+                    "port",
+                    "connect_timeout_ms",
+                    "read_timeout_ms",
+                    "write_timeout_ms",
+                    "poll_interval_ms",
+                ],
             );
         }
 
@@ -245,7 +258,9 @@ mod tests {
                 &[
                     "device",
                     "baud_rate",
+                    "connect_timeout_ms",
                     "read_timeout_ms",
+                    "write_timeout_ms",
                     "poll_interval_ms",
                     "zero_data_threshold",
                     "reconnect_max_attempts",
@@ -255,7 +270,14 @@ mod tests {
                     "watchdog_recovery_cooldown_secs",
                     "watchdog_max_recovery_rounds",
                 ],
-                &["device", "baud_rate", "read_timeout_ms", "poll_interval_ms"],
+                &[
+                    "device",
+                    "baud_rate",
+                    "connect_timeout_ms",
+                    "read_timeout_ms",
+                    "write_timeout_ms",
+                    "poll_interval_ms",
+                ],
             );
         }
 
@@ -265,9 +287,23 @@ mod tests {
             let poll = parameter(driver, "poll_interval_ms");
             assert_eq!(poll.minimum, Some(1));
             assert_eq!(poll.maximum, Some(86_400_000));
+            let connect_timeout = parameter(driver, "connect_timeout_ms");
+            assert_eq!(connect_timeout.minimum, Some(1));
+            assert_eq!(connect_timeout.maximum, Some(86_400_000));
+            assert_eq!(
+                connect_timeout.default_value,
+                Some(serde_json::Value::from(5_000))
+            );
             let timeout = parameter(driver, "read_timeout_ms");
             assert_eq!(timeout.minimum, Some(1));
             assert_eq!(timeout.maximum, Some(86_400_000));
+            let write_timeout = parameter(driver, "write_timeout_ms");
+            assert_eq!(write_timeout.minimum, Some(1));
+            assert_eq!(write_timeout.maximum, Some(86_400_000));
+            assert_eq!(
+                write_timeout.default_value,
+                Some(serde_json::Value::from(3_000))
+            );
         }
     }
 }

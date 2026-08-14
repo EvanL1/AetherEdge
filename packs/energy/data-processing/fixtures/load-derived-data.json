@@ -1,5 +1,5 @@
 {
-  "schema": "aether.derived-data.v1",
+  "schema": "aether.derived-data",
   "result_id": "0190aee6-22ac-72da-b214-629a31ccb99c",
   "request_id": "0190aee6-2139-7a87-8448-806f1b843201",
   "task": {
@@ -13,12 +13,12 @@
   },
   "accepted_at": "2026-07-11T12:00:03Z",
   "expires_at": "2026-07-11T13:00:00Z",
-  "input_digest": "sha256:98967bdedc60b8ab555e596516eb272063c139ccf3a3112fb29a46ab0610f270",
+  "input_digest": "sha256:cf7ec152201164e4a1aaa035b44313ef2ba62af2fff6529bd1cbb8076cb15afe",
   "processing_status": "produced",
   "processor": {
     "id": "load-forecasting-edge",
     "version": "0.1.0",
-    "contract": "aether.data-processing.forecast.v1"
+    "contract": "aether.data-processing.forecast"
   },
   "artifact": {
     "kind": "model",
@@ -36,7 +36,7 @@
   },
   "warnings": [],
   "data": {
-    "schema": "aether.data-processing.output.forecast.v1",
+    "schema": "aether.data-processing.output.forecast",
     "kind": "forecast",
     "target": "load",
     "unit": "kW",

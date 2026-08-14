@@ -60,10 +60,10 @@ fn default_distribution_has_no_commissioned_device_or_rule() {
     assert_eq!(
         instances
             .get("instances")
-            .and_then(Value::as_object)
+            .and_then(Value::as_array)
             .map(|items| items.len()),
         Some(0),
-        "the distribution template must start with an empty instance map"
+        "the distribution template must start with an empty instance array"
     );
 
     let rules_dir = root.join("config.template/automation/rules");

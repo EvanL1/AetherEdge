@@ -80,50 +80,10 @@ const englishMetadataOverrides = {
     description:
       'Repository overview, current product status, installation paths, architecture boundaries, and development entry points.',
   },
-  'docs/AETHER_CLI_GUIDE.md': {
-    title: 'Legacy CLI guide',
-    description:
-      'Migration-period CLI guide retained for historical lookup; the current CLI reference remains authoritative.',
-  },
-  'docs/API_REFERENCE.md': {
-    title: 'Legacy API reference entry',
-    description:
-      'Compatibility entry that routes readers to service-owned OpenAPI instead of duplicating endpoint definitions.',
-  },
-  'docs/CONFIG_FORMAT_GUIDE.md': {
-    title: 'Legacy AetherEMS configuration formats',
-    description:
-      'Historical AetherEMS configuration material retained for migration; it is not AetherEdge configuration authority.',
-  },
-  'docs/GETTING_STARTED_DEVELOPMENT.md': {
-    title: 'Legacy AetherEMS development quickstart',
-    description:
-      'Historical pre-split development instructions retained for migration and not current AetherEdge onboarding.',
-  },
   'docs/README.md': {
     title: 'Repository documentation map',
     description:
-      'Navigation for repository documentation, current authority records, compatibility notes, and historical material.',
-  },
-  'docs/architecture/openclaw-comparison.md': {
-    title: 'Historical AetherEMS and OpenClaw comparison',
-    description:
-      'Pre-split architecture comparison retained as historical product research, not current AetherEdge authority.',
-  },
-  'docs/benchmarking.md': {
-    title: 'Historical AetherEMS competitive research',
-    description:
-      'Pre-split energy-product research retained for history; AetherEMS owns current solution strategy.',
-  },
-  'docs/operations-log.md': {
-    title: 'Historical AetherEMS operations log',
-    description:
-      'Pre-split operational notes retained as optional history and not a current runbook or architecture authority.',
-  },
-  'docs/websocket-rule-monitor-api.md': {
-    title: 'Legacy rule-monitor WebSocket API',
-    description:
-      'Historical rule-monitoring interface retained for compatibility lookup.',
+      'Navigation for repository documentation, current authority records, and release support information.',
   },
 };
 const governanceMetadataOverrides = {
@@ -433,8 +393,7 @@ function isOptionalPath(relativePath) {
     relativePath.startsWith('libs/') ||
     /^services\/[^/]+\/adapters\//.test(relativePath) ||
     relativePath.startsWith('contracts/') ||
-    relativePath.startsWith('docs/domain/') ||
-    relativePath === 'docs/operations-log.md'
+    relativePath.startsWith('docs/domain/')
   );
 }
 
@@ -677,7 +636,6 @@ export async function buildManifest(root = repoRoot) {
   );
   return {
     $schema: manifestSchemaUrl,
-    schema_version: 3,
     project: 'AetherEdge',
     repository: repositoryUrl,
     scope:
@@ -715,7 +673,6 @@ export async function findManifestViolations(manifest, root = repoRoot) {
   if (manifest.$schema !== manifestSchemaUrl) {
     violations.push(`$schema must be ${manifestSchemaUrl}`);
   }
-  if (manifest.schema_version !== 3) violations.push('schema_version must be 3');
   if (manifest.project !== 'AetherEdge') violations.push('project must be AetherEdge');
   if (!Array.isArray(manifest.documents)) {
     return [...violations, 'documents must be an array'];

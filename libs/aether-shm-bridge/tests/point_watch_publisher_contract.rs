@@ -9,9 +9,10 @@ use aether_domain::{
     TimestampMs,
 };
 use aether_shm_bridge::{
-    ChannelPointManifest, PointWatchEventListener, PointWatchPublisher, ShmRuntimeConfig,
-    ShmWriterHandle, SubscriptionBitmap,
+    AcquisitionCommitObserver, ChannelPointManifest, PointWatchEventListener, PointWatchPublisher,
+    ShmRuntimeConfig, ShmWriterHandle, SubscriptionBitmap,
 };
+use tokio::io::AsyncReadExt;
 use tokio_util::sync::CancellationToken;
 
 #[tokio::test]
@@ -77,4 +78,80 @@ async fn typed_acquisition_commit_emits_a_compact_point_watch_hint() {
         .expect("listener task")
         .expect("listener");
     publisher_task.await.expect("publisher task");
+}
+
+#[tokio::test]
+async fn prepared_point_watch_does_not_start_socket_work_before_spawn() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let socket = directory.path().join("prepared.sock");
+    let listener = tokio::net::UnixListener::bind(&socket).expect("bind consumer socket");
+    let bitmap = Arc::new(SubscriptionBitmap::new_in_memory(1).expect("in-memory bitmap"));
+    bitmap.set_watched(0).expect("subscribe slot");
+    let (publisher, prepared) = PointWatchPublisher::prepare_with_fanout(vec![(bitmap, socket)]);
+    let address =
+        ChannelPointAddress::new(ChannelId::new(7), PointKind::Telemetry, PointId::new(0))
+            .expect("acquisition address");
+    let sample = AcquiredPointSample::new(
+        address,
+        12.5,
+        125.0,
+        TimestampMs::new(4_200),
+        PointQuality::Good,
+    )
+    .expect("sample");
+    publisher.point_committed(0, sample);
+
+    assert!(
+        tokio::time::timeout(Duration::from_millis(20), listener.accept())
+            .await
+            .is_err(),
+        "preparation must not connect or spawn a drain task"
+    );
+
+    let shutdown = CancellationToken::new();
+    let drain = prepared.spawn(shutdown.clone());
+    tokio::time::timeout(Duration::from_secs(1), listener.accept())
+        .await
+        .expect("prepared drain did not start")
+        .expect("accept prepared drain");
+    shutdown.cancel();
+    drain.await.expect("prepared drain task");
+}
+
+#[tokio::test]
+async fn aborting_the_aggregate_point_watch_task_does_not_detach_socket_drains() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let socket = directory.path().join("owned-drain.sock");
+    let listener = tokio::net::UnixListener::bind(&socket).expect("bind consumer socket");
+    let bitmap = Arc::new(SubscriptionBitmap::new_in_memory(1).expect("in-memory bitmap"));
+    bitmap.set_watched(0).expect("subscribe slot");
+    let (publisher, prepared) = PointWatchPublisher::prepare_with_fanout(vec![(bitmap, socket)]);
+    let address =
+        ChannelPointAddress::new(ChannelId::new(7), PointKind::Telemetry, PointId::new(0))
+            .expect("acquisition address");
+    publisher.point_committed(
+        0,
+        AcquiredPointSample::new(
+            address,
+            12.5,
+            125.0,
+            TimestampMs::new(4_200),
+            PointQuality::Good,
+        )
+        .expect("sample"),
+    );
+
+    let aggregate = prepared.spawn(CancellationToken::new());
+    let (mut peer, _) = tokio::time::timeout(Duration::from_secs(1), listener.accept())
+        .await
+        .expect("point-watch connection timeout")
+        .expect("accept point-watch drain");
+    aggregate.abort();
+    let _ = aggregate.await;
+
+    let mut received = Vec::new();
+    tokio::time::timeout(Duration::from_secs(1), peer.read_to_end(&mut received))
+        .await
+        .expect("owned socket drain remained detached after aggregate abort")
+        .expect("read socket EOF");
 }

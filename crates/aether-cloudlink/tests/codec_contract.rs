@@ -3,8 +3,9 @@ use std::fs;
 use std::path::Path;
 
 use aether_cloudlink::{
-    CandidateMessage, CloudLinkCodec, CloudLinkCodecError, MessageAuthentication, SessionBinding,
-    SessionHello, TopologyBinding, UplinkAuthentication,
+    CandidateMessage, CloudLinkCodec, CloudLinkCodecError, DeliveryDescriptor,
+    MessageAuthentication, ReplayRequest, ResumeCursor, SessionAccepted, SessionBinding,
+    SessionChallenge, SessionHello, TopologyBinding, UplinkAuthentication,
 };
 use aether_domain::{
     InstanceId, PointAddress, PointId, PointKind, PointQuality, PointSample, TimestampMs,
@@ -29,7 +30,6 @@ fn aether_contracts_distribution_lock_pins_imported_bytes() {
     assert_eq!(lock["release"]["version"], "0.1.0-alpha.3");
     assert_eq!(lock["policy"]["conformance_claim"], "distribution-only");
     assert_eq!(lock["policy"]["production_release"], false);
-    assert_eq!(lock["policy"]["legacy_default"], true);
     assert_eq!(lock["policy"]["physical_control"], false);
 
     let local_manifest = lock["manifest"]["local_path"]
@@ -50,7 +50,6 @@ fn aether_contracts_distribution_lock_pins_imported_bytes() {
     assert_eq!(manifest["contract"], "aether.contracts");
     assert_eq!(manifest["release_version"], "0.1.0-alpha.3");
     assert_eq!(manifest["production_release"], false);
-    assert_eq!(manifest["legacy_default"], true);
     assert_eq!(manifest["physical_control"], false);
     let artifacts = manifest["artifacts"]
         .as_array()
@@ -71,8 +70,15 @@ fn aether_contracts_distribution_lock_pins_imported_bytes() {
     let pending = lock["pending_imports"]
         .as_array()
         .expect("pending consumer imports");
-    assert_eq!(imports.len(), 53, "complete alpha.3 adoption closure");
-    assert!(pending.is_empty(), "alpha.3 has no pending imports");
+    assert_eq!(
+        imports.len(),
+        53,
+        "complete pinned-release adoption closure"
+    );
+    assert!(
+        pending.is_empty(),
+        "the pinned release has no pending imports"
+    );
 
     let mut sources = HashSet::new();
     let mut destinations = HashSet::new();
@@ -115,34 +121,28 @@ fn aether_contracts_distribution_lock_pins_imported_bytes() {
 
 fn fixture(name: &str) -> Vec<u8> {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../contracts/cloudlink/v1/fixtures")
+        .join("../../contracts/cloudlink/fixtures")
         .join(name);
     fs::read(path).expect("checked-in CloudLink fixture")
 }
 
 #[test]
 fn product_integration_manifest_and_hello_are_pinned() {
-    let contract_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../contracts/cloudlink/v1");
+    let contract_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../contracts/cloudlink");
     let manifest: Value = serde_json::from_slice(
         &fs::read(contract_root.join("contract-manifest.json"))
             .expect("checked-in joint contract manifest"),
     )
     .expect("contract manifest JSON");
-    assert_eq!(manifest["contracts_release"], "0.1.0-alpha.3");
-    assert_eq!(manifest["status"], "product-local-implementation-overlay");
-    assert_eq!(manifest["authority"], "AetherContracts v0.1.0-alpha.3");
-    assert_eq!(manifest["owner"], "AetherEdge implementation evidence");
+    assert_eq!(manifest["status"], "canonical");
+    assert_eq!(manifest["owner"], "AetherEdge");
     assert_eq!(
-        manifest["authoritative_artifacts"]["core_profile"],
-        "AetherContracts profiles/cloudlink/v1alpha1/core.json"
+        manifest["canonical_surface"]["mqtt_topic_root"],
+        "{prefix}/gateways/{gateway_id}"
     );
-    assert_eq!(manifest["implementation_limits"]["legacy_default"], true);
-    assert_eq!(
-        manifest["implementation_limits"]["physical_control"],
-        "forbidden"
-    );
-    assert!(manifest.get("mqtt_topics").is_none());
-    assert!(manifest.get("freeze").is_none());
+    assert_eq!(manifest["canonical_surface"]["protocol_negotiation"], false);
+    assert_eq!(manifest["canonical_surface"]["physical_control"], false);
+    assert_eq!(manifest["provenance"]["upstream_release"], "0.1.0-alpha.3");
 
     let hello: Value = serde_json::from_slice(&fixture("session-hello.valid.json"))
         .expect("session hello fixture JSON");
@@ -160,7 +160,7 @@ fn product_integration_manifest_and_hello_are_pinned() {
 
 #[test]
 fn product_fixture_manifest_pins_every_fixture_byte() {
-    let contract_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../contracts/cloudlink/v1");
+    let contract_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../contracts/cloudlink");
     let manifest: Value = serde_json::from_slice(
         &fs::read(contract_root.join("fixture-manifest.json")).expect("fixture manifest"),
     )
@@ -203,13 +203,17 @@ fn product_fixture_manifest_pins_every_fixture_byte() {
 
 #[test]
 fn product_codec_executes_the_complete_public_fixture_manifest() {
-    let contract_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../contracts/cloudlink/v1");
+    let contract_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../contracts/cloudlink");
     let manifest: Value = serde_json::from_slice(
         &fs::read(contract_root.join("fixture-manifest.json")).expect("fixture manifest"),
     )
     .expect("fixture manifest JSON");
     let entries = manifest["fixtures"].as_array().expect("fixture entries");
-    assert_eq!(entries.len(), 25, "the complete alpha.3 public fixture set");
+    assert_eq!(
+        entries.len(),
+        25,
+        "the complete local CloudLink fixture set"
+    );
 
     for entry in entries {
         let name = entry["file"].as_str().expect("fixture file");
@@ -286,7 +290,6 @@ fn session_hello_signature_shape_is_serialized_but_redacted_from_diagnostics() {
         "22222222-2222-4222-8222-222222222222",
         "development-gateway-key-17",
         signature,
-        vec!["1.0".to_string()],
         "A".repeat(43),
         Vec::new(),
     )
@@ -334,6 +337,7 @@ fn telemetry_sample() -> PointSample {
 #[test]
 fn all_valid_golden_fixtures_decode_strictly() {
     for name in [
+        "alarm-event.valid.json",
         "session-challenge.valid.json",
         "session-hello.valid.json",
         "session-accepted.valid.json",
@@ -352,21 +356,20 @@ fn all_valid_golden_fixtures_decode_strictly() {
 }
 
 #[test]
-fn alpha3_authentication_and_manifest_gap_fixtures_fail_closed() {
+fn pinned_authentication_and_manifest_gap_fixtures_fail_closed() {
     for name in [
         "session-hello-auth-required.json",
         "session-hello-auth-invalid.json",
         "runtime-manifest-invalid-semver.json",
     ] {
         let _ = CloudLinkCodec::decode(&fixture(name))
-            .expect_err("alpha.3 gap fixture must fail closed");
+            .expect_err("pinned gap fixture must fail closed");
     }
 }
 
 #[test]
-fn unsupported_versions_unknown_fields_and_unsafe_uint64_fail_closed() {
+fn unknown_fields_and_unsafe_uint64_fail_closed() {
     for (name, expected) in [
-        ("unsupported-version.json", "protocol version"),
         ("unknown-field.json", "unknown field"),
         ("unsafe-uint64.json", "canonical uint64"),
         ("overflow-uint64.json", "out of range"),
@@ -501,7 +504,10 @@ fn envelope_digest_excludes_session_and_trace_but_detects_business_changes() {
 
     assert_eq!(first.delivery().digest(), replay.delivery().digest());
     assert_eq!(first.delivery().batch_id(), replay.delivery().batch_id());
-    assert_eq!(first.delivery().position(), replay.delivery().position());
+    assert_eq!(
+        first.delivery().position().expect("first position"),
+        replay.delivery().position().expect("replay position")
+    );
 
     let mut changed: Value = serde_json::to_value(payload).expect("payload JSON");
     changed["samples"][0]["value"] = json!(99.0);
@@ -556,20 +562,35 @@ fn session_accepted_and_heartbeat_ack_validate_the_current_epoch() {
         other => panic!("wrong message: {other:?}"),
     };
     let bound = accepted
-        .bind("33333333-3333-4333-8333-333333333333", 3, &["1.0"], 6)
+        .bind("33333333-3333-4333-8333-333333333333", 3, 6)
         .expect("accepted session");
     assert_eq!(bound.session_epoch(), 7);
-    assert_eq!(accepted.heartbeat_interval_ms(), 30_000);
+    assert_eq!(
+        accepted
+            .heartbeat_interval_ms()
+            .expect("heartbeat interval"),
+        30_000
+    );
     assert_eq!(accepted.resume_cursors().len(), 1);
     assert_eq!(accepted.resume_cursors()[0].stream_id(), "telemetry");
-    assert_eq!(accepted.resume_cursors()[0].stream_epoch(), 4);
-    assert_eq!(accepted.resume_cursors()[0].acknowledged_position(), 18);
+    assert_eq!(
+        accepted.resume_cursors()[0]
+            .stream_epoch()
+            .expect("stream epoch"),
+        4
+    );
+    assert_eq!(
+        accepted.resume_cursors()[0]
+            .acknowledged_position()
+            .expect("acknowledged position"),
+        18
+    );
     assert!(matches!(
-        accepted.bind("33333333-3333-4333-8333-333333333333", 3, &["1.0"], 7),
+        accepted.bind("33333333-3333-4333-8333-333333333333", 3, 7),
         Err(CloudLinkCodecError::SessionMismatch)
     ));
     assert!(matches!(
-        accepted.bind("33333333-3333-4333-8333-333333333333", 4, &["1.0"], 6),
+        accepted.bind("33333333-3333-4333-8333-333333333333", 4, 6),
         Err(CloudLinkCodecError::SessionMismatch)
     ));
 
@@ -595,13 +616,76 @@ fn session_accepted_and_heartbeat_ack_validate_the_current_epoch() {
 }
 
 #[test]
+fn direct_deserialization_cannot_turn_invalid_wire_integers_into_zero() {
+    let cursor: ResumeCursor = serde_json::from_value(json!({
+        "stream_id": "telemetry",
+        "stream_epoch": "not-a-number",
+        "acknowledged_position": "also-invalid"
+    }))
+    .expect("structural cursor JSON");
+    assert!(cursor.stream_epoch().is_err());
+    assert!(cursor.acknowledged_position().is_err());
+
+    let delivery: DeliveryDescriptor = serde_json::from_value(json!({
+        "stream_id": "telemetry",
+        "stream_epoch": "0",
+        "position": "18446744073709551616",
+        "batch_id": "batch-1",
+        "digest": format!("sha256:{}", "0".repeat(64))
+    }))
+    .expect("structural delivery JSON");
+    assert!(delivery.stream_epoch().is_err());
+    assert!(delivery.position().is_err());
+
+    let mut replay: Value =
+        serde_json::from_slice(&fixture("replay-request.valid.json")).expect("replay fixture JSON");
+    replay["stream_epoch"] = json!("01");
+    replay["from_position"] = json!("bad");
+    let replay: ReplayRequest = serde_json::from_value(replay).expect("structural replay JSON");
+    assert!(replay.stream_epoch().is_err());
+    assert!(replay.from_position().is_err());
+
+    let mut accepted: Value = serde_json::from_slice(&fixture("session-accepted.valid.json"))
+        .expect("accepted fixture JSON");
+    accepted["heartbeat_interval_ms"] = json!("0");
+    let accepted: SessionAccepted =
+        serde_json::from_value(accepted).expect("structural accepted JSON");
+    assert!(accepted.heartbeat_interval_ms().is_err());
+
+    let mut challenge: Value = serde_json::from_slice(&fixture("session-challenge.valid.json"))
+        .expect("challenge fixture JSON");
+    challenge["issued_at_ms"] = json!("01");
+    challenge["expires_at_ms"] = json!("bad");
+    let challenge: SessionChallenge =
+        serde_json::from_value(challenge).expect("structural challenge JSON");
+    assert!(challenge.issued_at_ms().is_err());
+    assert!(challenge.expires_at_ms().is_err());
+
+    let maximum: ResumeCursor = serde_json::from_value(json!({
+        "stream_id": "telemetry",
+        "stream_epoch": u64::MAX.to_string(),
+        "acknowledged_position": u64::MAX.to_string()
+    }))
+    .expect("structural maximum cursor JSON");
+    assert_eq!(
+        maximum.stream_epoch().expect("maximum stream epoch"),
+        u64::MAX
+    );
+    assert_eq!(
+        maximum
+            .acknowledged_position()
+            .expect("maximum acknowledged position"),
+        u64::MAX
+    );
+}
+
+#[test]
 fn trusted_connector_hello_uses_broker_attestation_without_payload_signatures() {
     let hello = SessionHello::new_trusted_connector_broker_attested(
         "33333333-3333-4333-8333-333333333333",
         "home-edge-connector",
         3,
         "22222222-2222-4222-8222-222222222222",
-        vec!["1.0".to_owned()],
         "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
         vec![],
     )

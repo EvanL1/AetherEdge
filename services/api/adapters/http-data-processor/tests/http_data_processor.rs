@@ -19,7 +19,7 @@ use tokio::net::TcpListener;
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-const CONTRACT: &str = "aether.data-processing.forecast.v1";
+const CONTRACT: &str = "aether.data-processing.forecast";
 const REQUEST_ID: &str = "0190aee6-2139-7a87-8448-806f1b843201";
 const INPUT_DIGEST: &str =
     "sha256:8b227777d4dd1fc61c6f884f48641d02b50a8a461a77f8fae7f48e32fbd8c372";
@@ -297,7 +297,7 @@ fn result_json(status: &str) -> Value {
     let watermark = request.frame().quality().input_watermark().get();
     let issued = unix_millis();
     let base = json!({
-        "schema": "aether.data-processing.result.v1",
+        "schema": "aether.data-processing.result",
         "request_id": REQUEST_ID,
         "task": {
             "id": "energy.site-load-forecast",
@@ -325,7 +325,7 @@ fn result_json(status: &str) -> Value {
         result.insert(
             "output".to_string(),
             json!({
-                "schema": "aether.data-processing.output.forecast.v1",
+                "schema": "aether.data-processing.output.forecast",
                 "kind": "forecast",
                 "target": "load",
                 "unit": "kW",
@@ -395,10 +395,10 @@ fn result_json(status: &str) -> Value {
 }
 
 fn process_response(body: Value) -> ResponseTemplate {
-    versioned_json_response(200, &body)
+    canonical_json_response(200, &body)
 }
 
-fn versioned_json_response(status: u16, body: &Value) -> ResponseTemplate {
+fn canonical_json_response(status: u16, body: &Value) -> ResponseTemplate {
     ResponseTemplate::new(status)
         .insert_header("content-type", JSON_MEDIA_TYPE)
         .set_body_bytes(serde_json::to_vec(&body).expect("response JSON encodes"))
@@ -412,7 +412,7 @@ fn error_response(
     retry_after_seconds: Option<u64>,
 ) -> ResponseTemplate {
     let mut body = json!({
-        "schema": "aether.data-processing.error.v1",
+        "schema": "aether.data-processing.error",
         "request_id": REQUEST_ID,
         "code": code,
         "category": category,
@@ -426,14 +426,14 @@ fn error_response(
     if let Some(seconds) = retry_after_seconds {
         body["details"]["retry_after_seconds"] = json!(seconds);
     }
-    versioned_json_response(status, &body)
+    canonical_json_response(status, &body)
 }
 
 #[tokio::test]
-async fn process_sends_complete_v1_request_and_decodes_produced_result() {
+async fn process_sends_complete_request_and_decodes_produced_result() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
-        .and(path("/v1/process"))
+        .and(path("/process"))
         .and(header("content-type", JSON_MEDIA_TYPE))
         .and(header("accept", JSON_MEDIA_TYPE))
         .respond_with(process_response(result_json("produced")))
@@ -468,11 +468,11 @@ async fn process_sends_complete_v1_request_and_decodes_produced_result() {
         .await
         .expect("requests can be inspected");
     let payload: Value = serde_json::from_slice(&received[0].body).expect("request JSON");
-    assert_eq!(payload["schema"], "aether.data-processing.request.v1");
+    assert_eq!(payload["schema"], "aether.data-processing.request");
     assert_eq!(payload["task"]["kind"], "forecast");
     assert_eq!(payload["binding"]["revision"], 7);
     assert_eq!(payload["artifact"]["family"], "site-load");
-    assert_eq!(payload["frame"]["schema"], "aether.processing-frame.v1");
+    assert_eq!(payload["frame"]["schema"], "aether.processing-frame");
     assert_eq!(payload["frame"]["cadence_seconds"], 900);
     assert_eq!(
         payload["frame"]["history"]["features"]["mode"]["values"][0],
@@ -507,7 +507,7 @@ async fn process_decodes_explicit_fallback_and_unavailable_results() {
     ] {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
-            .and(path("/v1/process"))
+            .and(path("/process"))
             .respond_with(process_response(result_json(status)))
             .mount(&server)
             .await;
@@ -537,10 +537,10 @@ async fn process_decodes_explicit_fallback_and_unavailable_results() {
 }
 
 #[tokio::test]
-async fn health_uses_the_versioned_endpoint_and_validates_identity() {
+async fn health_uses_the_canonical_endpoint_and_validates_identity() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/v1/health"))
+        .and(path("/health"))
         .and(header("accept", JSON_MEDIA_TYPE))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "status": "degraded",
@@ -813,7 +813,7 @@ async fn timeout_and_http_statuses_have_stable_port_error_kinds_without_body_lea
 #[tokio::test]
 async fn non_success_error_contract_is_strict_correlated_and_bounded() {
     let valid_error = json!({
-        "schema": "aether.data-processing.error.v1",
+        "schema": "aether.data-processing.error",
         "request_id": REQUEST_ID,
         "code": "FRAME_INVALID",
         "category": "invalid_data",
@@ -840,26 +840,26 @@ async fn non_success_error_contract_is_strict_correlated_and_bounded() {
             "wrong media type",
         ),
         (
-            versioned_json_response(422, &unknown_field),
+            canonical_json_response(422, &unknown_field),
             "unknown field",
         ),
         (
-            versioned_json_response(422, &unknown_detail),
+            canonical_json_response(422, &unknown_detail),
             "unknown details field",
         ),
         (
-            versioned_json_response(422, &explicit_null),
+            canonical_json_response(422, &explicit_null),
             "explicit null",
         ),
         (
             ResponseTemplate::new(429)
                 .insert_header(
                     "content-type",
-                    "application/vnd.aether.data-processing+json;version=1;version=1",
+                    "application/vnd.aether.data-processing+json;profile=retired",
                 )
                 .set_body_bytes(
                     serde_json::to_vec(&json!({
-                        "schema": "aether.data-processing.error.v1",
+                        "schema": "aether.data-processing.error",
                         "request_id": REQUEST_ID,
                         "code": "PROCESSOR_BUSY",
                         "category": "capacity",
@@ -868,7 +868,7 @@ async fn non_success_error_contract_is_strict_correlated_and_bounded() {
                     }))
                     .expect("error JSON encodes"),
                 ),
-            "duplicate media type parameter",
+            "retired version media type parameter",
         ),
     ];
     for (response, label) in cases {
@@ -894,7 +894,7 @@ async fn non_success_error_contract_is_strict_correlated_and_bounded() {
     }
 
     let invalid_values = [
-        ("schema", json!("aether.data-processing.error.v2")),
+        ("schema", json!("aether.data-processing.error.invalid")),
         ("code", json!("not_stable")),
         ("request_id", json!("not-a-uuid")),
         ("request_id", json!("0190aee6-2139-7a87-8448-806f1b843202")),
@@ -905,7 +905,7 @@ async fn non_success_error_contract_is_strict_correlated_and_bounded() {
         invalid_error[field] = value;
         let server = MockServer::start().await;
         Mock::given(method("POST"))
-            .respond_with(versioned_json_response(422, &invalid_error))
+            .respond_with(canonical_json_response(422, &invalid_error))
             .mount(&server)
             .await;
         let processor = HttpDataProcessor::new(config(
@@ -956,12 +956,12 @@ async fn non_success_error_contract_is_strict_correlated_and_bounded() {
 async fn redirect_is_not_followed() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
-        .and(path("/v1/process"))
-        .respond_with(ResponseTemplate::new(302).insert_header("location", "/v1/redirect-target"))
+        .and(path("/process"))
+        .respond_with(ResponseTemplate::new(302).insert_header("location", "/redirect-target"))
         .expect(1)
         .mount(&server)
         .await;
-    Mock::given(path("/v1/redirect-target"))
+    Mock::given(path("/redirect-target"))
         .respond_with(process_response(result_json("produced")))
         .expect(0)
         .mount(&server)

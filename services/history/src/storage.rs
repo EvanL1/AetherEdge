@@ -16,7 +16,12 @@ pub trait StorageBackend: Send + Sync + 'static {
     /// Called once at startup.
     async fn init_schema(&self) -> anyhow::Result<()>;
 
-    /// Persist a batch of data points. Returns the number of rows written.
+    /// Persist a batch of data points atomically. Returns the number of input
+    /// points durably acknowledged. An already-persisted ingestion identity is
+    /// acknowledged as success, so retrying a batch whose commit response was
+    /// lost remains atomic and idempotent. Implementations must return an error
+    /// rather than a partial success so the scheduler can retain the entire
+    /// batch for retry.
     async fn write_batch(&self, points: Vec<DataPoint>) -> anyhow::Result<usize>;
 
     /// Paginated range query. Returns `(records, total_count)`.

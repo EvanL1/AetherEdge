@@ -1,4 +1,3 @@
-version: 1
 defaults:
   decision: deny
   audit: required
@@ -12,6 +11,13 @@ risk_levels:
     confirmation: always
 capabilities:
   device.read_point:
+    kind: query
+    risk: low
+    permission: device.read
+    idempotent: true
+    confirmation: never
+    audit: not_required
+  device.command_outcome.read:
     kind: query
     risk: low
     permission: device.read

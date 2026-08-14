@@ -1,7 +1,7 @@
 # Aether HTTP Data Processor
 
 Optional, bounded HTTP implementation of the `DataProcessor` port. It sends a
-complete request frame to `/v1/process`; it exposes no callback into Aether,
+complete request frame to `/process`; it exposes no callback into Aether,
 SHM, history, or configuration.
 
 Plain HTTP is accepted only for a local processor on localhost or a loopback
@@ -37,13 +37,13 @@ let processor = HttpDataProcessor::new(config)?;
 ```
 
 Only the composition root selects the origin and optional secret. The adapter
-derives the fixed versioned routes:
+derives the fixed routes:
 
-- `POST /v1/process`
-- `GET /v1/health`
+- `POST /process`
+- `GET /health`
 
 The request and successful processing response use
-`application/vnd.aether.data-processing+json;version=1`. Health accepts a
+`application/vnd.aether.data-processing+json`. Health accepts a
 small JSON response containing `status`, `processor`, `version`, and
 `contract`, and verifies those identity fields against the configured
 descriptor.
@@ -65,8 +65,8 @@ descriptor.
 - Remote response bodies, URLs, and transport internals are never copied into
   port errors.
 
-Every 4xx or 5xx response must use the same versioned media type and the
-closed `aether.data-processing.error.v1` envelope. The body is size-bounded
+Every 4xx or 5xx response must use the same fixed media type and the
+closed `aether.data-processing.error` envelope. The body is size-bounded
 before decoding. Unknown fields, explicit nulls, malformed JSON, a mismatched
 HTTP status/category, an invalid or mismatched request ID, and inconsistent
 retry metadata fail closed as `InvalidData`.

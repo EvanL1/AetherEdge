@@ -21,6 +21,7 @@ pub mod serde_helpers;
 pub mod service_bootstrap;
 pub mod shutdown;
 pub mod system_metrics;
+pub mod task_supervisor;
 pub mod validation;
 
 // Re-export commonly used csv types (previously in csv.rs module)
@@ -39,11 +40,8 @@ pub use service_config::{
     DEFAULT_API_HOST,
     DEFAULT_AUTOMATION_URL,
     DEFAULT_IO_URL,
-    DEFAULT_RULES_URL,
     ENV_AUTOMATION_URL,
     ENV_IO_URL,
-    ENV_RULES_URL,
-    FourRemote,
     GenericValidator,
     LOCALHOST_HOST,
     LogRotationConfig,
@@ -64,6 +62,8 @@ pub use service_config::{
     env_or,
     // URL resolver functions
     io_url,
+    loopback_bind_address,
+    require_loopback_bind_address,
 };
 
 // Re-export commonly used API types

@@ -34,7 +34,7 @@ fn is_sha256_digest(value: &str) -> bool {
     })
 }
 
-/// Versioned identity of a declarative data-processing task.
+/// Identity of a declarative data-processing task.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TaskIdentity {
     id: String,
@@ -66,7 +66,7 @@ impl TaskIdentity {
     }
 }
 
-/// Versioned identity of a commissioned task binding.
+/// Identity of a commissioned task binding.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct BindingIdentity {
     id: String,
@@ -460,8 +460,7 @@ impl ForecastTaskSpec {
     /// Adds complete acceptance policies for every named fallback.
     ///
     /// Once this builder is used, every allowed fallback must have exactly one
-    /// policy. This keeps the compatibility constructor name-only while
-    /// allowing composition roots to enforce version, source, and lifetime.
+    /// policy, including its provider identity, source, and lifetime limits.
     pub fn with_fallback_policies(
         mut self,
         policies: Vec<FallbackPolicy>,
@@ -693,7 +692,7 @@ impl FallbackPolicy {
     }
 }
 
-/// Versioned, declarative unit of data-processing work.
+/// Declarative unit of data-processing work.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DataProcessingTask {
     identity: TaskIdentity,
@@ -1286,7 +1285,7 @@ impl SourceProvenance {
         })
     }
 
-    /// Adds the issue time of a versioned external forecast.
+    /// Adds the issue time of an externally issued forecast.
     pub fn with_issued_at(mut self, issued_at: TimestampMs) -> Result<Self, DomainError> {
         if self.segment != SegmentKind::FutureCovariates
             || self.source_kind != SourceKind::Covariate

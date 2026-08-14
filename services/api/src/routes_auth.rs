@@ -12,8 +12,8 @@ use tracing::{error, warn};
 
 use crate::{
     auth::{
-        create_token_pair, hash_password, verify_access_token, verify_password,
-        verify_refresh_token,
+        DUMMY_PASSWORD_HASH, PasswordTaskError, create_token_pair, hash_password_async,
+        verify_access_token, verify_password_async, verify_refresh_token,
     },
     db,
     models::{
@@ -34,6 +34,27 @@ fn extract_token(headers: &HeaderMap) -> Option<String> {
                 .or_else(|| v.strip_prefix("bearer "))
         })
         .map(String::from)
+}
+
+fn password_task_error(error: PasswordTaskError) -> axum::response::Response {
+    match error {
+        PasswordTaskError::Busy => (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(json!({
+                "success": false,
+                "message": "Password verification is temporarily busy"
+            })),
+        )
+            .into_response(),
+        PasswordTaskError::Failed => {
+            error!("Password worker failed");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"success": false, "message": "Internal server error"})),
+            )
+                .into_response()
+        },
+    }
 }
 
 /// Validate the Authorization header and return the claims.
@@ -77,7 +98,7 @@ pub(crate) fn require_admin(
     Ok(claims)
 }
 
-// ── POST /api/v1/auth/register ────────────────────────────────────────────────
+// ── POST /api/auth/register ───────────────────────────────────────────────────
 
 /// Register a new user account.
 ///
@@ -85,7 +106,7 @@ pub(crate) fn require_admin(
 /// characters) and uniqueness, bcrypt-hashes the password, and inserts the
 /// row. Public registration always creates the least-privileged Viewer role;
 /// role assignment is available only through authenticated admin endpoints.
-#[utoipa::path(post, path = "/api/v1/auth/register", tag = "Auth",
+#[utoipa::path(post, path = "/api/auth/register", tag = "Auth",
     request_body = UserCreate,
     responses(
         (status = 200, description = "Registration successful", body = crate::models::GatewayDataResponse<crate::models::RegistrationResult>),
@@ -141,15 +162,10 @@ pub async fn register(
 
     const VIEWER_ROLE_ID: i64 = 3;
     let role_id = VIEWER_ROLE_ID;
-    let hash = match hash_password(&body.password) {
+    let hash = match hash_password_async(&body.password).await {
         Ok(h) => h,
         Err(e) => {
-            error!("bcrypt hash error: {}", e);
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"success": false, "message": "Internal server error"})),
-            )
-                .into_response();
+            return password_task_error(e);
         },
     };
 
@@ -171,7 +187,7 @@ pub async fn register(
     }
 }
 
-// ── POST /api/v1/auth/login ───────────────────────────────────────────────────
+// ── POST /api/auth/login ──────────────────────────────────────────────────────
 
 /// Authenticate with username and password, issuing an access/refresh token pair.
 ///
@@ -182,7 +198,7 @@ pub async fn register(
 /// and is tracked in the process-local `refresh_tokens` registry for
 /// point-in-time revocation.
 /// Accounts with `is_active=false` are rejected with 401.
-#[utoipa::path(post, path = "/api/v1/auth/login", tag = "Auth",
+#[utoipa::path(post, path = "/api/auth/login", tag = "Auth",
     request_body = UserLogin,
     responses((status = 200, description = "Login successful", body = crate::models::GatewayDataResponse<TokenResponse>), (status = 401, description = "Authentication failed")))]
 pub async fn login(
@@ -192,6 +208,9 @@ pub async fn login(
     let user = match db::get_user_with_role_by_username(&state.db, &body.username).await {
         Ok(Some(u)) => u,
         Ok(None) => {
+            if let Err(error) = verify_password_async(&body.password, DUMMY_PASSWORD_HASH).await {
+                return password_task_error(error);
+            }
             return (
                 StatusCode::UNAUTHORIZED,
                 Json(json!({"success": false, "message": "Invalid username or password"})),
@@ -227,7 +246,11 @@ pub async fn login(
         },
     };
 
-    if !verify_password(&body.password, &row.password_hash) {
+    let password_matches = match verify_password_async(&body.password, &row.password_hash).await {
+        Ok(matches) => matches,
+        Err(error) => return password_task_error(error),
+    };
+    if !password_matches {
         return (
             StatusCode::UNAUTHORIZED,
             Json(json!({"success": false, "message": "Invalid username or password"})),
@@ -270,7 +293,7 @@ pub async fn login(
     }
 }
 
-// ── POST /api/v1/auth/refresh ─────────────────────────────────────────────────
+// ── POST /api/auth/refresh ────────────────────────────────────────────────────
 
 /// Exchange a refresh token for a new access/refresh token pair.
 ///
@@ -279,7 +302,7 @@ pub async fn login(
 /// Returns 401 if the refresh token has been revoked, has expired, or has an
 /// invalid signature, or belongs to a disabled account — the client must
 /// re-authenticate via the login endpoint.
-#[utoipa::path(post, path = "/api/v1/auth/refresh", tag = "Auth",
+#[utoipa::path(post, path = "/api/auth/refresh", tag = "Auth",
     request_body = RefreshTokenRequest,
     responses((status = 200, description = "Token refreshed", body = crate::models::GatewayDataResponse<TokenResponse>), (status = 401, description = "Token is invalid, expired, revoked, or belongs to a disabled account")))]
 pub async fn refresh_token(
@@ -388,7 +411,7 @@ pub async fn refresh_token(
     }
 }
 
-// ── POST /api/v1/auth/logout ──────────────────────────────────────────────────
+// ── POST /api/auth/logout ─────────────────────────────────────────────────────
 
 /// Log out and revoke the current refresh token.
 ///
@@ -398,7 +421,7 @@ pub async fn refresh_token(
 /// obtain new access tokens. Possession of the refresh token is the credential;
 /// a Bearer access token is not required. Invalid or already-revoked refresh
 /// tokens still return 200 so logout remains idempotent.
-#[utoipa::path(post, path = "/api/v1/auth/logout", tag = "Auth",
+#[utoipa::path(post, path = "/api/auth/logout", tag = "Auth",
     request_body = RefreshTokenRequest,
     responses((status = 200, description = "Supplied refresh token revoked or already invalid", body = crate::models::GatewayMessageResponse)))]
 pub async fn logout(
@@ -415,7 +438,7 @@ pub async fn logout(
     Json(json!({"success": true, "message": "Logged out successfully"}))
 }
 
-// ── GET /api/v1/auth/me ───────────────────────────────────────────────────────
+// ── GET /api/auth/me ──────────────────────────────────────────────────────────
 
 /// Return the profile of the currently authenticated user.
 ///
@@ -424,7 +447,7 @@ pub async fn logout(
 /// role, and decide which admin UI elements to show. 401 indicates an expired
 /// or invalid token; the client should trigger the refresh flow or redirect to
 /// login.
-#[utoipa::path(get, path = "/api/v1/auth/me", tag = "Auth",
+#[utoipa::path(get, path = "/api/auth/me", tag = "Auth",
     security(("bearer_auth" = [])),
     responses((status = 200, description = "Current user profile", body = crate::models::GatewayDataResponse<UserWithRole>), (status = 401, description = "Unauthenticated")))]
 pub async fn get_me(State(state): State<Arc<AppState>>, headers: HeaderMap) -> impl IntoResponse {
@@ -459,19 +482,18 @@ pub async fn get_me(State(state): State<Arc<AppState>>, headers: HeaderMap) -> i
     }
 }
 
-// ── PUT /api/v1/auth/me ───────────────────────────────────────────────────────
+// ── PUT /api/auth/me ──────────────────────────────────────────────────────────
 
 /// Update the current user's own profile.
 ///
 /// Regular users may update basic fields. The `role_id` and `is_active` fields
 /// are restricted to Admin role — non-admin callers that supply either field
-/// receive 403. For compatibility, supplying both password fields changes the
-/// password and returns a message-only success body. New clients should use the
-/// dedicated `PUT /me/password` endpoint.
-#[utoipa::path(put, path = "/api/v1/auth/me", tag = "Auth",
+/// receive 403. Password changes use only the dedicated `PUT /me/password`
+/// endpoint.
+#[utoipa::path(put, path = "/api/auth/me", tag = "Auth",
     security(("bearer_auth" = [])),
     request_body = UserUpdate,
-    responses((status = 200, description = "Profile or password updated", body = crate::models::UserUpdateSuccess), (status = 401, description = "Unauthenticated")))]
+    responses((status = 200, description = "Profile updated", body = crate::models::GatewayDataResponse<UserWithRole>), (status = 401, description = "Unauthenticated")))]
 pub async fn update_me(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -494,7 +516,7 @@ pub async fn update_me(
     apply_user_update(&state, claims.user_id, &body).await
 }
 
-// ── PUT /api/v1/auth/me/password ──────────────────────────────────────────────
+// ── PUT /api/auth/me/password ─────────────────────────────────────────────────
 
 /// Change the current user's password.
 ///
@@ -503,7 +525,7 @@ pub async fn update_me(
 /// automatically revoked — other active sessions remain valid. Logout revokes
 /// only the supplied refresh token, while `/cleanup-tokens` removes expired
 /// tokens; neither operation signs out every active session.
-#[utoipa::path(put, path = "/api/v1/auth/me/password", tag = "Auth",
+#[utoipa::path(put, path = "/api/auth/me/password", tag = "Auth",
     security(("bearer_auth" = [])),
     request_body = PasswordChange,
     responses((status = 200, description = "Password changed successfully", body = crate::models::GatewayMessageResponse), (status = 400, description = "Incorrect current password"), (status = 401, description = "Unauthenticated")))]
@@ -526,14 +548,14 @@ pub async fn change_password(
     .await
 }
 
-// ── GET /api/v1/auth/roles ────────────────────────────────────────────────────
+// ── GET /api/auth/roles ───────────────────────────────────────────────────────
 
 /// List all roles defined in the system.
 ///
 /// Roles are a static enum of `(id, name, description)` rows — currently
 /// Admin, Engineer, and Viewer. Used to populate the role dropdown in the
 /// create/edit user dialog. Accessible to authenticated users only.
-#[utoipa::path(get, path = "/api/v1/auth/roles", tag = "Auth",
+#[utoipa::path(get, path = "/api/auth/roles", tag = "Auth",
     security(("bearer_auth" = [])),
     responses((status = 200, description = "Role list", body = crate::models::RoleListResponse), (status = 401, description = "Unauthenticated")))]
 pub async fn get_roles(
@@ -565,14 +587,14 @@ pub async fn get_roles(
     }
 }
 
-// ── GET /api/v1/auth/users ────────────────────────────────────────────────────
+// ── GET /api/auth/users ───────────────────────────────────────────────────────
 
 /// List all users (admin view).
 ///
 /// Returns each user's basic info, role, last login timestamp, and activation
 /// status. **Password hashes are stripped** from the response. Used for the
 /// admin user-management UI and restricted to Admin.
-#[utoipa::path(get, path = "/api/v1/auth/users", tag = "Auth",
+#[utoipa::path(get, path = "/api/auth/users", tag = "Auth",
     security(("bearer_auth" = [])),
     responses((status = 200, description = "User list (admin view)", body = crate::models::GatewayDataResponse<crate::models::UserListData>), (status = 401, description = "Missing, invalid, or expired access JWT"), (status = 403, description = "Admin privileges required"), (status = 500, description = "User store unavailable")))]
 pub async fn get_all_users(
@@ -604,13 +626,13 @@ pub async fn get_all_users(
     }
 }
 
-// ── GET /api/v1/auth/users/:id (admin) ───────────────────────────────────────
+// ── GET /api/auth/users/:id (admin) ──────────────────────────────────────────
 
 /// Retrieve a specific user's profile (admin only).
 ///
 /// Returns the same schema as `/auth/me` but requires Admin role; non-admin
 /// callers receive 403. Password hash is stripped from the response.
-#[utoipa::path(get, path = "/api/v1/auth/users/{id}", tag = "Auth",
+#[utoipa::path(get, path = "/api/auth/users/{id}", tag = "Auth",
     security(("bearer_auth" = [])),
     params(("id" = i64, Path, description = "User ID")),
     responses((status = 200, description = "User profile", body = crate::models::GatewayDataResponse<UserWithRole>), (status = 401, description = "Missing, invalid, or expired access JWT"), (status = 403, description = "Admin privileges required"), (status = 404, description = "User not found"), (status = 500, description = "User store unavailable")))]
@@ -649,20 +671,19 @@ pub async fn admin_get_user(
     }
 }
 
-// ── PUT /api/v1/auth/users/:id (admin) ───────────────────────────────────────
+// ── PUT /api/auth/users/:id (admin) ──────────────────────────────────────────
 
 /// Update any user's profile (admin only).
 ///
 /// Shares the `UserUpdate` schema with `PUT /auth/me`, but here an Admin may
 /// also modify `role_id` and `is_active`; non-admin callers receive 403.
-/// Supplying both password fields returns a message-only success body;
-/// otherwise the updated profile is returned. Setting `is_active=false` does
-/// **not** immediately revoke existing access tokens.
-#[utoipa::path(put, path = "/api/v1/auth/users/{id}", tag = "Auth",
+/// Setting `is_active=false` does **not** immediately revoke existing access
+/// tokens.
+#[utoipa::path(put, path = "/api/auth/users/{id}", tag = "Auth",
     security(("bearer_auth" = [])),
     params(("id" = i64, Path, description = "User ID")),
     request_body = UserUpdate,
-    responses((status = 200, description = "User profile or password updated", body = crate::models::UserUpdateSuccess), (status = 400, description = "Invalid profile or password update"), (status = 401, description = "Missing, invalid, or expired access JWT"), (status = 403, description = "Admin privileges required"), (status = 404, description = "User not found"), (status = 500, description = "User store unavailable")))]
+    responses((status = 200, description = "User profile updated", body = crate::models::GatewayDataResponse<UserWithRole>), (status = 400, description = "Invalid profile update"), (status = 401, description = "Missing, invalid, or expired access JWT"), (status = 403, description = "Admin privileges required"), (status = 404, description = "User not found"), (status = 500, description = "User store unavailable")))]
 pub async fn admin_update_user(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -676,7 +697,7 @@ pub async fn admin_update_user(
     apply_user_update(&state, user_id, &body).await
 }
 
-// ── DELETE /api/v1/auth/users/:id (admin) ────────────────────────────────────
+// ── DELETE /api/auth/users/:id (admin) ───────────────────────────────────────
 
 /// Delete a user (admin only).
 ///
@@ -684,7 +705,7 @@ pub async fn admin_update_user(
 /// flag); process-local refresh tokens for that user are also removed. The built-in `admin`
 /// account is protected — deletion attempts return 400 to prevent accidentally
 /// locking out the system.
-#[utoipa::path(delete, path = "/api/v1/auth/users/{id}", tag = "Auth",
+#[utoipa::path(delete, path = "/api/auth/users/{id}", tag = "Auth",
     security(("bearer_auth" = [])),
     params(("id" = i64, Path, description = "User ID")),
     responses((status = 200, description = "User deleted", body = crate::models::GatewayDataResponse<crate::models::DeletedUserData>), (status = 400, description = "Cannot delete the default admin account"), (status = 401, description = "Missing, invalid, or expired access JWT"), (status = 403, description = "Admin privileges required"), (status = 404, description = "User not found"), (status = 500, description = "User store unavailable")))]
@@ -741,13 +762,13 @@ pub async fn admin_delete_user(
     }
 }
 
-// ── GET /api/v1/auth/stats (admin) ───────────────────────────────────────────
+// ── GET /api/auth/stats (admin) ──────────────────────────────────────────────
 
 /// Return runtime statistics for the authentication subsystem.
 ///
 /// Reports process-local active/expired refresh-token counts and the configured
 /// access/refresh token lifetimes. No user identity information is included.
-#[utoipa::path(get, path = "/api/v1/auth/stats", tag = "Auth",
+#[utoipa::path(get, path = "/api/auth/stats", tag = "Auth",
     security(("bearer_auth" = [])),
     responses((status = 200, description = "Authentication statistics", body = crate::models::GatewayDataResponse<crate::models::AuthStatsData>)))]
 pub async fn get_auth_stats(
@@ -779,7 +800,7 @@ pub async fn get_auth_stats(
     .into_response()
 }
 
-// ── POST /api/v1/auth/cleanup-tokens (admin) ─────────────────────────────────
+// ── POST /api/auth/cleanup-tokens (admin) ────────────────────────────────────
 
 /// Remove expired or revoked refresh tokens from the in-memory registry.
 ///
@@ -787,7 +808,7 @@ pub async fn get_auth_stats(
 /// where `expires_at < now()`. These tokens are already invalid; retaining
 /// them merely wastes memory. Call periodically to keep the store compact.
 /// Active valid tokens are not affected.
-#[utoipa::path(post, path = "/api/v1/auth/cleanup-tokens", tag = "Auth",
+#[utoipa::path(post, path = "/api/auth/cleanup-tokens", tag = "Auth",
     security(("bearer_auth" = [])),
     responses((status = 200, description = "Expired tokens removed", body = crate::models::GatewayMessageResponse)))]
 pub async fn cleanup_tokens(
@@ -847,21 +868,6 @@ async fn apply_user_update(
             .into_response();
     }
 
-    if body.old_password.is_some() || body.new_password.is_some() {
-        match (&body.old_password, &body.new_password) {
-            (Some(old), Some(new)) => {
-                return apply_password_change(state, user_id, old, new).await;
-            },
-            _ => {
-                return (
-                    StatusCode::BAD_REQUEST,
-                    Json(json!({"success": false, "message": "Both old_password and new_password are required"})),
-                )
-                    .into_response();
-            },
-        }
-    }
-
     match db::get_user_with_role(&state.db, user_id).await {
         Ok(Some(user)) => {
             let user = UserWithRole::from(user);
@@ -897,7 +903,11 @@ async fn apply_password_change(
         },
     };
 
-    if !verify_password(old_password, &row.password_hash) {
+    let password_matches = match verify_password_async(old_password, &row.password_hash).await {
+        Ok(matches) => matches,
+        Err(error) => return password_task_error(error),
+    };
+    if !password_matches {
         return (
             StatusCode::BAD_REQUEST,
             Json(json!({"success": false, "message": "Incorrect current password"})),
@@ -905,15 +915,10 @@ async fn apply_password_change(
             .into_response();
     }
 
-    let new_hash = match hash_password(new_password) {
+    let new_hash = match hash_password_async(new_password).await {
         Ok(h) => h,
         Err(e) => {
-            error!("bcrypt error: {}", e);
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"success": false, "message": "Internal server error"})),
-            )
-                .into_response();
+            return password_task_error(e);
         },
     };
 
@@ -931,7 +936,7 @@ async fn apply_password_change(
     }
 }
 
-// ── GET /api/v1/auth/validate ────────────────────────────────────────────────
+// ── GET /api/auth/validate ───────────────────────────────────────────────────
 
 /// Lightweight token validation for nginx `auth_request`.
 ///
@@ -940,7 +945,7 @@ async fn apply_password_change(
 /// original bearer token instead of trusting identity headers.
 #[utoipa::path(
     get,
-    path = "/api/v1/auth/validate",
+    path = "/api/auth/validate",
     responses(
         (status = 200, description = "Access token is valid"),
         (status = 401, description = "Missing or invalid access token")

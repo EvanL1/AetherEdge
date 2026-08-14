@@ -29,7 +29,7 @@ pub enum PointKind {
 impl PointKind {
     /// Parses the stable T/S/C/A API code.
     pub fn parse(value: &str) -> Result<Self, String> {
-        match value.to_ascii_uppercase().as_str() {
+        match value {
             "T" => Ok(Self::Telemetry),
             "S" => Ok(Self::Signal),
             "C" => Ok(Self::Control),
@@ -1283,6 +1283,21 @@ mod tests {
     use super::{PointKind, validate_protocol_mapping};
 
     #[test]
+    fn point_kind_parser_accepts_only_exact_current_codes() {
+        assert_eq!(PointKind::parse("T"), Ok(PointKind::Telemetry));
+        assert_eq!(PointKind::parse("S"), Ok(PointKind::Signal));
+        assert_eq!(PointKind::parse("C"), Ok(PointKind::Control));
+        assert_eq!(PointKind::parse("A"), Ok(PointKind::Adjustment));
+
+        for retired in ["t", "s", "c", "a"] {
+            assert!(
+                PointKind::parse(retired).is_err(),
+                "lowercase point type {retired} must be rejected"
+            );
+        }
+    }
+
+    #[test]
     fn canonical_validator_accepts_current_inline_mapping_consumers() {
         let cases = [
             (
@@ -1315,19 +1330,24 @@ mod tests {
     #[cfg(feature = "modbus")]
     #[test]
     fn modbus_boundary_uses_the_runtime_codec_and_fails_closed() {
-        let compatible = serde_json::json!({
-            "slave_id": "1",
-            "function_code": "3",
-            "register_address": "17",
-            "data_type": "F32",
-            "byte_order": "big_endian",
-            "bit_position": "15"
+        let canonical = serde_json::json!({
+            "slave_id": 1,
+            "function_code": 3,
+            "register_address": 17,
+            "data_type": "float32",
+            "byte_order": "ABCD",
+            "bit_position": 15
         });
         assert!(
-            validate_protocol_mapping("modbus_tcp", PointKind::Telemetry, 1, &compatible).is_ok()
+            validate_protocol_mapping("modbus_tcp", PointKind::Telemetry, 1, &canonical).is_ok()
         );
 
         for invalid in [
+            serde_json::json!({
+                "slave_id": "1",
+                "function_code": 3,
+                "register_address": 17
+            }),
             serde_json::json!({
                 "slave_id": 1,
                 "function_code": 3,
@@ -1339,6 +1359,18 @@ mod tests {
                 "function_code": 3,
                 "register_address": 17,
                 "unknown": true
+            }),
+            serde_json::json!({
+                "slave_id": 1,
+                "function_code": 3,
+                "register_address": 17,
+                "data_type": "F32"
+            }),
+            serde_json::json!({
+                "slave_id": 1,
+                "function_code": 3,
+                "register_address": 17,
+                "byte_order": "big_endian"
             }),
         ] {
             assert!(
@@ -1464,7 +1496,7 @@ mod tests {
                 "offset": -2.0
             }),
             serde_json::json!({
-                "can_id": "0x356",
+                "can_id": 854,
                 "start_bit": 8,
                 "bit_length": 8,
                 "data_type": "uint8"

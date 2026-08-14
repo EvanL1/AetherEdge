@@ -112,7 +112,7 @@ The processor is deliberately outside every Aether data authority: it cannot
 attach to SHM, read the history database, or resolve a `plant_id` by calling
 back into internal service APIs. No processor is required by the default
 runtime. A deployment may compose the capability in-process or isolate model
-and network dependencies behind a processor sidecar. Version 1 hosts
+and network dependencies behind a processor sidecar. The runtime hosts
 `DataProcessingApplication` in opt-in `aether-api`; no standalone
 `aether-data-processor`, cache, CLI/MCP binding, or scheduler is implemented.
 The process name remains reserved for a future orchestration boundary.
@@ -141,7 +141,7 @@ qualification uses the current cross-process stress and soak gates.
 | aether-automation → aether-io (control commands) | Shared-memory write plus UDS notification (`ShmCommandListener` on the aether-io side) | sub-millisecond; ~215 µs P50 including rule evaluation (measured) |
 | aether-io → device (protocol write) | Field bus (Modbus, IEC 104, etc.) | +5–10 ms; dominates the physical control loop |
 | aether-alarm → aether-api, aether-uplink | HTTP (targets configured via `AETHER_API_URL` / `AETHER_UPLINK_URL`) | local HTTP |
-| aether-uplink → cloud | Legacy MQTT by default; experimental broker-neutral CloudLink MQTT v1 is opt-in | network |
+| aether-uplink → cloud | Broker-neutral CloudLink MQTT | network |
 | aether-api → generated/downstream clients | Authenticated HTTP and WebSocket | network |
 | all services ↔ SQLite | In-process configuration discovery (`AETHER_DB_PATH`); aether-history uses a separate embedded history file | local |
 

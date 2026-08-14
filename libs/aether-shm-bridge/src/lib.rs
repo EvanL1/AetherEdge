@@ -5,6 +5,8 @@ mod channel_reader;
 #[cfg(unix)]
 mod command_sink;
 #[cfg(unix)]
+mod command_wire;
+#[cfg(unix)]
 mod events;
 mod health;
 mod managed;
@@ -24,17 +26,21 @@ pub use aether_dataplane::core::config::{
     cleanup_orphan_generation_files, default_shm_path, timestamp_ms,
 };
 pub use aether_dataplane::{SubscriptionBitmap, bitmap_path_for_consumer};
-pub use aether_ports::ChannelHealthObservation as ChannelHealthSample;
 pub use channel_reader::ShmChannelReader;
 #[cfg(unix)]
 pub use command_sink::{
-    ChannelPointManifestSource, CommandMirrorObserver, DEFAULT_COMMAND_UDS_PATH,
-    DeviceCommandFrame, ShmDeviceCommandSink,
+    ChannelPointManifestSource, CommandMirrorObserver, CommandNotifierStatus,
+    DEFAULT_COMMAND_UDS_PATH, ShmDeviceCommandSink,
+};
+#[cfg(unix)]
+pub use command_wire::{
+    CommandAckStatus, CommandHello, CommandLedgerStateCode, CommandWireError, DeviceCommandAck,
+    DeviceCommandFrame,
 };
 #[cfg(unix)]
 pub use events::{
-    PointWatchEvent, PointWatchEventListener, point_watch_socket_for_consumer,
-    point_watch_socket_from_shm,
+    PointWatchEvent, PointWatchEventListener, PreparedPointWatchEventListener,
+    point_watch_socket_for_consumer, point_watch_socket_from_shm,
 };
 pub use health::{
     ChannelHealthManifest, ShmChannelHealthReader, ShmChannelHealthWriterHandle,
@@ -47,7 +53,7 @@ pub use observer::{
     ShmPlaneObservation, ShmSlotObservation, ShmTopologyObservation,
 };
 #[cfg(unix)]
-pub use point_watch::PointWatchPublisher;
+pub use point_watch::{PointWatchPublisher, PreparedPointWatchDrains};
 pub use read_topology::ShmReadTopologyGeneration;
 pub use runtime::{DEFAULT_MAX_SLOTS, ShmRuntimeConfig, ShmWriterGeneration, ShmWriterHandle};
 pub use topology_commit::{

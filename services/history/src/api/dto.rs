@@ -171,6 +171,7 @@ impl From<models::DataStats> for DataStats {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 #[schema(example = json!({
     "collection_interval_secs": 30,
     "flush_interval_secs": 60,
@@ -239,7 +240,9 @@ pub struct StorageTestRequest {
     pub backend: String,
     pub host: String,
     pub port: Option<u16>,
+    #[cfg_attr(not(feature = "postgres-storage"), allow(dead_code))]
     pub username: String,
+    #[cfg_attr(not(feature = "postgres-storage"), allow(dead_code))]
     pub password: String,
 }
 

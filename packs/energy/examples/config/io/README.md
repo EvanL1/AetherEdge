@@ -1,7 +1,7 @@
 # Energy Pack IO commissioning example
 
 This directory contains only disabled channel configuration examples. Formal,
-versioned Pack mappings live under [`../../../mappings`](../../../mappings) and
+canonical Pack mappings live under [`../../../mappings`](../../../mappings) and
 are listed exactly once by its `index.yaml`.
 
 The Pack intentionally ships no claimed device-register map for the placeholder

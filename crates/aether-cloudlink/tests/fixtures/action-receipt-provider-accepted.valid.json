@@ -1,7 +1,6 @@
 {
-  "schema": "aether.cloudlink.envelope.v1",
+  "schema": "aether.cloudlink.envelope",
   "protocol": "aether.cloudlink",
-  "protocol_version": "1.0",
   "message_kind": "integration-action-receipt",
   "gateway_id": "33333333-3333-4333-8333-333333333333",
   "session_id": "44444444-4444-4444-8444-444444444444",
@@ -13,7 +12,7 @@
     "stream_epoch": "1",
     "position": "1",
     "batch_id": "job-55555555-receipt-1",
-    "digest": "sha256:f42bb6dfcd28ca27a7c1079569ffcd0f6144f741461cd362c3c679f471af80a7"
+    "digest": "sha256:47d007c3a4eb9d7af10dce2db5888fea40b9dc63f3c7a73f8fac5bfac689914a"
   },
   "message_authentication": {
     "key_id": "development-gateway-key-1",

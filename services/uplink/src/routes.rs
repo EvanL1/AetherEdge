@@ -1,65 +1,57 @@
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
 
+use aether_cloudlink::{AlarmEvent, CloudLinkCodec};
+use aether_domain::TimestampMs;
+use aether_ports::{
+    CloudLinkMessageKind, CloudLinkReceiptRetention, CloudLinkSpool, CloudLinkSpoolErrorReason,
+};
 use axum::{
-    Router,
-    extract::{Multipart, Path, State},
-    http::StatusCode,
-    response::Json,
-    routing::{delete, get, post},
+    Json, Router,
+    body::Body,
+    extract::{DefaultBodyLimit, State},
+    http::{HeaderMap, StatusCode, header},
+    response::Response,
+    routing::{get, post},
 };
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use tracing::error;
+use sha2::{Digest, Sha256};
+use subtle::ConstantTimeEq;
 #[cfg(feature = "openapi")]
-use utoipa::OpenApi;
+use utoipa::{OpenApi, ToSchema};
 
-use crate::api::dto::{
-    AlarmBroadcastRequest, AlarmQueuedResponse, CertUploadForm, NetConfig, NetConfigView,
-    UplinkDataResponse,
-};
-use crate::db_config;
-use crate::mqtt::do_inst_sync;
+use crate::cloudlink_runtime::now_ms;
 use crate::state::AppState;
-use crate::uplink::enqueue_json;
 
-// ============================================================================
-// Router
-// ============================================================================
+const MAX_ALARM_BODY_BYTES: usize = 64 * 1024;
+const INTERNAL_AUTH_SCHEME: &str = "Bearer";
 
 pub fn build_router(state: Arc<AppState>) -> Router {
-    let api = Router::new()
+    let router = Router::new()
         .route("/", get(root))
         .route("/ping", get(ping))
-        .route("/netApi/health", get(health))
-        // Alarm
-        .route("/netApi/alarm/broadcast", post(alarm_broadcast))
-        .route("/netApi/alarm/config", get(alarm_config))
-        // MQTT
-        .route("/netApi/mqtt/config", get(mqtt_get_config).post(mqtt_update_config))
-        .route("/netApi/mqtt/status", get(mqtt_status))
-        .route("/netApi/mqtt/disconnect", post(mqtt_disconnect))
-        .route("/netApi/mqtt/reconnect", post(mqtt_reconnect))
-        // Certificate
-        .route("/netApi/certificate/upload", post(cert_upload))
-        .route("/netApi/certificate/info", get(cert_info))
-        .route("/netApi/certificate/{cert_type}", delete(cert_delete))
-        // Device sync
-        .route("/netApi/inst-sync", post(inst_sync_push))
-        // Admin API (shared endpoints from common lib)
-        .route("/api/admin/logs/level", get(common::admin_api::get_log_level).post(common::admin_api::set_log_level))
-        .route("/api/admin/logs/files", get(common::admin_api::list_log_files))
-        .route("/api/admin/logs/view", get(common::admin_api::view_log_file))
+        .route("/health", get(health))
+        .route(
+            "/api/internal/alarm-events",
+            post(alarm_event).layer(DefaultBodyLimit::max(MAX_ALARM_BODY_BYTES)),
+        )
+        .route(
+            "/api/admin/logs/level",
+            get(common::admin_api::get_log_level).post(common::admin_api::set_log_level),
+        )
+        .route(
+            "/api/admin/logs/files",
+            get(common::admin_api::list_log_files),
+        )
+        .route(
+            "/api/admin/logs/view",
+            get(common::admin_api::view_log_file),
+        )
         .with_state(state);
-
     #[cfg(feature = "openapi")]
-    let api = api.route("/openapi.json", get(openapi_document));
-
-    api
+    let router = router.route("/openapi.json", get(openapi_document));
+    router
 }
-
-// ============================================================================
-// Service-local OpenAPI document consumed by the gateway-owned Swagger UI.
-// ============================================================================
 
 #[cfg(feature = "openapi")]
 async fn openapi_document() -> Json<utoipa::openapi::OpenApi> {
@@ -73,615 +65,668 @@ async fn openapi_document() -> Json<utoipa::openapi::OpenApi> {
         root,
         ping,
         health,
-        alarm_broadcast,
-        alarm_config,
-        inst_sync_push,
-        mqtt_get_config,
-        mqtt_update_config,
-        mqtt_status,
-        mqtt_disconnect,
-        mqtt_reconnect,
-        cert_upload,
-        cert_info,
-        cert_delete,
+        alarm_event,
         common::admin_api::get_log_level,
         common::admin_api::set_log_level,
         common::admin_api::list_log_files,
         common::admin_api::view_log_file,
     ),
     components(schemas(
-        NetConfig,
-        NetConfigView,
-        AlarmBroadcastRequest,
-        CertUploadForm,
-        UplinkDataResponse<NetConfigView>,
-        AlarmQueuedResponse,
+        AlarmEventRequest,
+        AlarmAdmissionResponse,
         common::admin_api::SetLogLevelRequest,
         common::admin_api::LogLevelResponse,
     )),
     tags(
-        (name = "Health",      description = "Health checks and service information"),
-        (name = "Alarm",       description = "Alarm broadcast and configuration"),
-        (name = "MQTT",        description = "MQTT connection configuration and control"),
-        (name = "Certificate", description = "TLS certificate management"),
-        (name = "admin",       description = "Host-local service administration"),
+        (name = "Health", description = "Uplink process and CloudLink state"),
+        (name = "Internal", description = "Authenticated service-local ingestion"),
+        (name = "admin", description = "Host-local service administration"),
     ),
     info(
         title = "Aether Uplink Service API",
         version = env!("CARGO_PKG_VERSION"),
-        description = "Internal loopback API for MQTT delivery, certificates, and cloud-to-edge coordination. Device actions are delegated through authenticated automation; direct I/O writes are rejected. Do not expose this service port remotely."
+        description = "Internal loopback API for the single CloudLink uplink. No generic MQTT configuration, command, certificate, or compatibility routes are exposed."
     )
 )]
 pub struct ApiDoc;
 
-#[cfg(all(test, feature = "openapi"))]
-mod openapi_tests {
-    use super::*;
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(ToSchema))]
+#[serde(transparent)]
+struct AlarmEventRequest(Value);
 
-    #[test]
-    fn openapi_metadata_and_admin_routes_match_the_router() {
-        let specification = serde_json::to_value(ApiDoc::openapi()).expect("serialize OpenAPI");
-        assert_eq!(specification["info"]["title"], "Aether Uplink Service API");
-        assert_eq!(specification["info"]["version"], env!("CARGO_PKG_VERSION"));
-        for (path, method) in [
-            ("/api/admin/logs/level", "get"),
-            ("/api/admin/logs/level", "post"),
-            ("/api/admin/logs/files", "get"),
-            ("/api/admin/logs/view", "get"),
-        ] {
-            assert!(
-                specification["paths"][path][method].is_object(),
-                "missing {method} {path}"
-            );
-        }
-        assert_eq!(
-            common::openapi_operation_count(&specification),
-            18,
-            "Router/OpenAPI operation drift"
-        );
-    }
-
-    #[test]
-    fn openapi_redacts_mqtt_secrets_and_documents_durable_queue_semantics() {
-        let specification = serde_json::to_value(ApiDoc::openapi()).expect("serialize OpenAPI");
-
-        let password_schema =
-            &specification["components"]["schemas"]["NetConfig"]["properties"]["password"];
-        assert!(
-            password_schema.to_string().contains("\"writeOnly\":true"),
-            "password schema must be write-only: {password_schema}"
-        );
-        let mqtt_get = &specification["paths"]["/netApi/mqtt/config"]["get"]["responses"]["200"]["content"]
-            ["application/json"]["schema"];
-        assert!(mqtt_get.to_string().contains("UplinkDataResponse"));
-
-        let alarm = &specification["paths"]["/netApi/alarm/broadcast"]["post"]["responses"];
-        assert!(alarm["200"].to_string().contains("AlarmQueuedResponse"));
-        assert!(
-            alarm["503"]["description"]
-                .as_str()
-                .expect("503 description")
-                .contains("outbox")
-        );
-        assert!(
-            specification["paths"]["/netApi/certificate/upload"]["post"]["responses"]["413"]
-                .is_object()
-        );
-    }
+#[derive(Debug, Serialize)]
+#[cfg_attr(feature = "openapi", derive(ToSchema))]
+struct AlarmAdmissionResponse {
+    success: bool,
+    event_id: String,
+    stream_id: String,
+    stream_epoch: u64,
+    position: u64,
+    duplicate: bool,
 }
 
-// ============================================================================
-// Root / ping
-// ============================================================================
-
-/// uplink service banner.
-///
-/// Returns service name, version, and status. Use this to confirm the uplink
-/// process is online and running the expected version. Does not depend on the
-/// MQTT connection — returns 200 even if the broker is unreachable. For MQTT
-/// status see `/netApi/health` or `/netApi/mqtt/status`.
-#[utoipa::path(get, path = "/", tag = "Health",
-    responses((status = 200, description = "Basic service information")))]
+#[utoipa::path(get, path = "/", tag = "Health", responses((status = 200)))]
 async fn root() -> Json<Value> {
     Json(json!({
         "service": "aether-uplink",
-        "version": env!("CARGO_PKG_VERSION"),
+        "cloud_protocol": "aether.cloudlink",
         "status": "running"
     }))
 }
 
-/// Minimal liveness probe — returns the string "pong".
-///
-/// Unlike `/`, the response body is a plain string with no JSON overhead,
-/// suitable for high-frequency liveness probes and load-balancer health checks.
-#[utoipa::path(get, path = "/ping", tag = "Health",
-    responses((status = 200, description = "pong")))]
+#[utoipa::path(get, path = "/ping", tag = "Health", responses((status = 200)))]
 async fn ping() -> &'static str {
     "pong"
 }
 
-// ============================================================================
-// Health
-// ============================================================================
-
-/// Health check: returns MQTT connection status and device identity.
-///
-/// Reflects the live MQTT broker connection state (not a cached value). Returns
-/// `mqtt_connected` (bool), broker address, and device `client_id`. When the
-/// process is alive but MQTT is not connected, responds 200 with
-/// `connected: false` — allowing dashboards to distinguish a dead process from
-/// a live process with a broken cloud link.
-#[utoipa::path(get, path = "/netApi/health", tag = "Health",
-    responses((status = 200, description = "MQTT connection status and device identity")))]
-async fn health(State(state): State<Arc<AppState>>) -> Json<Value> {
-    let mqtt_ok = state.mqtt_connected.load(Ordering::Relaxed);
-    Json(json!({
-        "success": mqtt_ok,
-        "message": if mqtt_ok { "MQTT connected" } else { "MQTT not connected" },
-        "data": {
-            "mqtt_connected": mqtt_ok,
-            "product_sn":     state.device.product_sn,
-            "device_sn":      state.device.device_sn,
-        }
-    }))
-}
-
-// ============================================================================
-// Alarm
-// ============================================================================
-
-/// Forward an alarm JSON payload to the MQTT alarm topic.
-///
-/// The request body is an arbitrary JSON object; content is not validated and
-/// is published as-is to the configured alarm topic (see `GET /netApi/alarm/config`
-/// for the topic name). The cloud subscriber is responsible for parsing the
-/// payload. Alarm events from upstream alarm travel this path to the cloud.
-/// The payload is durably queued before the call returns, so temporary MQTT
-/// disconnection does not discard the alarm. A full local queue returns 503.
-#[utoipa::path(post, path = "/netApi/alarm/broadcast", tag = "Alarm",
-    request_body = AlarmBroadcastRequest,
+#[utoipa::path(
+    get,
+    path = "/health",
+    tag = "Health",
     responses(
-        (status = 200, description = "Alarm durably queued in the local outbox", body = AlarmQueuedResponse),
-        (status = 503, description = "The local durable outbox is full or unavailable"),
-    ))]
-async fn alarm_broadcast(
-    State(state): State<Arc<AppState>>,
-    Json(AlarmBroadcastRequest(body)): Json<AlarmBroadcastRequest>,
-) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    enqueue_json(&state, &state.topics.alarm, &body)
-        .await
-        .map(|id| {
-            Json(json!({
-                "success": true,
-                "message": "Alarm queued",
-                "outbox_id": id.get(),
-            }))
-        })
-        .map_err(|e| {
-            error!("Alarm broadcast failed: {}", e);
-            (
+        (status = 200, description = "Durable admission is ready and CloudLink is disabled or session-established"),
+        (status = 503, description = "Durable spool unavailable or configured CloudLink session is not ready")
+    )
+)]
+async fn health(State(state): State<Arc<AppState>>) -> (StatusCode, Json<Value>) {
+    let spool = match state.spool.status().await {
+        Ok(status) => status,
+        Err(error) => {
+            return (
                 StatusCode::SERVICE_UNAVAILABLE,
-                Json(json!({"success": false, "message": e.to_string()})),
-            )
-        })
-}
-
-/// Retrieve alarm cloud-forwarding configuration (topic name and MQTT status).
-///
-/// Returns the MQTT topic used for alarm broadcasts (e.g.
-/// `aetherems/alarm/{device_id}`) and whether the MQTT connection is currently
-/// online. Useful for the cloud-config UI to confirm where alarms are sent and
-/// whether the link is healthy.
-#[utoipa::path(get, path = "/netApi/alarm/config", tag = "Alarm",
-    responses((status = 200, description = "Alarm topic name and MQTT connection status")))]
-async fn alarm_config(State(state): State<Arc<AppState>>) -> Json<Value> {
-    Json(json!({
-        "success": true,
-        "message": "OK",
-        "data": {
-            "alarm_topic":    state.topics.alarm,
-            "mqtt_connected": state.mqtt_connected.load(Ordering::Relaxed),
-        }
-    }))
-}
-
-// ============================================================================
-// MQTT config
-// ============================================================================
-
-/// Retrieve current MQTT connection and forwarding configuration.
-///
-/// Read-only. Returns broker, client, TLS, reconnect, and forwarding settings.
-/// The MQTT password is write-only and is never returned. On update, omit it to
-/// preserve the stored password or send an empty string to clear it. Certificate material
-/// is managed through `/netApi/certificate/*`; topics are derived from device
-/// identity. To update connection settings use `POST /netApi/mqtt/config`.
-#[utoipa::path(get, path = "/netApi/mqtt/config", tag = "MQTT",
-    responses((status = 200, description = "Current MQTT configuration with password omitted", body = UplinkDataResponse<NetConfigView>)))]
-async fn mqtt_get_config(State(state): State<Arc<AppState>>) -> Json<Value> {
-    let cfg = state.config.read().await;
-    let view = NetConfigView::from(&*cfg);
-    Json(json!({ "success": true, "message": "OK", "data": view }))
-}
-
-/// Update MQTT configuration and immediately trigger a reconnect — no service restart needed.
-///
-/// Persists the new configuration, then disconnects the current MQTT session and
-/// reconnects with the new parameters. There will be a brief MQTT unavailability
-/// window of a few seconds; events already accepted into the local outbox remain
-/// queued. Use this endpoint to change broker, authentication, TLS enablement,
-/// reconnect, and forwarding settings. Certificate files use the dedicated
-/// certificate endpoints. If the new parameters are invalid and the connection
-/// fails, uplink remains disconnected until a correct configuration is submitted.
-#[utoipa::path(post, path = "/netApi/mqtt/config", tag = "MQTT",
-    request_body = NetConfig,
-    responses(
-        (status = 200, description = "Configuration saved; reconnecting"),
-        (status = 500, description = "Failed to save configuration"),
-    ))]
-async fn mqtt_update_config(
-    State(state): State<Arc<AppState>>,
-    Json(request): Json<NetConfig>,
-) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let new_cfg = {
-        let current_cfg = state.config.read().await;
-        request.into_runtime(&current_cfg)
-    };
-    if let Err(e) = db_config::save_config(&state.sqlite, &new_cfg).await {
-        error!("Save config failed: {}", e);
-        return Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"success": false, "message": e.to_string()})),
-        ));
-    }
-    *state.config.write().await = new_cfg;
-    state.reconnect_signal.notify_one();
-    Ok(Json(
-        json!({"success": true, "message": "Config updated, reconnecting"}),
-    ))
-}
-
-/// Real-time MQTT connection status (polling endpoint).
-///
-/// Returns connected/disconnected state, broker address, TLS flag, and device
-/// identity. Intended for the cloud-status indicator on the operations dashboard.
-/// More detailed than `/netApi/health` but with the same update frequency (no
-/// background cache).
-#[utoipa::path(get, path = "/netApi/mqtt/status", tag = "MQTT",
-    responses((status = 200, description = "Current MQTT connection state, broker address, and device identity")))]
-async fn mqtt_status(State(state): State<Arc<AppState>>) -> Json<Value> {
-    let cfg = state.config.read().await;
-    Json(json!({
-        "success": true,
-        "message": "OK",
-        "data": {
-            "connected":  state.mqtt_connected.load(Ordering::Relaxed),
-            "broker":     format!("{}:{}", cfg.broker_host, cfg.broker_port),
-            "ssl":        cfg.ssl_enabled,
-            "product_sn": state.device.product_sn,
-            "device_sn":  state.device.device_sn,
-        }
-    }))
-}
-
-/// Manually disconnect MQTT and suspend automatic reconnection.
-///
-/// Counterpart to `POST /netApi/mqtt/reconnect`. Closes the current MQTT
-/// session and sets a "reconnect inhibit" flag — uplink will not attempt to
-/// reconnect even if the broker is reachable, until `reconnect` is explicitly
-/// called. Intended for maintenance windows such as broker upgrades or
-/// temporarily suppressing cloud alarm forwarding.
-#[utoipa::path(post, path = "/netApi/mqtt/disconnect", tag = "MQTT",
-    responses((status = 200, description = "MQTT disconnected; auto-reconnect suspended until reconnect is called")))]
-async fn mqtt_disconnect(State(state): State<Arc<AppState>>) -> Json<Value> {
-    // Mark disconnection intent first, then wake the mqtt loop so it stops reconnecting.
-    state
-        .disconnect_requested
-        .store(true, std::sync::atomic::Ordering::Relaxed);
-    // Drop the current client to force the event loop to exit.
-    *state.mqtt_client.lock().await = None;
-    state
-        .mqtt_connected
-        .store(false, std::sync::atomic::Ordering::Relaxed);
-    state.reconnect_signal.notify_one();
-    Json(json!({"success": true, "message": "MQTT disconnected, auto-reconnect paused"}))
-}
-
-/// Trigger MQTT reconnection and resume automatic reconnection.
-///
-/// Counterpart to `POST /netApi/mqtt/disconnect`. Clears the reconnect-inhibit
-/// flag and immediately schedules a connection attempt. A 200 response does not
-/// mean the connection succeeded — reconnection runs asynchronously in the
-/// background; poll `GET /netApi/mqtt/status` to confirm. Call this after a
-/// maintenance window to restore cloud link.
-#[utoipa::path(post, path = "/netApi/mqtt/reconnect", tag = "MQTT",
-    responses((status = 200, description = "Reconnect command issued; executing in background")))]
-async fn mqtt_reconnect(State(state): State<Arc<AppState>>) -> Json<Value> {
-    // Clear the disconnect flag, then wake the mqtt loop to reconnect.
-    state
-        .disconnect_requested
-        .store(false, std::sync::atomic::Ordering::Relaxed);
-    state.reconnect_signal.notify_one();
-    Json(json!({"success": true, "message": "Reconnect command sent, executing in background"}))
-}
-
-// ============================================================================
-// Certificate management
-// ============================================================================
-
-/// Upload a single TLS certificate file (multipart/form-data).
-///
-/// Upload one certificate per request; use `cert_type` to specify the type.
-/// The original filename is ignored — files are saved under fixed names in
-/// `cert_dir`:
-///
-/// | cert_type     | Saved filename         |
-/// |---------------|------------------------|
-/// | `ca_cert`     | `AmazonRootCA1.pem`    |
-/// | `client_cert` | `certificate.pem.crt`  |
-/// | `client_key`  | `private.pem.key`      |
-#[utoipa::path(post, path = "/netApi/certificate/upload", tag = "Certificate",
-    request_body(
-        content_type = "multipart/form-data",
-        content = inline(CertUploadForm),
-    ),
-    responses(
-        (status = 200, description = "Certificate uploaded successfully"),
-        (status = 400, description = "Invalid request — unknown cert_type, empty file, or unsupported format"),
-        (status = 413, description = "Multipart request exceeds the service body limit"),
-        (status = 500, description = "Certificate directory not writable or file write failed"),
-    ))]
-async fn cert_upload(
-    State(state): State<Arc<AppState>>,
-    mut multipart: Multipart,
-) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    const MAX_SIZE: usize = 1024 * 1024; // 1 MB
-    const ALLOWED_EXT: &[&str] = &[".pem", ".crt", ".key", ".cer", ".p12", ".pfx"];
-
-    let cert_dir = state.env.cert_dir.clone();
-
-    // Collect all multipart fields first.
-    let mut cert_type_val: Option<String> = None;
-    let mut file_data: Option<(String, Vec<u8>)> = None; // (original_filename, bytes)
-
-    while let Some(field) = multipart.next_field().await.unwrap_or(None) {
-        let name = field.name().unwrap_or("").to_string();
-        match name.as_str() {
-            "cert_type" => {
-                let text = field.text().await.map_err(|e| {
-                    (
-                        StatusCode::BAD_REQUEST,
-                        Json(json!({"success": false, "message": e.to_string()})),
-                    )
-                })?;
-                cert_type_val = Some(text);
-            },
-            "file" => {
-                let orig_name = field.file_name().unwrap_or("").to_string();
-                let data = field.bytes().await.map_err(|e| {
-                    (
-                        StatusCode::BAD_REQUEST,
-                        Json(json!({"success": false, "message": e.to_string()})),
-                    )
-                })?;
-                file_data = Some((orig_name, data.to_vec()));
-            },
-            _ => {},
-        }
-    }
-
-    // Validate cert_type.
-    let cert_type = cert_type_val.ok_or_else(|| (
-        StatusCode::BAD_REQUEST,
-        Json(json!({"success": false, "message": "Missing cert_type field. Valid values: ca_cert | client_cert | client_key"})),
-    ))?;
-
-    let save_name = match cert_type.as_str() {
-        "ca_cert" => "AmazonRootCA1.pem",
-        "client_cert" => "certificate.pem.crt",
-        "client_key" => "private.pem.key",
-        _ => {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                Json(
-                    json!({"success": false, "message": format!("Unsupported cert_type: '{}'. Valid: ca_cert | client_cert | client_key", cert_type)}),
-                ),
-            ));
+                Json(json!({"success": false, "message": error.to_string()})),
+            );
         },
     };
-
-    // Validate file.
-    let (orig_name, data) = file_data.ok_or_else(|| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"success": false, "message": "Missing file field"})),
-        )
-    })?;
-
-    if orig_name.is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(json!({"success": false, "message": "Filename cannot be empty"})),
-        ));
-    }
-
-    let ext = std::path::Path::new(&orig_name)
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|e| format!(".{}", e.to_lowercase()))
-        .unwrap_or_default();
-    if !ALLOWED_EXT.contains(&ext.as_str()) {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(json!({
-                "success": false,
-                "message": format!("Unsupported file format '{}'. Supported: {}", ext, ALLOWED_EXT.join(", "))
-            })),
-        ));
-    }
-
-    if data.is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(json!({"success": false, "message": "File content is empty"})),
-        ));
-    }
-    if data.len() > MAX_SIZE {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(json!({
-                "success": false,
-                "message": format!("File exceeds 1MB limit (current: {} bytes)", data.len())
-            })),
-        ));
-    }
-
-    // Ensure directory exists.
-    std::fs::create_dir_all(&cert_dir).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({
-                "success": false,
-                "message": format!("Cannot create cert directory '{}': {} (check path permissions)", cert_dir, e)
-            })),
-        )
-    })?;
-
-    // Save file.
-    let dest = format!("{}/{}", cert_dir, save_name);
-    std::fs::write(&dest, &data).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"success": false, "message": format!("Failed to write file: {}", e)})),
-        )
-    })?;
-
-    Ok(Json(json!({
-        "success": true,
-        "message": "Certificate uploaded",
-        "data": {
-            "cert_type": cert_type,
-            "saved_as":  save_name,
-            "path":      dest,
-        }
-    })))
-}
-
-/// List certificate directory status: path and per-file existence flags.
-///
-/// Checks whether the CA certificate, client certificate, and private key are
-/// present in the configured certificate directory. Certificate contents and
-/// fingerprints are never returned (to avoid private-key exposure) — only
-/// `exists: true/false` per file. Use this on the cloud-config pre-flight page
-/// to confirm all required certificates have been uploaded.
-#[utoipa::path(get, path = "/netApi/certificate/info", tag = "Certificate",
-    responses((status = 200, description = "Certificate directory path and per-file existence status")))]
-async fn cert_info(State(state): State<Arc<AppState>>) -> Json<Value> {
-    let cert_dir = state.env.cert_dir.clone();
-    let files = [
-        "AmazonRootCA1.pem",
-        "certificate.pem.crt",
-        "private.pem.key",
-    ];
-    let info: Vec<Value> = files
-        .iter()
-        .map(|f| {
-            let exists = std::path::Path::new(&format!("{}/{}", cert_dir, f)).exists();
-            json!({ "file": f, "exists": exists })
-        })
-        .collect();
-    Json(json!({
-        "success": true,
-        "message": "OK",
-        "data": {
-            "cert_dir": cert_dir,
-            "files":    info,
-        }
-    }))
-}
-
-/// Delete a certificate file by type.
-///
-/// `cert_type` must be one of: `ca_cert` / `client_cert` / `client_key`.
-#[utoipa::path(delete, path = "/netApi/certificate/{cert_type}", tag = "Certificate",
-    params(
-        ("cert_type" = String, Path, description = "Certificate type: ca_cert | client_cert | client_key")
-    ),
-    responses(
-        (status = 200, description = "Deleted successfully (also returned when the file did not exist)"),
-        (status = 400, description = "Unknown cert_type"),
-        (status = 500, description = "Delete failed"),
-    ))]
-async fn cert_delete(
-    State(state): State<Arc<AppState>>,
-    Path(cert_type): Path<String>,
-) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let cert_dir = state.env.cert_dir.clone();
-    let filename = match cert_type.as_str() {
-        "ca_cert" => "AmazonRootCA1.pem",
-        "client_cert" => "certificate.pem.crt",
-        "client_key" => "private.pem.key",
-        _ => {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                Json(
-                    json!({"success": false, "message": "Unknown cert_type. Valid: ca_cert | client_cert | client_key"}),
-                ),
-            ));
+    let protected_receipt_slots = spool
+        .acknowledged_receipts()
+        .saturating_add(spool.pending_receipt_reservations());
+    let quota_ready = spool.current_live_bytes() < spool.ordinary_max_live_bytes()
+        && spool.journal_bytes() < spool.max_journal_bytes();
+    let admission_ready = spool.ordinary_pending_records() < spool.record_capacity()
+        && protected_receipt_slots < spool.acknowledged_receipt_capacity()
+        && quota_ready;
+    let ready = admission_ready && state.cloudlink.ready();
+    let cloudlink = state.cloudlink.snapshot().await;
+    (
+        if ready {
+            StatusCode::OK
+        } else {
+            StatusCode::SERVICE_UNAVAILABLE
         },
-    };
+        Json(json!({
+            "success": ready,
+            "cloudlink": cloudlink,
+            "spool": {
+                "stream_id": spool.stream_id(),
+                "stream_epoch": spool.stream_epoch(),
+                "next_position": spool.next_position(),
+                "earliest_retained_position": spool.earliest_retained_position(),
+                "last_acknowledged_position": spool.last_acknowledged_position(),
+                "pending_records": spool.pending_records(),
+                "ordinary_pending_records": spool.ordinary_pending_records(),
+                "system_pending_records": spool.system_pending_records(),
+                "record_capacity": spool.record_capacity(),
+                "acknowledged_receipts": spool.acknowledged_receipts(),
+                "pending_receipt_reservations": spool.pending_receipt_reservations(),
+                "protected_receipt_slots": protected_receipt_slots,
+                "acknowledged_receipt_capacity": spool.acknowledged_receipt_capacity(),
+                "lossless_admission_ready": admission_ready,
+                "current_live_bytes": spool.current_live_bytes(),
+                "max_live_bytes": spool.max_live_bytes(),
+                "ordinary_max_live_bytes": spool.ordinary_max_live_bytes(),
+                "journal_bytes": spool.journal_bytes(),
+                "max_journal_bytes": spool.max_journal_bytes(),
+                "quota_rejections": spool.quota_rejections(),
+                "data_loss_pending": spool.data_loss().is_some(),
+            }
+        })),
+    )
+}
 
-    match std::fs::remove_file(format!("{}/{}", cert_dir, filename)) {
-        Ok(_) => Ok(Json(json!({
-            "success": true,
-            "message": "Deleted successfully",
-            "data": { "deleted": filename }
-        }))),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Json(
-            json!({"success": true, "message": "File does not exist, nothing to delete"}),
-        )),
-        Err(e) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"success": false, "message": e.to_string()})),
-        )),
+#[utoipa::path(
+    post,
+    path = "/api/internal/alarm-events",
+    tag = "Internal",
+    request_body = AlarmEventRequest,
+    responses(
+        (status = 200, description = "Transition durably admitted to the CloudLink spool", body = AlarmAdmissionResponse),
+        (status = 400, description = "Invalid transition or identity headers"),
+        (status = 401, description = "Missing or invalid service credential"),
+        (status = 409, description = "event_id is bound to different content"),
+        (status = 503, description = "Lossless CloudLink spool admission unavailable")
+    )
+)]
+async fn alarm_event(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(AlarmEventRequest(body)): Json<AlarmEventRequest>,
+) -> Response<Body> {
+    if !valid_service_authorization(&headers, &state.alarm_broadcast_token) {
+        return error_response(StatusCode::UNAUTHORIZED, "invalid alarm service credential");
+    }
+    if headers.contains_key("X-Aether-Replay") {
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            "CloudLink alarm ingestion accepts transitions only",
+        );
+    }
+    let header_event_id = match required_single_header(&headers, "X-Aether-Event-ID") {
+        Ok(value) => value,
+        Err(message) => return error_response(StatusCode::BAD_REQUEST, message),
+    };
+    let idempotency_key = match required_single_header(&headers, "Idempotency-Key") {
+        Ok(value) => value,
+        Err(message) => return error_response(StatusCode::BAD_REQUEST, message),
+    };
+    let event = match AlarmEvent::from_value(body.clone()) {
+        Ok(event) => event,
+        Err(error) => return error_response(StatusCode::BAD_REQUEST, error.to_string()),
+    };
+    if event.event_id() != header_event_id || event.event_id() != idempotency_key {
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            "event_id, X-Aether-Event-ID, and Idempotency-Key must match",
+        );
+    }
+    let created_at = match now_ms() {
+        Ok(value) => TimestampMs::new(value),
+        Err(error) => return error_response(StatusCode::SERVICE_UNAVAILABLE, error.to_string()),
+    };
+    let input = match CloudLinkCodec::prepare_value(
+        CloudLinkMessageKind::AlarmEvent,
+        event.event_id(),
+        body,
+        created_at,
+        None,
+    ) {
+        Ok(input) => input,
+        Err(error) => return error_response(StatusCode::BAD_REQUEST, error.to_string()),
+    };
+    match state
+        .spool
+        .admit_lossless(input, CloudLinkReceiptRetention::RetainForIdempotency)
+        .await
+    {
+        Ok(admission) => {
+            state.delivery_wake.notify_one();
+            let identity = admission.identity();
+            json_response(
+                StatusCode::OK,
+                &AlarmAdmissionResponse {
+                    success: true,
+                    event_id: event.event_id().to_owned(),
+                    stream_id: identity.stream_id().to_owned(),
+                    stream_epoch: identity.stream_epoch(),
+                    position: identity.position(),
+                    duplicate: admission.duplicate(),
+                },
+            )
+        },
+        Err(error) => match error.reason() {
+            Some(CloudLinkSpoolErrorReason::ConflictingIdentity) => {
+                error_response(StatusCode::CONFLICT, error.to_string())
+            },
+            Some(CloudLinkSpoolErrorReason::CapacityExceeded)
+            | Some(CloudLinkSpoolErrorReason::Storage) => {
+                error_response(StatusCode::SERVICE_UNAVAILABLE, error.to_string())
+            },
+            _ => error_response(StatusCode::BAD_REQUEST, error.to_string()),
+        },
     }
 }
 
-// ============================================================================
-// Device sync
-// ============================================================================
+fn required_single_header<'a>(
+    headers: &'a HeaderMap,
+    name: &'static str,
+) -> Result<&'a str, &'static str> {
+    let mut values = headers.get_all(name).iter();
+    let first = values.next().ok_or("required identity header is missing")?;
+    if values.next().is_some() {
+        return Err("identity headers must appear exactly once");
+    }
+    first
+        .to_str()
+        .map_err(|_| "identity headers must contain visible ASCII")
+}
 
-/// Proactively sends the instance list sync message (inst-sync-reply) to the
-/// platform.
-///
-/// `msgId` is automatically set to the current millisecond timestamp; data is
-/// pulled live from automation.
-#[utoipa::path(post, path = "/netApi/inst-sync", tag = "MQTT",
-    responses(
-        (status = 200, description = "inst-sync-reply published"),
-        (status = 503, description = "MQTT not connected or automation unreachable"),
-    ))]
-async fn inst_sync_push(
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let msg_id = chrono::Utc::now().timestamp_millis().to_string();
+fn valid_service_authorization(headers: &HeaderMap, expected: &str) -> bool {
+    let Ok(authorization) = required_single_header(headers, header::AUTHORIZATION.as_str()) else {
+        return false;
+    };
+    let Some((scheme, credential)) = authorization.split_once(' ') else {
+        return false;
+    };
+    if scheme != INTERNAL_AUTH_SCHEME
+        || credential.is_empty()
+        || credential.bytes().any(|byte| byte.is_ascii_whitespace())
+    {
+        return false;
+    }
+    let presented = Sha256::digest(credential.as_bytes());
+    let configured = Sha256::digest(expected.as_bytes());
+    presented.ct_eq(&configured).unwrap_u8() == 1
+}
 
-    // Locally triggered, so there is no caller trace context to preserve. The
-    // gateway does not mint one.
-    do_inst_sync(Arc::clone(&state), Some(msg_id.clone()), None)
-        .await
-        .map(|_| {
-            Json(json!({
-                "success": true,
-                "message": "inst-sync-reply published",
-                "data": { "msgId": msg_id }
-            }))
+fn error_response(status: StatusCode, message: impl Into<String>) -> Response<Body> {
+    json_response(
+        status,
+        &json!({"success": false, "message": message.into()}),
+    )
+}
+
+fn json_response(status: StatusCode, value: &impl Serialize) -> Response<Body> {
+    match serde_json::to_vec(value) {
+        Ok(body) => Response::builder()
+            .status(status)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body))
+            .unwrap_or_else(|_| Response::new(Body::empty())),
+        Err(_) => Response::builder()
+            .status(StatusCode::INTERNAL_SERVER_ERROR)
+            .body(Body::empty())
+            .unwrap_or_else(|_| Response::new(Body::empty())),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use aether_ports::{CloudLinkDurableAck, CloudLinkSessionBinding, DurableAckOutcome};
+    use axum::body::to_bytes;
+    use axum::http::Request;
+    use tower::ServiceExt;
+
+    use super::*;
+    use crate::cloudlink_runtime::CloudLinkRuntimeStatus;
+
+    const TOKEN: &str = "alarm-service-token-0123456789abcdef";
+
+    fn payload(value: f64) -> Value {
+        json!({
+            "type": "alarm",
+            "id": "alarm_042",
+            "event_id": "alarm-trigger-42",
+            "timestamp": 1721000000,
+            "data": {
+                "alarm_id": "42",
+                "event_id": "alarm-trigger-42",
+                "service_type": "io",
+                "source": "io",
+                "device": "10",
+                "channel_id": 10,
+                "data_type": "T",
+                "point_id": 8,
+                "status": 1,
+                "level": 2,
+                "value": value,
+                "message": "High temperature"
+            }
         })
-        .map_err(|e| {
-            error!("inst-sync-push failed: {}", e);
-            (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(json!({"success": false, "message": e.to_string()})),
+    }
+
+    fn state(path: &Path, capacity: usize) -> Arc<AppState> {
+        state_with_receipt_capacity(path, capacity, 100_000)
+    }
+
+    fn state_with_receipt_capacity(
+        path: &Path,
+        capacity: usize,
+        receipt_capacity: usize,
+    ) -> Arc<AppState> {
+        Arc::new(AppState {
+            spool: Arc::new(
+                aether_store_local::FileCloudLinkSpool::open_with_receipt_capacity(
+                    path,
+                    "business",
+                    capacity,
+                    receipt_capacity,
+                )
+                .expect("spool"),
+            ),
+            alarm_broadcast_token: Arc::from(TOKEN),
+            cloudlink: Arc::new(CloudLinkRuntimeStatus::new(false)),
+            delivery_wake: Arc::new(tokio::sync::Notify::new()),
+        })
+    }
+
+    fn request(body: Value) -> Request<Body> {
+        request_for_event(body, "alarm-trigger-42")
+    }
+
+    fn request_for_event(body: Value, event_id: &str) -> Request<Body> {
+        Request::builder()
+            .method("POST")
+            .uri("/api/internal/alarm-events")
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::AUTHORIZATION, format!("Bearer {TOKEN}"))
+            .header("X-Aether-Event-ID", event_id)
+            .header("Idempotency-Key", event_id)
+            .body(Body::from(serde_json::to_vec(&body).expect("body")))
+            .expect("request")
+    }
+
+    async fn response_json(response: Response<Body>) -> Value {
+        serde_json::from_slice(
+            &to_bytes(response.into_body(), MAX_ALARM_BODY_BYTES)
+                .await
+                .expect("body"),
+        )
+        .expect("JSON")
+    }
+
+    #[tokio::test]
+    async fn exact_retry_is_idempotent_across_process_reopen_and_conflict_is_closed() {
+        let root = tempfile::tempdir().expect("temp dir");
+        let path = root.path().join("cloudlink.spool");
+        let first = build_router(state(&path, 8));
+        let accepted = first
+            .clone()
+            .oneshot(request(payload(12.5)))
+            .await
+            .expect("accepted");
+        assert_eq!(accepted.status(), StatusCode::OK);
+        let accepted = response_json(accepted).await;
+        assert_eq!(accepted["duplicate"], false);
+        drop(first);
+
+        let reopened = build_router(state(&path, 8));
+        let duplicate = reopened
+            .clone()
+            .oneshot(request(payload(12.5)))
+            .await
+            .expect("duplicate");
+        assert_eq!(duplicate.status(), StatusCode::OK);
+        assert_eq!(response_json(duplicate).await["duplicate"], true);
+
+        let conflict = reopened
+            .oneshot(request(payload(99.0)))
+            .await
+            .expect("conflict");
+        assert_eq!(conflict.status(), StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn successful_alarm_admission_wakes_cloudlink_delivery() {
+        let root = tempfile::tempdir().expect("temp dir");
+        let app_state = state(&root.path().join("cloudlink.spool"), 8);
+        let delivery_wake = Arc::clone(&app_state.delivery_wake);
+        let response = build_router(app_state)
+            .oneshot(request(payload(12.5)))
+            .await
+            .expect("alarm admission");
+        assert_eq!(response.status(), StatusCode::OK);
+        tokio::time::timeout(std::time::Duration::from_secs(1), delivery_wake.notified())
+            .await
+            .expect("delivery wake");
+    }
+
+    #[tokio::test]
+    async fn retry_after_cloud_ack_keeps_original_identity_across_reopen() {
+        let root = tempfile::tempdir().expect("temp dir");
+        let path = root.path().join("cloudlink.spool");
+        let first_state = state(&path, 8);
+        let first = build_router(Arc::clone(&first_state));
+        let accepted = first
+            .clone()
+            .oneshot(request(payload(12.5)))
+            .await
+            .expect("accepted");
+        assert_eq!(accepted.status(), StatusCode::OK);
+        let accepted = response_json(accepted).await;
+        let original_position = accepted["position"].as_u64().expect("position");
+
+        let record = first_state
+            .spool
+            .replay_from(original_position, 1)
+            .await
+            .expect("retained alarm")
+            .records()[0]
+            .clone();
+        let cloud_session = CloudLinkSessionBinding::new("cloud-session-1", 1);
+        first_state
+            .spool
+            .mark_offered(record.identity(), &cloud_session)
+            .await
+            .expect("offer alarm");
+        first_state
+            .spool
+            .mark_transport_published(record.identity(), &cloud_session)
+            .await
+            .expect("publish alarm");
+        let ack = CloudLinkDurableAck::new(
+            cloud_session,
+            record.identity().stream_id(),
+            record.identity().stream_epoch(),
+            record.identity().position(),
+            record.batch_id(),
+            record.digest(),
+            "alarm-receipt-42",
+        );
+        assert_eq!(
+            first_state
+                .spool
+                .acknowledge(&ack)
+                .await
+                .expect("ACK alarm"),
+            DurableAckOutcome::Applied { removed: 1 }
+        );
+        assert_eq!(
+            first_state
+                .spool
+                .status()
+                .await
+                .expect("status")
+                .pending_records(),
+            0
+        );
+        drop(first);
+        drop(first_state);
+
+        let reopened = build_router(state(&path, 8));
+        let duplicate = reopened
+            .clone()
+            .oneshot(request(payload(12.5)))
+            .await
+            .expect("duplicate after ACK");
+        assert_eq!(duplicate.status(), StatusCode::OK);
+        let duplicate = response_json(duplicate).await;
+        assert_eq!(duplicate["duplicate"], true);
+        assert_eq!(duplicate["position"], original_position);
+
+        let conflict = reopened
+            .oneshot(request(payload(99.0)))
+            .await
+            .expect("conflict after ACK");
+        assert_eq!(conflict.status(), StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn full_alarm_receipt_ledger_is_visible_and_never_evicts_identity() {
+        let root = tempfile::tempdir().expect("temp dir");
+        let path = root.path().join("cloudlink.spool");
+        let app_state = state_with_receipt_capacity(&path, 8, 1);
+        let router = build_router(Arc::clone(&app_state));
+        assert_eq!(
+            router
+                .clone()
+                .oneshot(request(payload(12.5)))
+                .await
+                .expect("alarm admission")
+                .status(),
+            StatusCode::OK
+        );
+
+        let record = app_state
+            .spool
+            .replay_from(1, 1)
+            .await
+            .expect("retained alarm")
+            .records()[0]
+            .clone();
+        let cloud_session = CloudLinkSessionBinding::new("cloud-session-1", 1);
+        app_state
+            .spool
+            .mark_offered(record.identity(), &cloud_session)
+            .await
+            .expect("offer alarm");
+        app_state
+            .spool
+            .acknowledge(&CloudLinkDurableAck::new(
+                cloud_session,
+                record.identity().stream_id(),
+                record.identity().stream_epoch(),
+                record.identity().position(),
+                record.batch_id(),
+                record.digest(),
+                "alarm-receipt-42",
+            ))
+            .await
+            .expect("ack alarm");
+
+        let health = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .body(Body::empty())
+                    .expect("request"),
             )
-        })
+            .await
+            .expect("health");
+        assert_eq!(health.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let health = response_json(health).await;
+        assert_eq!(health["spool"]["acknowledged_receipts"], 1);
+        assert_eq!(health["spool"]["pending_receipt_reservations"], 0);
+        assert_eq!(health["spool"]["protected_receipt_slots"], 1);
+        assert_eq!(health["spool"]["lossless_admission_ready"], false);
+        assert_eq!(health["spool"]["ordinary_pending_records"], 0);
+        assert_eq!(health["spool"]["system_pending_records"], 0);
+        assert!(health["spool"]["current_live_bytes"].is_number());
+        assert!(health["spool"]["ordinary_max_live_bytes"].is_number());
+        assert!(health["spool"]["max_live_bytes"].is_number());
+        assert!(health["spool"]["journal_bytes"].is_number());
+        assert!(health["spool"]["max_journal_bytes"].is_number());
+        assert_eq!(health["spool"]["quota_rejections"], 0);
+
+        let duplicate = router
+            .clone()
+            .oneshot(request(payload(12.5)))
+            .await
+            .expect("exact retry");
+        assert_eq!(duplicate.status(), StatusCode::OK);
+        assert_eq!(response_json(duplicate).await["duplicate"], true);
+
+        let mut second = payload(13.0);
+        second["event_id"] = json!("alarm-trigger-43");
+        second["data"]["event_id"] = json!("alarm-trigger-43");
+        let rejected = router
+            .oneshot(request_for_event(second, "alarm-trigger-43"))
+            .await
+            .expect("full receipt ledger");
+        assert_eq!(rejected.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn lossless_alarm_admission_rejects_capacity_without_evicting() {
+        let root = tempfile::tempdir().expect("temp dir");
+        let path = root.path().join("cloudlink.spool");
+        let state = state(&path, 1);
+        let router = build_router(Arc::clone(&state));
+        assert_eq!(
+            router
+                .clone()
+                .oneshot(request(payload(12.5)))
+                .await
+                .expect("first")
+                .status(),
+            StatusCode::OK
+        );
+        let mut second = payload(13.0);
+        second["event_id"] = json!("alarm-trigger-43");
+        second["data"]["event_id"] = json!("alarm-trigger-43");
+        let second_request = Request::builder()
+            .method("POST")
+            .uri("/api/internal/alarm-events")
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::AUTHORIZATION, format!("Bearer {TOKEN}"))
+            .header("X-Aether-Event-ID", "alarm-trigger-43")
+            .header("Idempotency-Key", "alarm-trigger-43")
+            .body(Body::from(serde_json::to_vec(&second).expect("body")))
+            .expect("request");
+        assert_eq!(
+            router.oneshot(second_request).await.expect("full").status(),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(
+            state
+                .spool
+                .status()
+                .await
+                .expect("status")
+                .pending_records(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn generic_mqtt_and_old_alarm_routes_do_not_exist() {
+        let root = tempfile::tempdir().expect("temp dir");
+        let router = build_router(state(&root.path().join("cloudlink.spool"), 8));
+        for path in [
+            "/netApi/mqtt/status",
+            "/netApi/mqtt/config",
+            "/netApi/alarm/broadcast",
+            "/netApi/inst-sync",
+        ] {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(path)
+                        .body(Body::empty())
+                        .expect("request"),
+                )
+                .await
+                .expect("response");
+            assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
+        }
+    }
+
+    #[tokio::test]
+    async fn configured_but_disconnected_cloudlink_is_not_reported_ready() {
+        let root = tempfile::tempdir().expect("temp dir");
+        let disconnected = Arc::new(AppState {
+            spool: Arc::new(
+                aether_store_local::FileCloudLinkSpool::open_with_receipt_capacity(
+                    root.path().join("cloudlink.spool"),
+                    "business",
+                    8,
+                    100_000,
+                )
+                .expect("spool"),
+            ),
+            alarm_broadcast_token: Arc::from(TOKEN),
+            cloudlink: Arc::new(CloudLinkRuntimeStatus::new(true)),
+            delivery_wake: Arc::new(tokio::sync::Notify::new()),
+        });
+        let router = build_router(disconnected);
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = response_json(response).await;
+        assert_eq!(body["success"], false);
+        assert_eq!(body["cloudlink"]["configured"], true);
+        assert_eq!(body["cloudlink"]["task_running"], false);
+        assert_eq!(body["cloudlink"]["session_established"], false);
+    }
 }

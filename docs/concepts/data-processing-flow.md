@@ -15,7 +15,7 @@ processor does not request Aether data.**
 
 This path starts after device data has been decoded and published. It remains
 outside the SHM write path, historical persistence, rule and alarm hot paths,
-and command delivery. Version 1 serves an authenticated HTTP query; a future
+and command delivery. The runtime serves an authenticated HTTP query; a future
 scheduled planning cycle must use the same boundary. Its failure cannot stop
 device polling, live-state publication, deterministic protection, alarms, or
 existing control behavior.
@@ -72,7 +72,7 @@ protocol adapter.
 The caller selects an enabled `DataProcessingTask`, not arbitrary site points,
 a processor URL, or a model file. A request identifies at least:
 
-- the task and task-contract version;
+- the task ID and business-configuration revision;
 - the commissioned binding in which the task runs;
 - caller/request context and a bounded deadline;
 - a stable `as_of` timestamp;
@@ -152,7 +152,7 @@ and provenance.
 
 This is valid only when that feature's commissioned history aggregation is
 `Last`. An instantaneous SHM value cannot represent a `Mean`, `Sum`, `Min`, or
-`Max` bucket, so v1 rejects `live_tail: true` for those policies. The energy
+`Max` bucket, so the contract rejects `live_tail: true` for those policies. The energy
 load and PV tasks both use `Mean` for their targets and therefore forbid live
 tail.
 
@@ -171,9 +171,9 @@ The processor does not map SHM, understand slots or writer generations, or
 receive `LiveStateWriter`. This keeps the shared-memory ABI inside Aether and
 preserves IO's exclusive ownership of T/S writes.
 
-SHM v5 preserves device-origin quality for live values, and the API combines
+The current SHM layout preserves device-origin quality for live values, and the API combines
 that source quality with its freshness policy. The current SQLite history
-schema still stores numeric observations without source quality. Version 1
+schema still stores numeric observations without source quality. The runtime
 enforces freshness, gaps, missingness, numeric constraints, provenance, and
 issue time, but a deployment that requires original quality for historical
 features must provide a quality-bearing history adapter.
@@ -205,7 +205,7 @@ The application assembles source-specific samples into one processor-neutral
 
 ```json
 {
-  "schema": "aether.processing-frame.v1",
+  "schema": "aether.processing-frame",
   "as_of": "2026-07-11T12:00:00Z",
   "cadence_seconds": 900,
   "history": {
@@ -250,8 +250,8 @@ The application assembles source-specific samples into one processor-neutral
 }
 ```
 
-The wire codec may be JSON, CBOR, or another versioned representation; the
-semantic contract stays the same. Named, typed fields keep Aether independent
+The processor wire codec uses one strict JSON representation. Named, typed
+fields keep Aether independent
 of private algorithm or tensor names and make requests inspectable and usable
 in offline conformance fixtures.
 
@@ -260,7 +260,7 @@ The Aether-side application owns work tied to site-data semantics:
 - resolving instance and point bindings;
 - ordering timestamps in UTC and applying declared local-time policy;
 - validating that commissioned unit, scale, offset, point kind, and target sign
-  already match the task (v1 performs no runtime unit/sign conversion);
+  already match the task (there is no runtime unit/sign conversion);
 - applying task-declared aggregation and resampling rules;
 - aligning fields to a common time grid and preserving missingness masks;
 - checking lookback, freshness, skew, gap, and completeness requirements;
@@ -279,15 +279,15 @@ This split keeps device and point semantics out of processors and private
 algorithm representation out of the Aether kernel.
 
 After validation, the application computes a canonical input digest over the
-versioned task identity, versioned binding identity, processor contract,
+task identity, binding identity, processor contract,
 optional artifact selector, normalized frame (including `as_of`), and typed
 options. Processor endpoint, request ID, submission time, and deadline are not
 digest inputs. Independent invocations of the exact same normalized governed
 content therefore have the same digest; repeating only `as_of` does not ensure
-that content when sources are mutable. Version 1 does not use the digest for
+that content when sources are mutable. The contract does not use the digest for
 replay or de-duplication.
 
-An artifact selector's version and digest identify the bytes used. Version 1
+An artifact selector's version and digest identify the bytes used. The contract
 does not carry artifact `trained_through` or `available_at`, so selecting a
 current pinned model for an old `as_of` may still introduce model-vintage
 leakage. Historical model evaluation must use an externally frozen artifact
@@ -315,7 +315,7 @@ frame. Location does not change data authority or grant access to arbitrary
 Aether state.
 
 Calls are bounded by payload, concurrency, and deadline limits.
-`data_processing.process` is non-idempotent: v1 has no replay store or
+`data_processing.process` is non-idempotent: there is no replay store or
 de-duplication contract, and another call may execute processor work again. A
 caller retries only a typed retryable failure under its own bounded policy,
 with a fresh deadline and awareness that earlier work may already have run.
@@ -334,7 +334,7 @@ for a consumer.
 
 Common checks include:
 
-- supported result-contract version;
+- the exact configured current result-contract identifier;
 - matching request ID, task ID, binding revision, and input digest;
 - selected processor and artifact identity, version, and digest;
 - finite numeric outputs and expected engineering units;
@@ -354,8 +354,8 @@ result rather than leaking partially trusted values to consumers.
 
 ## 8. Return derived data
 
-Version 1 returns the validated `DerivedData` directly from the authenticated
-`POST /api/v1/data-processing/process` route. It does not implement a result
+The runtime returns the validated `DerivedData` directly from the authenticated
+`POST /api/data-processing/process` route. It does not implement a result
 cache, replay store, durable derived-data sink, CLI binding, or MCP tool. Those
 are possible separate capabilities only after their authority, retention, and
 side-effect policies are defined.
@@ -368,7 +368,7 @@ consumer.
 
 The following handoffs preserve ownership:
 
-Only the authenticated HTTP response is implemented in v1. The other rows are
+Only the authenticated HTTP response is currently implemented. The other rows are
 constraints on possible future consumers, not current integrations.
 
 | From Data Processing | Consumer | Allowed handoff | Not allowed |

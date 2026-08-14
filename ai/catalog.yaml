@@ -1,4 +1,3 @@
-version: 1
 project: aether
 components:
   domain:
@@ -35,25 +34,25 @@ components:
       - cargo test -p aether-io --test channel_mutator_contract
   pack_contract:
     path: crates/aether-pack
-    responsibility: Versioned fail-closed manifest, compatibility, identifier, commissioning, and pack-root asset validation
+    responsibility: Fail-closed manifest, compatibility, identifier, commissioning, and pack-root asset validation
     verify:
       - cargo test -p aether-pack
   runtime_catalog:
     path: libs/aether-runtime-catalog
-    responsibility: Versioned feature-exact runtime metadata, target/adapter derivation, canonical checksums, and shared fail-closed Pack compatibility loading
+    responsibility: Feature-exact runtime metadata, target/adapter derivation, canonical checksums, and shared fail-closed Pack compatibility loading
     verify:
       - cargo test -p aether-runtime-catalog
       - ./scripts/test-runtime-manifest.sh
   runtime_manifest_schema:
-    path: contracts/runtime/runtime-manifest.v1.schema.json
+    path: contracts/runtime/runtime-manifest.schema.json
     responsibility: Machine-readable closed contract for one concrete Aether runtime composition
     verify:
-      - uvx --from check-jsonschema check-jsonschema --check-metaschema contracts/runtime/runtime-manifest.v1.schema.json
+      - uvx --from check-jsonschema check-jsonschema --check-metaschema contracts/runtime/runtime-manifest.schema.json
   pack_schema:
-    path: contracts/pack/pack-manifest.v1.schema.json
-    responsibility: Machine-readable Pack v1 manifest contract
+    path: contracts/pack/pack-manifest.schema.json
+    responsibility: Machine-readable Pack manifest contract
     verify:
-      - uvx --from check-jsonschema check-jsonschema --check-metaschema contracts/pack/pack-manifest.v1.schema.json
+      - uvx --from check-jsonschema check-jsonschema --check-metaschema contracts/pack/pack-manifest.schema.json
   data_processing:
     path: crates/aether-application/src/data_processing.rs
     responsibility: Governed frame assembly, processor invocation, untrusted-result validation, and DerivedData stamping
@@ -62,17 +61,17 @@ components:
       - cargo test -p aether-application --test safety_policy_contract
   data_processing_codec:
     path: crates/aether-data-processing
-    responsibility: Strict transport-neutral v1 JSON conversion and RFC 8785 input digests
+    responsibility: Strict transport-neutral JSON conversion and RFC 8785 input digests
     verify:
       - cargo test -p aether-data-processing
   data_processing_contracts:
     path: contracts/data-processing
-    responsibility: Strict Draft 2020-12 wire schemas for every v1 Data Processing trust boundary
+    responsibility: Strict Draft 2020-12 wire schemas for every Data Processing trust boundary
     verify:
       - uvx --from check-jsonschema check-jsonschema --check-metaschema contracts/data-processing/*.schema.json
   cloudlink_candidate_codec:
     path: crates/aether-cloudlink
-    responsibility: Experimental transport-neutral CloudLink v1 strict codec, session binding, canonical business digests, and truthful Runtime Manifest/PointSample mapping
+    responsibility: Transport-neutral CloudLink strict codec, session binding, canonical business digests, and truthful Runtime Manifest/PointSample mapping
     verify:
       - cargo test -p aether-cloudlink
   integration_candidate_binding:
@@ -87,10 +86,10 @@ components:
       - cargo test -p aether-cloudlink --test integration_extension
       - cargo test -p aether-cloudlink --test integration_extension_contract
   cloudlink_candidate_contracts:
-    path: contracts/cloudlink/v1
-    responsibility: Product integration copies and migration proposals for the digest-pinned public AetherContracts CloudLink subset
+    path: contracts/cloudlink
+    responsibility: Canonical local CloudLink schemas and fixtures with immutable upstream provenance recorded separately
     verify:
-      - uvx --from check-jsonschema check-jsonschema --check-metaschema contracts/cloudlink/v1/*.schema.json
+      - uvx --from check-jsonschema check-jsonschema --check-metaschema contracts/cloudlink/*.schema.json
       - cargo test -p aether-cloudlink --test codec_contract
   aether_contracts_consumer:
     path: aether-contracts.lock.json
@@ -117,7 +116,7 @@ components:
       - cargo test -p aether-testkit
   local_store:
     path: libs/aether-store-local
-    responsibility: Zero-external-service state, history, audit, restart-stable integration generations, legacy outbox, and application-ACK-driven CloudLink spools
+    responsibility: Zero-external-service state, history, audit, restart-stable integration generations, file outbox, and application-ACK-driven CloudLink spools
     verify:
       - cargo test -p aether-store-local
   sqlite_topology_adapter:
@@ -152,7 +151,7 @@ components:
       - cargo test -p aether-http-data-processor
   data_processing_api:
     path: services/api/src/routes_data_processing.rs
-    responsibility: Opt-in authenticated Data Processing v1 HTTP task discovery, health, and process routes
+    responsibility: Opt-in authenticated Data Processing HTTP task discovery, health, and process routes
     verify:
       - cargo test -p aether-api --bin aether-api routes_data_processing
   data_processing_runtime:
@@ -162,12 +161,12 @@ components:
       - cargo test -p aether-api --bin aether-api data_processing_runtime
   energy_data_processing:
     path: packs/energy/data-processing
-    responsibility: Disabled load/PV task declarations, uncommissioned binding, and cross-language v1 fixtures
+    responsibility: Disabled load/PV task declarations, uncommissioned binding, and cross-language fixtures
     verify:
       - cargo test -p aether-example-energy-gateway --test data_processing_composition
   aether_uplink_runtime:
-    path: services/uplink/src/uplink.rs
-    responsibility: aether-uplink integration with DurableOutbox and UplinkPublisher
+    path: services/uplink/src/cloudlink_runtime.rs
+    responsibility: aether-uplink CloudLink session, delivery, acknowledgement, and replay lifecycle
     verify:
       - cargo check -p aether-uplink
   aether_io_protocol_runtime:

@@ -1,13 +1,15 @@
 //! Cloud-facing logical groups backed by SQLite configuration and SHM values.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
+#[cfg(test)]
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 #[cfg(test)]
 use aether_domain::PointQuality;
 use aether_domain::{InstanceId, PointAddress, PointId, PointKind, PointSample, TimestampMs};
-use aether_ports::{ChannelHealthObservation, PortError, PortErrorKind, PortResult};
+use aether_ports::{PortError, PortErrorKind, PortResult};
 use aether_shm_bridge::{PhysicalPointAddress, ShmReadTopologyGeneration, SlotSource};
 use aether_sqlite_topology::{
     SqliteLiveTopologySnapshot, load_sqlite_live_topology, open_read_topology, point_kind_code,
@@ -20,7 +22,13 @@ use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
 use crate::config::EnvConfig;
-use crate::models::PropertyEntry;
+#[cfg(test)]
+#[derive(Debug)]
+struct PropertyEntry {
+    source: String,
+    device: String,
+    value: HashMap<String, serde_json::Value>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LogicalGroup {
@@ -77,7 +85,8 @@ pub struct UplinkTopologyGeneration {
 
 impl UplinkTopologyGeneration {
     /// Reads one group from the routes and SHM generation captured together.
-    pub fn read_group(
+    #[cfg(test)]
+    fn read_group(
         &self,
         key: &str,
         field: Option<&str>,
@@ -87,7 +96,8 @@ impl UplinkTopologyGeneration {
     }
 
     /// Collects one complete scheduler pass from this immutable generation.
-    pub fn collect_entries(
+    #[cfg(test)]
+    fn collect_entries(
         &self,
         patterns: &[String],
         excludes: &[Regex],
@@ -98,7 +108,7 @@ impl UplinkTopologyGeneration {
 
     /// Collects acquisition-owned business point facts for CloudLink.
     ///
-    /// The SHM v5 slot carries the acquisition source quality alongside value,
+    /// Each SHM slot carries the acquisition source quality alongside value,
     /// raw value, and timestamp, so CloudLink receives the original quality
     /// instead of manufacturing a successful status at the read boundary.
     #[allow(dead_code)]
@@ -109,22 +119,6 @@ impl UplinkTopologyGeneration {
     ) -> PortResult<Vec<PointSample>> {
         self.read.validate_layouts()?;
         self.values.collect_point_samples(patterns, excludes)
-    }
-
-    /// Iterates the channels this generation's health manifest configures.
-    ///
-    /// Deterministic order, so a telemetry pass reports the same channel set
-    /// every tick and a consumer sees a stable series.
-    pub fn channel_ids(&self) -> impl Iterator<Item = u32> + '_ {
-        self.read.channel_health().manifest().channel_ids()
-    }
-
-    /// Reads channel connectivity from the health plane pinned to this generation.
-    ///
-    /// `None` means unconfigured or never observed — deliberately not the same
-    /// claim as offline.
-    pub fn channel_health(&self, channel_id: u32) -> PortResult<Option<ChannelHealthObservation>> {
-        self.read.channel_health().read_channel(channel_id)
     }
 
     /// Returns the deterministic digest of the one SQLite snapshot used here.
@@ -236,7 +230,8 @@ impl ShmNetValueSource {
     }
 
     /// Reads one logical group, optionally restricted to a single field.
-    pub fn read_group(
+    #[cfg(test)]
+    fn read_group(
         &self,
         key: &str,
         field: Option<&str>,
@@ -301,7 +296,8 @@ impl ShmNetValueSource {
     }
 
     /// Reads selected logical groups into the existing MQTT property shape.
-    pub fn collect_entries(
+    #[cfg(test)]
+    fn collect_entries(
         &self,
         patterns: &[String],
         excludes: &[Regex],
@@ -325,7 +321,6 @@ impl ShmNetValueSource {
             entries.push(PropertyEntry {
                 source: group.source.clone(),
                 device: group.device.replace(' ', "_"),
-                data_type: group.data_type.clone(),
                 value,
             });
         }

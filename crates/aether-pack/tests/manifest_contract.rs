@@ -7,7 +7,6 @@ use aether_pack::{
 use tempfile::TempDir;
 
 const VALID_MANIFEST: &str = r#"
-schema_version: 1
 id: demo
 name: Demo Industry Pack
 version: 1.2.3
@@ -44,19 +43,19 @@ fn pack_root() -> TempDir {
         .expect("data-processing asset directory");
     fs::write(
         root.path().join("data-processing/index.yaml"),
-        r#"schema: aether.pack.asset-index.v1
+        r#"schema: aether.pack.asset-index
 category: data_processing
 assets:
   - id: demo.forecast
     path: forecast.yaml
-    schema: aether.data-processing-task.v1
+    schema: aether.data-processing-task
     media_type: application/yaml
 "#,
     )
     .expect("data-processing asset index");
     fs::write(
         root.path().join("data-processing/forecast.yaml"),
-        "schema: aether.data-processing-task.v1\nid: demo.forecast\nenabled: false\n",
+        "schema: aether.data-processing-task\nid: demo.forecast\nenabled: false\n",
     )
     .expect("data-processing task asset");
     root
@@ -69,13 +68,12 @@ fn runtime() -> PackRuntime {
 }
 
 #[test]
-fn valid_v1_manifest_loads_from_its_pack_root() {
+fn valid_manifest_loads_from_its_pack_root() {
     let root = pack_root();
     fs::write(root.path().join("pack.yaml"), VALID_MANIFEST).expect("write fixture manifest");
 
     let manifest = load_pack_manifest(root.path(), &runtime()).expect("valid pack loads");
 
-    assert_eq!(manifest.schema_version(), 1);
     assert_eq!(manifest.id(), "demo");
     assert_eq!(manifest.name(), "Demo Industry Pack");
     assert_eq!(manifest.version().to_string(), "1.2.3");
@@ -129,7 +127,7 @@ fn unknown_manifest_fields_fail_closed() {
 }
 
 #[test]
-fn legacy_asset_shim_is_not_part_of_the_v1_contract() {
+fn legacy_asset_shim_is_not_part_of_the_contract() {
     let root = pack_root();
     let source = VALID_MANIFEST.replace(
         "assets:\n",
@@ -137,26 +135,20 @@ fn legacy_asset_shim_is_not_part_of_the_v1_contract() {
     );
 
     let error = parse_pack_manifest(&source, root.path(), &runtime())
-        .expect_err("legacy repository paths must not enter Pack v1");
+        .expect_err("legacy repository paths must not enter Pack");
 
     assert!(matches!(error, PackError::InvalidManifest { .. }));
 }
 
 #[test]
-fn unsupported_schema_version_has_a_typed_error() {
+fn old_schema_version_field_is_strictly_rejected() {
     let root = pack_root();
-    let source = VALID_MANIFEST.replacen("schema_version: 1", "schema_version: 2", 1);
+    let source = format!("schema_version: 1\n{VALID_MANIFEST}");
 
     let error = parse_pack_manifest(&source, root.path(), &runtime())
-        .expect_err("unsupported schema must fail");
+        .expect_err("the removed version field must fail");
 
-    assert!(matches!(
-        error,
-        PackError::UnsupportedSchema {
-            found: 2,
-            supported: 1
-        }
-    ));
+    assert!(matches!(error, PackError::InvalidManifest { .. }));
 }
 
 #[test]
@@ -361,9 +353,9 @@ fn asset_directory_symlink_cannot_escape_the_pack_root() {
 }
 
 #[test]
-fn v1_json_schema_declares_the_same_fail_closed_surface() {
+fn json_schema_declares_the_same_fail_closed_surface() {
     let schema_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../contracts/pack/pack-manifest.v1.schema.json");
+        .join("../../contracts/pack/pack-manifest.schema.json");
     if !schema_path.is_file() {
         // The JSON Schema is a repository/release contract, not duplicated in
         // the Cargo crate tarball. Workspace CI validates it separately.
@@ -377,7 +369,7 @@ fn v1_json_schema_declares_the_same_fail_closed_surface() {
 
     assert_eq!(
         schema["$id"],
-        "https://aether.dev/schemas/pack-manifest.v1.json"
+        "https://aether.dev/schemas/pack-manifest.json"
     );
     assert_eq!(schema["additionalProperties"], false);
     assert_eq!(
@@ -397,6 +389,7 @@ fn v1_json_schema_declares_the_same_fail_closed_surface() {
             .as_array()
             .is_some_and(|fields| fields.iter().any(|field| field == "version"))
     );
+    assert!(schema["properties"].get("schema_version").is_none());
     for category in ["mappings", "rules", "evaluations"] {
         assert!(
             schema["properties"]["capabilities"]["properties"]
@@ -406,7 +399,7 @@ fn v1_json_schema_declares_the_same_fail_closed_surface() {
         );
     }
 
-    let index_schema_path = schema_path.with_file_name("pack-asset-index.v1.schema.json");
+    let index_schema_path = schema_path.with_file_name("pack-asset-index.schema.json");
     let index_schema: serde_json::Value =
         serde_json::from_slice(&fs::read(&index_schema_path).unwrap_or_else(|error| {
             panic!("failed to read {}: {error}", index_schema_path.display())

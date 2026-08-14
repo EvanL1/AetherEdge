@@ -46,7 +46,6 @@ async fn deterministic_edge_slice_negotiates_reports_and_replays_until_applicati
         "development-gateway-key-17",
         MessageAuthentication::new("development-gateway-key-17", "E".repeat(86))
             .expect("signature shape"),
-        vec!["1.0".to_string()],
         "A".repeat(43),
         vec![aether_cloudlink::ResumeCursor::new("business", 1, 0).expect("cursor")],
     )
@@ -76,7 +75,7 @@ async fn deterministic_edge_slice_negotiates_reports_and_replays_until_applicati
     let session =
         match CloudLinkCodec::decode(inbound(&edge).await.payload()).expect("decode acceptance") {
             CandidateMessage::SessionAccepted(value) => value
-                .bind("33333333-3333-4333-8333-333333333333", 3, &["1.0"], 6)
+                .bind("33333333-3333-4333-8333-333333333333", 3, 6)
                 .expect("current session"),
             other => panic!("unexpected message: {other:?}"),
         };
@@ -266,9 +265,8 @@ async fn apply_cloud_ack(
     record: &aether_ports::CloudLinkRecord,
 ) {
     let ack = json!({
-        "schema": "aether.cloudlink.durable-ack.v1",
+        "schema": "aether.cloudlink.durable-ack",
         "protocol": "aether.cloudlink",
-        "protocol_version": "1.0",
         "message_kind": "durable-ack",
         "gateway_id": session.gateway_id(),
         "session_id": session.session_id(),
@@ -317,7 +315,7 @@ async fn inbound(transport: &MemoryCloudLinkTransport) -> CloudLinkTransportMess
 fn fixture(name: &str) -> Vec<u8> {
     std::fs::read(
         Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../contracts/cloudlink/v1/fixtures")
+            .join("../../contracts/cloudlink/fixtures")
             .join(name),
     )
     .expect("fixture")

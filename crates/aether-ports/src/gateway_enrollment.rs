@@ -503,7 +503,7 @@ impl ConfiguredGatewayIdentity {
     pub fn stable_idempotency_key(&self) -> EnrollmentIdempotencyKey {
         let target = self.target();
         let canonical_name = format!(
-            "aether.cloud.gateway-enrollment-claim.v1\n{}\n{}\n{}\n{}\n{}",
+            "aether.cloud.gateway-enrollment-claim\n{}\n{}\n{}\n{}\n{}",
             target.cloud_origin(),
             target.tenant_id(),
             target.project_id(),

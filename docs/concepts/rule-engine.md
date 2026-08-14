@@ -12,7 +12,7 @@ document into a compact execution topology, a scheduler that decides when each
 rule runs, and an executor that walks the topology, evaluates conditions, and
 writes action points. This page covers the engine mechanics; for how to express
 control strategies as rule flows (with a worked state-of-charge example), see
-[Control Strategies](../domain/control-strategies.md).
+[Control Strategies](../../packs/energy/knowledge/control-strategies.md).
 
 ## Two columns, one writer
 
@@ -43,9 +43,9 @@ table must go through the same function:
 
 One nuance: `POST /api/rules` creates a metadata-only stub — an empty `{}`
 topology, a NULL editor document, and `enabled = false`. The flow content
-always arrives later via PUT, which derives both columns together. Legacy rules
-imported in compact-only form keep a NULL `flow_json`; their `nodes_json` still
-comes from the same function.
+always arrives later via PUT, which derives both columns together. Imports also
+require the complete editor document and derive both columns through that same
+function.
 
 Why this matters: if the columns diverged, the editor would display one logic
 while the engine executed another — an operator auditing a strategy would be
@@ -165,7 +165,7 @@ would otherwise not know the table changed.
 
 ## Related pages
 
-- [Control Strategies as Rules](../domain/control-strategies.md) — expressing strategies as rule flows
+- [Control Strategies as Rules](../../packs/energy/knowledge/control-strategies.md) — expressing strategies as rule flows
 - [Shared Memory](shared-memory.md) — the command slots and event plane the engine rides on
 - [Data Flow](data-flow.md) — where rule execution sits in the end-to-end paths
 - [Data Model](data-model.md) — the points and instances rules read and write

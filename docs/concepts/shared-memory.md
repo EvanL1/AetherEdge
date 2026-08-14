@@ -1,7 +1,7 @@
 ---
 title: Shared Memory
 description: The SHM data plane - slot layout, writer ownership, seqlock reads, generations, and the PointWatch event plane
-updated: 2026-08-09
+updated: 2026-08-14
 ---
 
 # Shared Memory
@@ -9,7 +9,9 @@ updated: 2026-08-09
 Live values in Aether do not travel through a broker or a database on the hot
 path. io (the communication service) and automation (the model/rule service)
 share an IO-owned point segment plus a separate channel-health segment and
-exchange fixed-size notifications over Unix domain sockets. A small commit
+exchange fixed-size notifications over Unix domain sockets. Durable command
+admission also records lifecycle metadata in local SQLite without moving live
+value authority out of SHM. A small commit
 witness proves that both segments came from the same physical topology
 publication. A device reading lands in shared
 memory in tens of nanoseconds. This page describes the segment itself and the
@@ -42,8 +44,8 @@ The file path is resolved by `default_shm_path()`
 3. `/dev/shm/aether-live-state.shm` on Linux (RAM-backed tmpfs).
 4. `/tmp/aether-live-state.shm` otherwise (macOS development).
 
-The v5 header (`ShmHeader`, `#[repr(C, align(64))]`) carries the `AETHER__`
-magic, layout version, live `slot_count`, owner heartbeat, `layout_hash`,
+The canonical header (`ShmHeader`, `#[repr(C, align(64))]`) carries the
+`AETHER__` magic, zero reserved bytes, live `slot_count`, owner heartbeat, `layout_hash`,
 `writer_generation`, and `publication_epoch`. There is no physical
 `max_slots`, last-update timestamp, or ambiguously named routing field. All
 multi-byte fields use native endianness, so readers and writers must run on the
@@ -76,12 +78,12 @@ unchanged points retain value, raw value, timestamp, and quality even when
 their slot index changes. Readers fence the retired generation and reconnect
 through the canonical path.
 
-The live mmap ABI is not the persistent snapshot format. Snapshot v1 uses its
-own `AETHSNAP` header (`slot_count` plus `layout_hash`) and an explicit
+The live mmap ABI is not the persistent snapshot format. The snapshot contract
+uses its own `AETHSNAP` header (`slot_count` plus `layout_hash`) and an explicit
 absent/present record for every slot; present records contain value, raw value,
 timestamp, and quality. It deliberately excludes heartbeat, writer generation,
-publication epoch, and seqlock state. Live layouts before v5 and every earlier
-snapshot representation are rejected; there is no decoder for older versions.
+publication epoch, and seqlock state. Any noncanonical live or snapshot
+representation is rejected; there is no alternate decoder.
 
 ## Writer ownership is type-enforced
 
@@ -168,51 +170,85 @@ and committed SHM read view as one `Arc`, so a collection pass cannot mix
 logical and physical generations. Crash-orphaned staging files are bounded
 and cleaned on recovery.
 
-The physical contract is v5 only. An old v4 mmap, an old snapshot, or a mixed
-v4/v5 process set is invalid input. Upgrade by stopping the six services,
-removing the obsolete runtime files, and starting the complete v5 composition
-so io publishes a new point/health pair and commit witness.
+There is one physical contract. A mmap, snapshot, bitmap, PointWatch frame, or
+commit witness with another magic or non-zero reserved bytes is invalid input.
+Replace stale runtime state by stopping the six services, removing the invalid
+runtime files, and starting the complete composition so io publishes a new
+point/health pair and commit witness.
 
 ## Command notifications
 
-When automation issues a command — a rule action or an HTTP control request (see
-[Safe Operations for Applications and Agents](../guides/safe-operations.md) for what is
-allowed to reach devices) — `ShmDeviceCommandSink` mirrors the C/A value into
-the pinned writer generation and sends a notification over a Unix domain socket
-(`/tmp/aether-m2c.sock`) so io reacts immediately instead of polling. In
-measurement the notify path is sub-millisecond; ~1–2 ms is the design budget
-the dispatch code documents for the happy path.
+When automation issues a command — a rule action or an HTTP control request
+(see [Safe Operations for Applications and Agents](../guides/safe-operations.md))
+— `ShmDeviceCommandSink` mirrors the C/A value into the pinned writer
+generation, then sends the complete command to io instead of asking io to read
+the slot back. The mirror is still authoritative live state; the command
+socket and ledger govern dispatch and observation.
 
-The notification (`DeviceCommandFrame`) is a fixed 56-byte frame carrying the
-routing target (channel, point type, point), the command payload (value bits
-plus issue and expiry timestamps), and producer ordering (`producer_id`, a per-incarnation ID
-that changes on every automation restart, plus a monotonic `seq`). Because the
-frame carries the full command, io never has to read the slot back — and
-two rapid writes to the same point arrive as two events rather than collapsing
-into one.
+`DeviceCommandFrame` is a fixed 104-byte, little-endian frame containing a
+persistent 128-bit `CommandId`, a SHA-256 digest, and a canonical 40-byte
+payload containing channel/point/kind, value bits, and issue/expiry timestamps.
+io validates the complete frame and
+digest. It binds the ID and semantic target/kind/value digest in its bounded
+SQLite ledger (while the frame digest also protects the generated time window),
+reserves the owning channel queue, durably marks queue admission, and then
+returns a fixed 48-byte acknowledgement. An exact retransmission after durable
+queue admission receives an idempotent duplicate ACK while that terminal
+identity remains retained; the same ID with a different digest is rejected as
+a conflict. The ACK proves durable queue admission only, not a field-device outcome.
 
-io's `ShmCommandListener` binds the socket, immediately restricts it to
-mode 0600 (refusing to listen if that fails — anyone who can write this socket
-can inject device commands), and dedupes incoming events per point: a
-different `producer_id` always resets state (a automation restart), while within
-the same producer a frame is dropped as stale or duplicate using wrapping
-sequence comparison (`seq.wrapping_sub(last_seq) > u64::MAX / 2`). Expired
-frames are dropped before queueing. The unified channel task then checks the
-value again against the configured writable point, inclusive min/max, and
-step immediately before calling the protocol adapter. Unknown points, invalid
-point constraints, NaN/infinity, and a rejected member of a batch all fail the
-whole command without touching hardware. On the
-sending side, `ShmNotifier` retries a failed write three times, then marks
-itself disconnected and reconnects with exponential backoff (1 s doubling to a
-5 s cap). There is no polling fallback: if the socket stays down, the notify
-result reports degraded delivery and the caller decides what to surface.
+The durable lifecycle states are `received`, `queued`, `dispatching`,
+`succeeded`, `failed`, `expired`, and `possibly_applied`. io never replays a
+ledger row. Terminal identities are protected through their expiry plus at
+least the default 24-hour retention window; callers must not classify reuse
+after that bounded window as a retry. On restart, a command left only in
+`received` is failed; a command left after queue admission or dispatch is conservatively classified
+`possibly_applied` because the physical result may be unknowable. Channel task
+shutdown applies the same conservative boundary. Retained outcomes are
+available to authorized callers at
+`GET /api/commands/{command_id}/outcome`; capability
+`device.command_outcome.read` requires `device.read`, and the response omits
+the internal payload digest. Ledger population, capacity rejection, cleanup,
+and terminal-outcome persistence pressure are exposed by io status and health.
+
+The socket defaults to `/tmp/aether-m2c.sock`, and `AETHER_M2C_SOCKET` can
+select another path. io pre-binds the endpoint and restricts it to mode 0600
+before starting channel side effects. The notifier retransmits attempts with
+the same `CommandId`. A connection, write, acknowledgement, timeout, malformed
+acknowledgement, or negative acknowledgement failure is returned to the caller;
+there is no compatibility transport or weaker fallback.
+
+The channel task validates the configured writable point,
+inclusive min/max/step, expiry, and finite value before protocol dispatch.
+Unknown points, invalid constraints, NaN/infinity, and a rejected member of a
+batch fail the whole command without touching hardware. There is no polling
+or database replay fallback when command delivery is unavailable.
+
+## Protocol DataEvent ingress
+
+Before a protocol sample reaches SHM, event-driven adapters publish it through
+one owner-local bounded ingress per channel. Producers never await the channel
+task and never block on I/O. Point updates coalesce latest-wins by typed point
+key and effective sample time; connection changes and heartbeat each occupy a
+single latest-wins slot. Errors retain FIFO order in a 64-entry lane and drop
+the newest error on overflow. An update batch that would exceed the remaining
+unique-point capacity is rejected atomically, and a contended producer drops
+newest instead of waiting on the protocol loop.
+
+The receiver drains data, connection, error, and heartbeat lanes fairly with
+no detached forwarding task. Every channel derives point capacity from its
+validated topology; constructors require that capacity explicitly. Per-channel diagnostics and `/api/status` report
+accepted, coalesced, full/closed/contention/oversized drops, shutdown discards,
+pending entries, capacity, and high-water mark. `/health` fails while a
+receiver is closed or a lane remains saturated; historical drops stay
+observable but do not permanently poison readiness.
 
 ## The PointWatch event plane
 
 Commands flow automation → io; PointWatch is the reverse direction, and it is
 what makes the rule engine event-driven (see [Rule Engine](rule-engine.md)).
 After every T/S slot write, io consults each consumer's **subscription bitmap**
-— a separate versioned mmap of atomic u64 words beside the main segment. Its
+— a separate canonical mmap of atomic u64 words beside the main segment. Its
 capacity comes from the deployment's `shared_memory.max_slots` resource cap;
 its exact length is a 32-byte self-describing header plus
 `ceil(max_slots / 64) × 8` bytes. It therefore has no compiled-in 100,000-slot
@@ -226,15 +262,15 @@ The sidecar is read-only to non-owners because advisory locking never needs to
 mutate its contents; a newly published bitmap is mode `0666` so the root-owned
 io process and an explicitly unprivileged consumer can map the same atomic
 words. Reopening a valid bitmap never changes its ownership or permissions.
-The header binds magic, format version, capacity, and word count to the exact
-file length. Obsolete, malformed, or capacity-mismatched files are never
+The header binds magic, zero reserved bytes, capacity, and word count to the
+exact file length. Noncanonical, malformed, or capacity-mismatched files are never
 decoded; the composition owner publishes a clean bitmap generation instead.
 
 On a hit, io builds a 16-byte little-endian `PointWatchEvent`: `channel_id`
 (u32), `point_id` (u32), `slot_index` (u32), point kind (u8), and a three-byte
-v1 frame marker. Construction rejects a slot that cannot fit the u32 wire field
-and never truncates. Decoding rejects an unversioned or malformed frame, so an
-older sender cannot be misinterpreted. The frame contains no value, raw value, timestamp, quality,
+trailer containing start/end magic with a zero reserved byte. Construction
+rejects a slot that cannot fit the u32 wire field and never truncates. Decoding
+rejects invalid magic or non-zero reserved space. The frame contains no value, raw value, timestamp, quality,
 producer ID, or sequence. It is only a wake-up hint and cannot compete with
 SHM authority. A background task drains the bounded in-process channel in
 batches of up to 64 frames onto each consumer's isolated socket.

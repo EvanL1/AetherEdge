@@ -65,20 +65,19 @@ These rules are more important than the current directory layout.
 26. CloudLink is broker neutral. A customer-selected MQTT broker is supported,
     AetherCloud does not have to own the broker, and broker/cloud failure cannot
     affect acquisition, rules, alarms, safety, history, or local control.
-27. CloudLink v1 has no physical-control, arbitrary-RPC, direct SHM-write, or
-    point/register-write capability. Legacy MQTT control topics are never
-    automatically translated into CloudLink.
+27. CloudLink has no physical-control, arbitrary-RPC, direct SHM-write, or
+    point/register-write capability. Telemetry topics cannot become control.
 28. Edge telemetry never fabricates a Thing Model revision. It preserves the
     real `PointAddress`, source timestamp, exposed quality, and coherent topology
     generation; business point facts remain distinct from operational telemetry
     and OpenTelemetry signals.
-29. Shared contract authority is the digest-pinned AetherContracts release.
-    AetherEdge and AetherCloud keep the same closed consumer lock; local wire,
-    authentication, fixture-manifest, and gate files cannot redefine the public
-    core.
+29. The digest-pinned AetherContracts release is immutable cross-repository
+    provenance. `contracts/cloudlink/` is the only accepted Edge wire surface;
+    release-scoped paths are never alternate runtime identifiers or fallbacks.
 30. Complete distribution integrity and public fixture execution are not
     production state-machine, authentication, signed-ACK, real-Broker, or
     crash-durability conformance.
-31. Contract consumption never follows `main`, `latest`, a floating tag, or a
-    version range and never falls back to a sibling checkout. Legacy remains
-    default, and contract adoption adds no physical-control operation.
+31. Contract provenance never follows `main`, `latest`, a floating tag, or a
+    version range and never falls back to a sibling checkout. Production Uplink
+    compiles only canonical CloudLink, is disabled until fully commissioned,
+    and adds no physical-control operation.

@@ -48,6 +48,8 @@ anyhow = { workspace = true }
 chrono = { workspace = true }
 futures = { workspace = true }
 async-trait = { workspace = true }
+sha2 = { workspace = true }
+subtle = "2.6"
 arc-swap = "1.7"
 
 # OpenAPI / Swagger UI

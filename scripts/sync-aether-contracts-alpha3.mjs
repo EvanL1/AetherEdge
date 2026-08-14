@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { basename, resolve } from "node:path";
+import { resolve } from "node:path";
 
 const version = "0.1.0-alpha.3";
 const releaseRoot = resolve(process.argv[2] ?? "");
@@ -37,15 +37,6 @@ const selected = [...declared.keys()].filter(
 ).sort();
 
 function destination(source) {
-  if (source === "fixtures/cloudlink/v1alpha1/fixture-manifest.json") {
-    return "contracts/cloudlink/v1/fixture-manifest.json";
-  }
-  if (source.startsWith("fixtures/cloudlink/v1alpha1/")) {
-    return `contracts/cloudlink/v1/fixtures/${basename(source)}`;
-  }
-  if (source.startsWith("schemas/cloudlink/v1alpha1/")) {
-    return `contracts/cloudlink/v1/${basename(source)}`;
-  }
   return `contracts/aether-contracts/v${version}/${source}`;
 }
 

@@ -4,7 +4,7 @@
 //! a service does not need a YAML file beside its binary. Live point state
 //! never comes from here — SHM remains the authority for that.
 
-use anyhow::Result;
+use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
 use std::collections::HashMap;
@@ -118,35 +118,51 @@ impl ServiceConfigLoader {
         for row in rows {
             let key: String = row.try_get("key")?;
             let value: String = row.try_get("value")?;
-            let value_type: String = row.try_get("type").unwrap_or_else(|_| "string".to_string());
+            let value_type: String = row
+                .try_get("type")
+                .with_context(|| format!("configuration key {key:?} has no valid type"))?;
 
             // Parse value based on type
             let parsed_value = match value_type.as_str() {
-                "number" => {
-                    if let Ok(n) = value.parse::<i64>() {
-                        serde_json::Value::Number(n.into())
-                    } else if let Ok(f) = value.parse::<f64>() {
-                        serde_json::Number::from_f64(f)
-                            .map(serde_json::Value::Number)
-                            .unwrap_or_else(|| serde_json::Value::String(value.clone()))
-                    } else {
-                        serde_json::Value::String(value)
-                    }
+                "string" => serde_json::Value::String(value),
+                "number" => match serde_json::from_str::<serde_json::Value>(&value)
+                    .with_context(|| format!("configuration key {key:?} is not a JSON number"))?
+                {
+                    serde_json::Value::Number(number) => serde_json::Value::Number(number),
+                    _ => return Err(anyhow!("configuration key {key:?} is not a JSON number")),
                 },
-                // Optimization: eq_ignore_ascii_case avoids to_lowercase() allocation
-                "boolean" => serde_json::Value::Bool(value.trim().eq_ignore_ascii_case("true")),
-                "json" => serde_json::from_str(&value).unwrap_or(serde_json::Value::String(value)),
-                _ => serde_json::Value::String(value),
+                "boolean" => match value.as_str() {
+                    "true" => serde_json::Value::Bool(true),
+                    "false" => serde_json::Value::Bool(false),
+                    _ => {
+                        return Err(anyhow!(
+                            "configuration key {key:?} must be exactly true or false"
+                        ));
+                    },
+                },
+                "json" => serde_json::from_str(&value)
+                    .with_context(|| format!("configuration key {key:?} contains invalid JSON"))?,
+                _ => {
+                    return Err(anyhow!(
+                        "configuration key {key:?} has unsupported type {value_type:?}"
+                    ));
+                },
             };
 
             config_map.insert(key, parsed_value);
         }
 
         // Extract standard fields - only support dotted key format
-        let port = config_map
-            .get("service.port")  // Standard dotted format from Aether
-            .and_then(|v| v.as_i64())
-            .unwrap_or(self.default_port as i64) as u16;
+        let port = match config_map.get("service.port") {
+            None => self.default_port,
+            Some(value) => value
+                .as_u64()
+                .and_then(|port| u16::try_from(port).ok())
+                .filter(|port| *port != 0)
+                .ok_or_else(|| {
+                    anyhow!("configuration key \"service.port\" must be an integer in 1..=65535")
+                })?,
+        };
 
         // Remove standard fields from map
         config_map.remove("service.port");
@@ -200,5 +216,83 @@ impl ServiceConfigLoader {
     /// Get the database pool for custom queries
     pub fn pool(&self) -> &SqlitePool {
         &self.pool
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn loader() -> ServiceConfigLoader {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("in-memory service config database");
+        let loader = ServiceConfigLoader::from_pool(pool, "aether-test", 6000);
+        loader.init_schema().await.expect("service config schema");
+        loader
+    }
+
+    #[tokio::test]
+    async fn stored_config_uses_one_strict_shape_per_declared_type() {
+        let loader = loader().await;
+        loader
+            .set_config("service.port", "6001", "number")
+            .await
+            .unwrap();
+        loader
+            .set_config("enabled", "true", "boolean")
+            .await
+            .unwrap();
+        loader.set_config("ratio", "1.5", "number").await.unwrap();
+        loader
+            .set_config("policy", r#"{"mode":"strict"}"#, "json")
+            .await
+            .unwrap();
+        loader.set_config("label", "edge", "string").await.unwrap();
+
+        let config = loader.load_config().await.unwrap();
+        assert_eq!(config.port, 6001);
+        assert_eq!(config.extra_config["enabled"], true);
+        assert_eq!(config.extra_config["ratio"], 1.5);
+        assert_eq!(config.extra_config["policy"]["mode"], "strict");
+        assert_eq!(config.extra_config["label"], "edge");
+    }
+
+    #[tokio::test]
+    async fn corrupt_stored_config_fails_closed_instead_of_changing_shape_or_defaulting() {
+        let loader = loader().await;
+        for (key, value, value_type) in [
+            ("number-text", "not-a-number", "number"),
+            ("quoted-number", "\"12\"", "number"),
+            ("boolean-case", "TRUE", "boolean"),
+            ("boolean-integer", "1", "boolean"),
+            ("broken-json", "{", "json"),
+            ("unknown-type", "value", "other"),
+            ("service.port", "70000", "number"),
+            ("service.port", "1.5", "number"),
+        ] {
+            sqlx::query("DELETE FROM service_config")
+                .execute(loader.pool())
+                .await
+                .unwrap();
+            loader.set_config(key, value, value_type).await.unwrap();
+            assert!(
+                loader.load_config().await.is_err(),
+                "corrupt {key}={value:?} ({value_type}) was accepted"
+            );
+        }
+
+        sqlx::query(
+            "INSERT INTO service_config (service_name, key, value, type) VALUES (?, ?, ?, NULL)",
+        )
+        .bind("aether-test")
+        .bind("missing-type")
+        .bind("value")
+        .execute(loader.pool())
+        .await
+        .unwrap();
+        assert!(loader.load_config().await.is_err());
     }
 }

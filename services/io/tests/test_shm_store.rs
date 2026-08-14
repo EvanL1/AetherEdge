@@ -1,11 +1,13 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use aether_core::PointType;
 use aether_dataplane::{SlotIo, SlotWriter};
 use aether_domain::PointKind;
 use aether_io::ShmDataStore;
 use aether_io::protocols::core::data::{DataBatch, DataPoint};
 use aether_io::protocols::core::error::GatewayError;
+use aether_io::protocols::core::traits::PointFailure;
 use aether_routing::RoutingCache;
 use aether_shm_bridge::{
     ChannelPointManifest, PhysicalPointAddress, ShmAcquisitionStateWriter, ShmRuntimeConfig,
@@ -48,6 +50,45 @@ async fn shm_store_writes_poll_data_to_the_authoritative_slot() {
         .expect("telemetry slot");
     let sample = layout.read_slot(slot).expect("slot sample");
     assert_eq!(sample.value, 42.5);
+}
+
+#[test]
+fn partial_read_failure_preserves_last_value_and_marks_exact_slot_bad() {
+    let (_directory, handle) = create_test_handle();
+    let store = ShmDataStore::new(Arc::clone(&handle), Arc::new(RoutingCache::default()))
+        .expect("available SHM must construct the store");
+    let mut batch = DataBatch::default();
+    let mut point = DataPoint::telemetry(1, 42.5);
+    point.timestamp = chrono::DateTime::from_timestamp_millis(1_234).expect("timestamp");
+    batch.add(point);
+    store.write_batch(7, &batch).expect("seed last-known value");
+
+    let marked = store
+        .mark_point_failures_bad(
+            7,
+            &[PointFailure::typed_with_error(
+                1,
+                PointType::Telemetry,
+                "injected segment failure".to_string(),
+            )],
+        )
+        .expect("quality degradation must commit");
+
+    assert_eq!(marked, 1);
+    let layout = handle.generation().expect("active layout");
+    let slot = layout
+        .manifest()
+        .slot_for(PhysicalPointAddress::from_raw_ids(
+            7,
+            PointKind::Telemetry,
+            1,
+        ))
+        .expect("telemetry slot");
+    let sample = layout.read_slot(slot).expect("degraded sample");
+    assert_eq!(sample.value, 42.5);
+    assert_eq!(sample.raw, 42.5);
+    assert_eq!(sample.timestamp_ms, 1_234);
+    assert_eq!(sample.quality_code, 2);
 }
 
 #[test]

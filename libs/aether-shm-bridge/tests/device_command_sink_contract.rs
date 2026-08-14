@@ -11,9 +11,11 @@ use aether_domain::{
 };
 use aether_ports::{DeviceCommandSink, PortErrorKind};
 use aether_shm_bridge::{
-    ChannelPointManifest, CommandMirrorObserver, PhysicalPointAddress, ShmDeviceCommandSink,
+    ChannelPointManifest, CommandAckStatus, CommandHello, CommandLedgerStateCode,
+    CommandMirrorObserver, DeviceCommandAck, DeviceCommandFrame, PhysicalPointAddress,
+    ShmDeviceCommandSink,
 };
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixListener;
 
 fn now_ms() -> u64 {
@@ -23,10 +25,26 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
+async fn advertise_ready(stream: &mut tokio::net::UnixStream) {
+    stream
+        .write_all(&CommandHello::new().to_bytes())
+        .await
+        .expect("write command hello");
+}
+
 fn command(kind: PointKind, point_id: u32, value: f64) -> PhysicalDeviceCommand {
+    command_with_id(91, kind, point_id, value)
+}
+
+fn command_with_id(
+    command_id: u128,
+    kind: PointKind,
+    point_id: u32,
+    value: f64,
+) -> PhysicalDeviceCommand {
     let issued_at = now_ms();
     PhysicalDeviceCommand::new(
-        CommandId::new(91),
+        CommandId::new(command_id),
         ChannelCommandAddress::new(ChannelId::new(7), kind, PointId::new(point_id))
             .expect("command-owned address"),
         value,
@@ -90,6 +108,10 @@ async fn uds_degradation_is_typed_and_never_returns_an_acceptance_receipt() {
     sink.configure_notifier(directory.path().join("missing.sock"))
         .await
         .expect("configure self-healing notifier");
+    let initial = sink.notifier_status();
+    assert!(initial.configured());
+    assert!(!initial.connected());
+    assert!(initial.last_failure_at_ms().is_some());
 
     let error = sink
         .send(command(PointKind::Command, 0, 12.5))
@@ -108,7 +130,36 @@ async fn uds_degradation_is_typed_and_never_returns_an_acceptance_receipt() {
 }
 
 #[tokio::test]
-async fn successful_send_preserves_the_existing_56_byte_command_wire() {
+async fn background_probe_recovers_when_io_listener_starts_late() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let socket = directory.path().join("late-io.sock");
+    let sink = ShmDeviceCommandSink::new();
+    sink.configure_notifier(&socket)
+        .await
+        .expect("configure notifier before IO starts");
+    assert!(!sink.notifier_status().connected());
+
+    let listener = UnixListener::bind(&socket).expect("start IO listener late");
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.expect("accept probe connection");
+        advertise_ready(&mut stream).await;
+        stream
+    });
+    let status = sink
+        .probe_notifier()
+        .await
+        .expect("bounded background reconnect");
+
+    assert!(status.connected());
+    let accepted = tokio::time::timeout(Duration::from_secs(1), server)
+        .await
+        .expect("probe connected before readiness timeout")
+        .expect("join probe server");
+    drop(accepted);
+}
+
+#[tokio::test]
+async fn successful_send_uses_the_acknowledged_command_wire() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let socket = directory.path().join("m2c.sock");
     let listener = UnixListener::bind(&socket).expect("bind command listener");
@@ -117,57 +168,255 @@ async fn successful_send_preserves_the_existing_56_byte_command_wire() {
     let sink = ShmDeviceCommandSink::with_observer(Arc::new(AssertCommandLeaseHeld { canonical }));
     sink.publish_generation(writer, manifest)
         .expect("publish generation");
-    sink.configure_notifier(&socket)
-        .await
-        .expect("configure notifier");
     let physical = command(PointKind::Action, 0, -3.25);
 
     let receive = tokio::spawn(async move {
         let (mut stream, _) = listener.accept().await.expect("accept notifier");
-        let mut bytes = [0_u8; 56];
+        advertise_ready(&mut stream).await;
+        let mut bytes = [0_u8; DeviceCommandFrame::SIZE];
         stream
             .read_exact(&mut bytes)
             .await
             .expect("read command frame");
-        bytes
+        let frame = DeviceCommandFrame::from_bytes(&bytes).expect("valid command frame");
+        let ack = DeviceCommandAck::new(
+            frame.command_id(),
+            CommandAckStatus::Accepted,
+            CommandLedgerStateCode::Queued,
+            123_456,
+        );
+        stream
+            .write_all(&ack.to_bytes())
+            .await
+            .expect("write command acknowledgement");
+        frame
     });
+    sink.configure_notifier(&socket)
+        .await
+        .expect("configure notifier");
+    assert!(sink.notifier_status().connected());
     let receipt = sink
         .send(physical)
         .await
         .expect("transport accepted command");
-    let bytes = receive.await.expect("join listener");
+    let frame = receive.await.expect("join listener");
 
     assert_eq!(receipt.command_id(), physical.id());
-    assert_eq!(
-        u32::from_ne_bytes(bytes[0..4].try_into().expect("channel")),
-        7
-    );
-    assert_eq!(
-        u32::from_ne_bytes(bytes[4..8].try_into().expect("point")),
-        0
-    );
-    assert_eq!(bytes[8], 3, "Action uses the Adjustment wire code");
-    assert_eq!(&bytes[9..16], &[0; 7]);
-    assert_eq!(
-        f64::from_bits(u64::from_ne_bytes(bytes[16..24].try_into().expect("value"))),
-        -3.25
-    );
-    assert_eq!(
-        u64::from_ne_bytes(bytes[24..32].try_into().expect("issued")),
-        physical.issued_at().get()
-    );
-    assert_eq!(
-        u64::from_ne_bytes(bytes[32..40].try_into().expect("expires")),
-        physical.expires_at().get()
-    );
-    assert_ne!(
-        u64::from_ne_bytes(bytes[40..48].try_into().expect("producer")),
-        0
-    );
-    assert_eq!(
-        u64::from_ne_bytes(bytes[48..56].try_into().expect("sequence")),
-        1
-    );
+    assert_eq!(receipt.accepted_at(), TimestampMs::new(123_456));
+    assert_eq!(frame.command_id(), physical.id());
+    assert_eq!(frame.channel_id(), 7);
+    assert_eq!(frame.point_id(), 0);
+    assert_eq!(frame.point_kind(), PointKind::Action);
+    assert_eq!(frame.value(), -3.25);
+    assert_eq!(frame.issued_at_ms(), physical.issued_at().get());
+    assert_eq!(frame.expires_at_ms(), physical.expires_at().get());
+}
+
+#[tokio::test]
+async fn receipt_is_returned_only_after_matching_durable_acknowledgement() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let socket = directory.path().join("m2c.sock");
+    let listener = UnixListener::bind(&socket).expect("bind command listener");
+    let (writer, manifest) = generation(&directory);
+    let sink = ShmDeviceCommandSink::new();
+    sink.publish_generation(writer, manifest)
+        .expect("publish generation");
+    let physical = command(PointKind::Command, 0, 7.5);
+
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.expect("accept notifier");
+        advertise_ready(&mut stream).await;
+        let mut bytes = [0_u8; DeviceCommandFrame::SIZE];
+        stream.read_exact(&mut bytes).await.expect("read frame");
+        let frame = DeviceCommandFrame::from_bytes(&bytes).expect("validate frame");
+        let ack = DeviceCommandAck::new(
+            frame.command_id(),
+            CommandAckStatus::Accepted,
+            CommandLedgerStateCode::Queued,
+            123_456,
+        );
+        stream
+            .write_all(&ack.to_bytes())
+            .await
+            .expect("write durable admission ack");
+        frame
+    });
+
+    sink.configure_notifier(&socket)
+        .await
+        .expect("configure notifier");
+
+    let receipt = sink.send(physical).await.expect("durable admission");
+    let frame = server.await.expect("join listener");
+
+    assert_eq!(frame.command_id(), physical.id());
+    assert_eq!(frame.channel_id(), 7);
+    assert_eq!(frame.point_kind(), PointKind::Command);
+    assert_eq!(receipt.command_id(), physical.id());
+    assert_eq!(receipt.accepted_at(), TimestampMs::new(123_456));
+}
+
+#[tokio::test]
+async fn nack_fails_closed_without_a_second_transport() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let socket = directory.path().join("m2c.sock");
+    let listener = UnixListener::bind(&socket).expect("bind command listener");
+    let (writer, manifest) = generation(&directory);
+    let sink = ShmDeviceCommandSink::new();
+    sink.publish_generation(writer, manifest)
+        .expect("publish generation");
+    let physical = command(PointKind::Command, 0, 8.5);
+
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.expect("accept notifier");
+        advertise_ready(&mut stream).await;
+        let mut bytes = [0_u8; DeviceCommandFrame::SIZE];
+        stream.read_exact(&mut bytes).await.expect("read frame");
+        let frame = DeviceCommandFrame::from_bytes(&bytes).expect("validate frame");
+        let ack = DeviceCommandAck::new(
+            frame.command_id(),
+            CommandAckStatus::Conflict,
+            CommandLedgerStateCode::Unknown,
+            now_ms(),
+        );
+        stream.write_all(&ack.to_bytes()).await.expect("write nack");
+    });
+
+    sink.configure_notifier(&socket)
+        .await
+        .expect("configure notifier");
+
+    let error = sink.send(physical).await.expect_err("conflict must fail");
+    server.await.expect("join server");
+    assert_eq!(error.kind(), PortErrorKind::Conflict);
+}
+
+#[tokio::test]
+async fn lost_ack_is_ambiguous_and_retries_the_same_command_id() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let socket = directory.path().join("m2c.sock");
+    let listener = UnixListener::bind(&socket).expect("bind command listener");
+    let server = tokio::spawn(async move {
+        loop {
+            let Ok((stream, _)) = listener.accept().await else {
+                break;
+            };
+            tokio::spawn(async move {
+                let mut stream = stream;
+                advertise_ready(&mut stream).await;
+                let mut bytes = [0_u8; DeviceCommandFrame::SIZE];
+                if stream.read_exact(&mut bytes).await.is_ok() {
+                    // Simulate IO committing admission and losing the ACK.
+                    // Keep this connection open while the accept loop serves
+                    // the producer's idempotent reconnect.
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                }
+            });
+        }
+    });
+    let (writer, manifest) = generation(&directory);
+    let sink = ShmDeviceCommandSink::new();
+    sink.publish_generation(writer, manifest)
+        .expect("publish generation");
+    sink.configure_notifier(&socket)
+        .await
+        .expect("configure notifier");
+
+    let error = sink
+        .send(command_with_id(0xa11, PointKind::Command, 0, 5.0))
+        .await
+        .expect_err("lost durable ACK is an ambiguous transport error");
+    assert_eq!(error.kind(), PortErrorKind::Timeout);
+    server.abort();
+    let _ = server.await;
+}
+
+#[tokio::test]
+async fn mismatched_ack_poisons_stream_and_next_command_reconnects() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let socket = directory.path().join("m2c.sock");
+    let listener = UnixListener::bind(&socket).expect("bind command listener");
+    let (writer, manifest) = generation(&directory);
+    let sink = ShmDeviceCommandSink::new();
+    sink.publish_generation(writer, manifest)
+        .expect("publish generation");
+
+    let server = tokio::spawn(async move {
+        let (mut first, _) = listener.accept().await.expect("first connection");
+        advertise_ready(&mut first).await;
+        let mut bytes = [0_u8; DeviceCommandFrame::SIZE];
+        first.read_exact(&mut bytes).await.expect("first frame");
+        let first_frame = DeviceCommandFrame::from_bytes(&bytes).expect("parse first frame");
+        let wrong_ack = DeviceCommandAck::new(
+            CommandId::new(first_frame.command_id().get() + 1),
+            CommandAckStatus::Accepted,
+            CommandLedgerStateCode::Queued,
+            now_ms(),
+        );
+        first
+            .write_all(&wrong_ack.to_bytes())
+            .await
+            .expect("write mismatched ack");
+        drop(first);
+
+        let (mut second, _) = tokio::time::timeout(Duration::from_secs(1), listener.accept())
+            .await
+            .expect("next command reconnects")
+            .expect("second connection");
+        advertise_ready(&mut second).await;
+        second.read_exact(&mut bytes).await.expect("second frame");
+        let second_frame = DeviceCommandFrame::from_bytes(&bytes).expect("parse second frame");
+        let ack = DeviceCommandAck::new(
+            second_frame.command_id(),
+            CommandAckStatus::Accepted,
+            CommandLedgerStateCode::Queued,
+            now_ms(),
+        );
+        second.write_all(&ack.to_bytes()).await.expect("write ack");
+        (first_frame.command_id(), second_frame.command_id())
+    });
+
+    sink.configure_notifier(&socket)
+        .await
+        .expect("configure notifier");
+
+    let first = command_with_id(0x901, PointKind::Command, 0, 1.0);
+    let error = sink
+        .send(first)
+        .await
+        .expect_err("mismatched ack must fail closed");
+    assert_eq!(error.kind(), PortErrorKind::Unavailable);
+    let second = command_with_id(0x902, PointKind::Command, 0, 2.0);
+    sink.send(second).await.expect("fresh connection succeeds");
+    let observed = server.await.expect("join server");
+    assert_eq!(observed, (first.id(), second.id()));
+}
+
+#[tokio::test]
+async fn probe_detects_a_closed_verified_stream_instead_of_reporting_ready() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let socket = directory.path().join("m2c.sock");
+    let listener = UnixListener::bind(&socket).expect("bind command listener");
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.expect("accept connection");
+        advertise_ready(&mut stream).await;
+        drop(stream);
+        drop(listener);
+    });
+    let sink = ShmDeviceCommandSink::new();
+    sink.configure_notifier(&socket)
+        .await
+        .expect("configure verified notifier");
+    assert!(sink.notifier_status().connected());
+    server.await.expect("close server");
+    tokio::time::sleep(Duration::from_millis(10)).await;
+
+    let error = sink
+        .probe_notifier()
+        .await
+        .expect_err("closed verified stream must fail its readiness probe");
+    assert_eq!(error.kind(), PortErrorKind::Unavailable);
+    assert!(!sink.notifier_status().connected());
 }
 
 struct AssertCommandLeaseHeld {
@@ -204,6 +453,12 @@ async fn command_expiring_after_shm_mirror_is_rejected_before_wire_send() {
     let sink = ShmDeviceCommandSink::with_observer(Arc::new(SlowMirrorObserver));
     sink.publish_generation(writer, manifest)
         .expect("publish generation");
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.expect("accept notifier");
+        advertise_ready(&mut stream).await;
+        let mut bytes = [0_u8; DeviceCommandFrame::SIZE];
+        tokio::time::timeout(Duration::from_millis(50), stream.read_exact(&mut bytes)).await
+    });
     sink.configure_notifier(&socket)
         .await
         .expect("configure notifier");
@@ -224,12 +479,8 @@ async fn command_expiring_after_shm_mirror_is_rejected_before_wire_send() {
         .expect_err("expired command must not reach the wire");
     assert_eq!(error.kind(), PortErrorKind::Rejected);
 
-    let (mut stream, _) = listener.accept().await.expect("accept configured notifier");
-    let mut bytes = [0_u8; 56];
     assert!(
-        tokio::time::timeout(Duration::from_millis(50), stream.read_exact(&mut bytes))
-            .await
-            .is_err(),
+        server.await.expect("join server").is_err(),
         "no command frame may be sent after expiry"
     );
 }
@@ -423,27 +674,36 @@ async fn canonical_inode_replacement_after_transport_never_returns_receipt() {
     }));
     sink.publish_generation(old_writer, manifest)
         .expect("publish old generation");
+    let receive = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.expect("accept notifier");
+        advertise_ready(&mut stream).await;
+        let mut bytes = [0_u8; DeviceCommandFrame::SIZE];
+        stream
+            .read_exact(&mut bytes)
+            .await
+            .expect("read complete command frame");
+        let frame = DeviceCommandFrame::from_bytes(&bytes).expect("valid command frame");
+        let ack = DeviceCommandAck::new(
+            frame.command_id(),
+            CommandAckStatus::Accepted,
+            CommandLedgerStateCode::Queued,
+            now_ms(),
+        );
+        stream.write_all(&ack.to_bytes()).await.expect("write ack");
+        frame
+    });
     sink.configure_notifier(&socket)
         .await
         .expect("configure notifier");
     let rebuild = sink.rebuild_trigger();
 
-    let receive = tokio::spawn(async move {
-        let (mut stream, _) = listener.accept().await.expect("accept notifier");
-        let mut bytes = [0_u8; 56];
-        stream
-            .read_exact(&mut bytes)
-            .await
-            .expect("read complete command frame");
-        bytes
-    });
     let error = sink
         .send(command(PointKind::Action, 0, 8.0))
         .await
         .expect_err("canonical replacement must suppress the acceptance receipt");
-    let bytes = receive.await.expect("join listener");
+    let frame = receive.await.expect("join listener");
 
-    assert_eq!(bytes.len(), 56, "wire framing must remain unchanged");
+    assert_eq!(frame.command_id().get(), 91);
     assert_eq!(error.kind(), PortErrorKind::Conflict);
     tokio::time::timeout(Duration::from_millis(100), rebuild.notified())
         .await

@@ -1,4 +1,4 @@
-//! Versioned CloudLink MQTT topic namespace and exact route mapping.
+//! CloudLink MQTT topic namespace and exact route mapping.
 
 use aether_ports::CloudLinkTransportRoute;
 
@@ -11,7 +11,7 @@ pub struct TopicNamespace {
 }
 
 impl TopicNamespace {
-    /// Creates `{prefix}/v1/gateways/{gatewayId}` after validating every segment.
+    /// Creates `{prefix}/gateways/{gatewayId}` after validating every segment.
     pub fn new(prefix: &str, gateway_id: &str) -> Result<Self, CloudLinkMqttError> {
         if prefix.is_empty()
             || prefix.len() > 256
@@ -22,7 +22,7 @@ impl TopicNamespace {
                 "CloudLink topic prefix is unsafe or Gateway ID is not a canonical lowercase UUID",
             ));
         }
-        let root = format!("{prefix}/v1/gateways/{gateway_id}");
+        let root = format!("{prefix}/gateways/{gateway_id}");
         if root.len() > 512 {
             return Err(CloudLinkMqttError::InvalidConfiguration(
                 "CloudLink MQTT topic namespace exceeds 512 bytes",
@@ -40,6 +40,7 @@ impl TopicNamespace {
             CloudLinkTransportRoute::HeartbeatUp => "up/heartbeat",
             CloudLinkTransportRoute::ManifestUp => "up/manifest",
             CloudLinkTransportRoute::TelemetryUp => "up/telemetry",
+            CloudLinkTransportRoute::AlarmUp => "up/alarm",
             CloudLinkTransportRoute::IntegrationTopologyUp => "up/integration/topology",
             CloudLinkTransportRoute::IntegrationObservationsUp => "up/integration/observations",
             CloudLinkTransportRoute::DataLossUp => "up/data-loss",
@@ -49,7 +50,7 @@ impl TopicNamespace {
         format!("{}/{suffix}", self.root)
     }
 
-    /// Returns the seven allowed edge publish topics.
+    /// Returns the eight allowed edge publish topics.
     #[must_use]
     pub fn publish_topics(&self) -> Vec<String> {
         [
@@ -57,6 +58,7 @@ impl TopicNamespace {
             CloudLinkTransportRoute::HeartbeatUp,
             CloudLinkTransportRoute::ManifestUp,
             CloudLinkTransportRoute::TelemetryUp,
+            CloudLinkTransportRoute::AlarmUp,
             CloudLinkTransportRoute::IntegrationTopologyUp,
             CloudLinkTransportRoute::IntegrationObservationsUp,
             CloudLinkTransportRoute::DataLossUp,

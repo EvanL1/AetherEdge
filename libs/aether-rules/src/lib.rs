@@ -58,15 +58,16 @@ pub use executor::{ActionResult, RuleExecutionResult, RuleExecutor};
 #[cfg(unix)]
 pub use live_state::{MemoryRuleLiveState, RuleExecutionContext, RuleLiveState};
 #[cfg(unix)]
-pub use logger::{RuleLogger, RuleLoggerManager, format_conditions};
+pub use logger::{RuleLogStats, RuleLogger, RuleLoggerManager, format_conditions};
 #[cfg(unix)]
 pub use point_watch_dispatcher::{
     MeasurementRouteBinding, PointWatchDispatcher, PointWatchHint, RuleSubscriptionInfo, WatchEvent,
 };
 #[cfg(unix)]
 pub use scheduler::{
-    DEFAULT_TICK_MS, OnChangeState, PointKind, PointRef, RuleScheduler, SchedulerStatus,
-    TriggerConfig, ValueDeadband, should_trigger_onchange,
+    DEFAULT_RULE_EXECUTION_TIMEOUT, DEFAULT_TICK_MS, MAX_ONCHANGE_POINT_REFS, MAX_RULE_CONCURRENCY,
+    OnChangeState, PointKind, PointRef, RuleScheduler, SchedulerStatus, TriggerConfig,
+    ValueDeadband, should_trigger_onchange,
 };
 
 // Re-export rule types for convenience

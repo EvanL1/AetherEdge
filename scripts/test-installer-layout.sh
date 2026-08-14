@@ -47,6 +47,16 @@ TEST_ROOT="$(mktemp -d)"
 TEST_ROOT="$(cd "$TEST_ROOT" && pwd -P)"
 trap 'rm -rf "$TEST_ROOT"' EXIT
 
+echo "Testing Docker installer accepts only the canonical host log path variable..."
+(
+    INSTALL_DIR="$TEST_ROOT/log-path/install"
+    AETHER_LOG_DIR="$TEST_ROOT/log-path/retired"
+    unset AETHER_LOG_PATH
+    resolved=$(resolve_compose_log_directory)
+    [[ "$resolved" == "$INSTALL_DIR/logs" ]] \
+        || fail "Docker installer accepted retired AETHER_LOG_DIR as a host path"
+)
+
 file_mode() {
     local path=$1
 
@@ -79,28 +89,28 @@ is_valid_bootstrap_admin_password "$bootstrap_password" \
     || fail "Docker installer printed the bootstrap password"
 assert_contains "$bootstrap_env" 'AETHER_ALLOW_PUBLIC_REGISTRATION=false'
 
-echo "Testing device-control credentials are generated separately and kept private..."
+echo "Testing runtime credentials are generated separately and kept private..."
 (
     INSTALL_DIR="$TEST_ROOT/control-credentials"
-    unset JWT_SECRET_KEY AETHER_UPLINK_CONTROL_TOKEN
+    unset JWT_SECRET_KEY AETHER_ALARM_BROADCAST_TOKEN
     mkdir -p "$INSTALL_DIR"
     credential_log="$INSTALL_DIR/install.log"
     {
         ensure_compose_jwt_secret
-        ensure_compose_uplink_control_token
+        ensure_compose_alarm_broadcast_token
     } > "$credential_log"
     jwt_secret=$(sed -n 's/^JWT_SECRET_KEY=//p' "$INSTALL_DIR/.env")
-    uplink_token=$(sed -n 's/^AETHER_UPLINK_CONTROL_TOKEN=//p' "$INSTALL_DIR/.env")
+    alarm_token=$(sed -n 's/^AETHER_ALARM_BROADCAST_TOKEN=//p' "$INSTALL_DIR/.env")
     is_valid_jwt_secret "$jwt_secret" || fail "Docker installer generated a weak JWT secret"
-    is_valid_jwt_secret "$uplink_token" || fail "Docker installer generated a weak uplink token"
-    [[ "$jwt_secret" != "$uplink_token" ]] \
-        || fail "JWT and uplink device-control credentials must be distinct"
+    is_valid_jwt_secret "$alarm_token" || fail "Docker installer generated a weak alarm token"
+    [[ "$jwt_secret" != "$alarm_token" ]] \
+        || fail "JWT and alarm broadcast credentials must be distinct"
     [[ "$(file_mode "$INSTALL_DIR/.env")" == 600 ]] \
-        || fail "Docker device-control credential file is not mode 0600"
+        || fail "Docker runtime credential file is not mode 0600"
     ! grep -Fq "$jwt_secret" "$credential_log" \
         || fail "Docker installer printed the JWT secret"
-    ! grep -Fq "$uplink_token" "$credential_log" \
-        || fail "Docker installer printed the uplink control credential"
+    ! grep -Fq "$alarm_token" "$credential_log" \
+        || fail "Docker installer printed the alarm broadcast credential"
 )
 
 printf 'existing database\n' > "$bootstrap_db"
@@ -251,7 +261,7 @@ echo "Testing a failed fresh Docker install removes every created footprint..."
     printf 'new database\n' > "$DATA_DIR/aether.db"
     printf 'new config\n' > "$DATA_DIR/config/io.yaml"
     printf 'new certificate\n' > "$DATA_DIR/cert/device.pem"
-    printf 'new outbox\n' > "$DATA_DIR/uplink.outbox"
+    printf 'new CloudLink spool\n' > "$DATA_DIR/cloudlink.spool"
     printf 'new env\n' > "$INSTALL_DIR/.env"
     printf 'new auxiliary file\n' > "$INSTALL_DIR/aux/trace"
     printf 'new log\n' > "$LOG_DIR/io.log"
@@ -717,15 +727,38 @@ assert_contains "$ROOT_DIR/docker-compose.yml" '${AETHER_TIMESCALE_DATA_PATH:-./
 assert_not_contains "$ROOT_DIR/docker-compose.yml" 'TIMESCALEDB_PASSWORD:-postgres'
 assert_contains "$ROOT_DIR/docker-compose.yml" 'POSTGRES_PASSWORD=${TIMESCALEDB_PASSWORD:-}'
 assert_contains "$ROOT_DIR/docker-compose.yml" 'listen_addresses=127.0.0.1'
-[[ "$(grep -Fc 'AETHER_UPLINK_CONTROL_TOKEN=${AETHER_UPLINK_CONTROL_TOKEN:?' "$ROOT_DIR/docker-compose.yml")" == 2 ]] \
-    || fail "uplink control credential must be injected only into automation and uplink"
-assert_contains "$BARE_METAL_INSTALLER" 'AETHER_UPLINK_CONTROL_TOKEN=$UPLINK_CONTROL_TOKEN'
+[[ "$(grep -Fc 'AETHER_ALARM_BROADCAST_TOKEN=${AETHER_ALARM_BROADCAST_TOKEN:?' "$ROOT_DIR/docker-compose.yml")" == 3 ]] \
+    || fail "alarm broadcast credential must be injected only into alarm, API, and uplink"
+assert_contains "$BARE_METAL_INSTALLER" 'AETHER_ALARM_BROADCAST_TOKEN=$ALARM_BROADCAST_TOKEN'
+assert_contains "$BARE_METAL_INSTALLER" 'AETHER_CLOUDLINK_ENABLED=false'
+assert_contains "$BARE_METAL_INSTALLER" 'AETHER_CLOUDLINK_SPOOL_PATH=$DATA_DIR/cloudlink.spool'
+assert_contains "$BARE_METAL_INSTALLER" 'AETHER_CLOUDLINK_SPOOL_CAPACITY=1024'
+assert_contains "$BARE_METAL_INSTALLER" 'AETHER_CLOUDLINK_RECEIPT_CAPACITY=100000'
+assert_contains "$BARE_METAL_INSTALLER" 'AETHER_CLOUDLINK_SPOOL_MAX_LIVE_BYTES=268435456'
+assert_contains "$BARE_METAL_INSTALLER" 'AETHER_CLOUDLINK_SPOOL_MAX_JOURNAL_BYTES=536870912'
+assert_contains "$BARE_METAL_INSTALLER" 'AETHER_CLOUDLINK_REQUEST_CAPACITY=64'
+assert_contains "$BARE_METAL_INSTALLER" 'AETHER_CLOUDLINK_TELEMETRY_INTERVAL_SECS=30'
+assert_contains "$BARE_METAL_INSTALLER" 'AETHER_GATEWAY_IDENTITY_DIR=$DATA_DIR/uplink/identity'
+assert_contains "$ROOT_DIR/docker-compose.yml" 'AETHER_CLOUDLINK_SPOOL_CAPACITY=${AETHER_CLOUDLINK_SPOOL_CAPACITY:-1024}'
+assert_contains "$ROOT_DIR/docker-compose.yml" 'AETHER_CLOUDLINK_RECEIPT_CAPACITY=${AETHER_CLOUDLINK_RECEIPT_CAPACITY:-100000}'
+assert_contains "$ROOT_DIR/docker-compose.yml" 'AETHER_CLOUDLINK_SPOOL_MAX_LIVE_BYTES=${AETHER_CLOUDLINK_SPOOL_MAX_LIVE_BYTES:-268435456}'
+assert_contains "$ROOT_DIR/docker-compose.yml" 'AETHER_CLOUDLINK_SPOOL_MAX_JOURNAL_BYTES=${AETHER_CLOUDLINK_SPOOL_MAX_JOURNAL_BYTES:-536870912}'
+assert_contains "$ROOT_DIR/docker-compose.yml" 'AETHER_CLOUDLINK_REQUEST_CAPACITY=${AETHER_CLOUDLINK_REQUEST_CAPACITY:-64}'
+assert_contains "$BARE_METAL_INSTALLER" 'CERT_DIR=$CONFIG_DIR/cert'
+assert_contains "$BARE_METAL_INSTALLER" 'mkdir -p "$CONFIG_DIR/cert"'
+assert_contains "$BARE_METAL_INSTALLER" 'chmod 0700 "$CONFIG_DIR/cert"'
+assert_contains "$DOCKER_INSTALLER" 'chmod 0700 "$DATA_DIR/cert"'
+assert_contains "$DOCKER_INSTALLER" 'find "$DATA_DIR/cert" -type f -exec chmod 0600 {} +'
 
 echo "Testing internal APIs keep their commissioned network and credential boundaries..."
 assert_contains "$ROOT_DIR/docker-compose.yml" 'command: ["aether-io", "--bind-address", "127.0.0.1:6001"]'
 io_compose_service=$(sed -n '/^  aether-io:/,/^  aether-automation:/p' "$ROOT_DIR/docker-compose.yml")
 if [[ "$io_compose_service" != *'JWT_SECRET_KEY=${JWT_SECRET_KEY:?'* ]]; then
     fail "aether-io Compose service must receive the shared access-JWT verification secret"
+fi
+alarm_compose_service=$(sed -n '/^  aether-alarm:/,$p' "$ROOT_DIR/docker-compose.yml")
+if [[ "$alarm_compose_service" != *'JWT_SECRET_KEY=${JWT_SECRET_KEY:?'* ]]; then
+    fail "aether-alarm Compose service must receive the shared access-JWT verification secret"
 fi
 internal_loopback_count=$(grep -Fc -- '- API_HOST=127.0.0.1' "$ROOT_DIR/docker-compose.yml")
 [[ "$internal_loopback_count" == 4 ]] \
@@ -746,6 +779,10 @@ assert_not_contains "$INSTALLER_BUILDER" '"py"'
 if bash "$INSTALLER_BUILDER" v0-test amd64 --services=timescaledb \
     >/dev/null 2>&1; then
     fail "Docker installer builder accepted an optional-service-only fresh package"
+fi
+if bash "$INSTALLER_BUILDER" v0-test amd64 --services=aether-io,aether-timescaledb \
+    >/dev/null 2>&1; then
+    fail "Docker installer builder accepted retired aether-timescaledb service input"
 fi
 for retired_python_group in py dev-py; do
     if bash "$INSTALLER_BUILDER" v0-test amd64 --services="$retired_python_group" \
@@ -874,8 +911,8 @@ done
 
 echo "Testing user-facing Docker paths match the installed layout..."
 assert_not_contains "$ROOT_DIR/.env.example" 'AETHER_CONFIG_PATH=/opt/AetherEdge/config'
-assert_contains "$ROOT_DIR/docs/AETHER_CLI_GUIDE.md" '/etc/aether/install.yaml'
-assert_contains "$ROOT_DIR/docs/AETHER_CLI_GUIDE.md" '/opt/AetherEdge/data/config'
+assert_contains "$ROOT_DIR/docs/guides/deployment.md" '/etc/aether/install.yaml'
+assert_contains "$ROOT_DIR/docs/guides/deployment.md" '/opt/AetherEdge/data/config'
 assert_contains "$ROOT_DIR/docs/guides/deployment.md" '`AETHER_INSTALL_DIR` overrides'
 
 echo "Testing the AetherEdge distribution remains headless..."

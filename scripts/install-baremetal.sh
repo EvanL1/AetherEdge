@@ -379,7 +379,7 @@ validate_bare_metal_host_layout() {
     done
     for runtime_asset in \
         aether.db aether.db-wal aether.db-shm aether-history.db \
-        aether-history.db-wal aether-history.db-shm uplink.outbox; do
+        aether-history.db-wal aether-history.db-shm cloudlink.spool; do
         validate_regular_file_if_exists \
             "$DATA_DIR/$runtime_asset" "runtime state file"
     done
@@ -431,7 +431,7 @@ snapshot_bare_metal_state() {
     snapshot_bare_metal_path "$INSTALL_DIR/uninstall.sh" uninstall-script
     for runtime_asset in \
         aether.db aether.db-wal aether.db-shm aether-history.db \
-        aether-history.db-wal aether-history.db-shm uplink.outbox; do
+        aether-history.db-wal aether-history.db-shm cloudlink.spool; do
         snapshot_bare_metal_path \
             "$DATA_DIR/$runtime_asset" "runtime-$runtime_asset"
     done
@@ -460,7 +460,7 @@ restore_bare_metal_state() {
     restore_bare_metal_path "$INSTALL_DIR/uninstall.sh" uninstall-script || return 1
     for runtime_asset in \
         aether.db aether.db-wal aether.db-shm aether-history.db \
-        aether-history.db-wal aether-history.db-shm uplink.outbox; do
+        aether-history.db-wal aether-history.db-shm cloudlink.spool; do
         restore_bare_metal_path \
             "$DATA_DIR/$runtime_asset" "runtime-$runtime_asset" || return 1
     done
@@ -827,28 +827,50 @@ else
 fi
 normalize_root_owned_tree "$CONFIG_DIR/config"
 
+# CloudLink keeps optional TLS material outside the public static config tree.
+# Its durable spool and claimed identity use explicit host paths below;
+# container-only /app defaults must never leak into a bare-metal deployment.
+mkdir -p "$CONFIG_DIR/cert"
+chown 0:0 "$CONFIG_DIR/cert"
+chmod 0700 "$CONFIG_DIR/cert"
+
 if [[ -e "$CONFIG_DIR/aether.env" || -L "$CONFIG_DIR/aether.env" ]]; then
     echo "ERROR: fresh installation refused; environment file appeared after preflight: $CONFIG_DIR/aether.env" >&2
     exit 1
 fi
 JWT_SECRET=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
-UPLINK_CONTROL_TOKEN=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
-while [[ "$UPLINK_CONTROL_TOKEN" == "$JWT_SECRET" ]]; do
-    UPLINK_CONTROL_TOKEN=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
+ALARM_BROADCAST_TOKEN=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
+while [[ "$ALARM_BROADCAST_TOKEN" == "$JWT_SECRET" ]]; do
+    ALARM_BROADCAST_TOKEN=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
 done
 AETHER_ENV_TEMP=$(mktemp "$CONFIG_DIR/aether.env.tmp.XXXXXX")
 chmod 600 "$AETHER_ENV_TEMP"
 cat > "$AETHER_ENV_TEMP" <<EOF
 AETHER_DB_PATH=$DATA_DIR/aether.db
 AETHER_HISTORY_DB_PATH=$DATA_DIR/aether-history.db
+AETHER_CLOUDLINK_ENABLED=false
+AETHER_CLOUDLINK_SPOOL_PATH=$DATA_DIR/cloudlink.spool
+AETHER_CLOUDLINK_SPOOL_CAPACITY=1024
+AETHER_CLOUDLINK_RECEIPT_CAPACITY=100000
+AETHER_CLOUDLINK_SPOOL_MAX_LIVE_BYTES=268435456
+AETHER_CLOUDLINK_SPOOL_MAX_JOURNAL_BYTES=536870912
+AETHER_CLOUDLINK_KEEP_ALIVE_SECS=30
+AETHER_CLOUDLINK_RECONNECT_DELAY_SECS=5
+AETHER_CLOUDLINK_REQUEST_CAPACITY=64
+AETHER_CLOUDLINK_CHALLENGE_LEDGER_CAPACITY=64
+AETHER_CLOUDLINK_CHALLENGE_REQUEST_TTL_MS=60000
+AETHER_CLOUDLINK_TELEMETRY_INTERVAL_SECS=30
+AETHER_GATEWAY_IDENTITY_DIR=$DATA_DIR/uplink/identity
+AETHER_RUNTIME_MANIFEST_PATH=$CONFIG_DIR/config/runtime-manifest.json
 AETHER_LOG_DIR=$DATA_DIR/logs
+CERT_DIR=$CONFIG_DIR/cert
 RUST_LOG=info
 JWT_SECRET_KEY=$JWT_SECRET
-AETHER_UPLINK_CONTROL_TOKEN=$UPLINK_CONTROL_TOKEN
+AETHER_ALARM_BROADCAST_TOKEN=$ALARM_BROADCAST_TOKEN
 EOF
 chown 0:0 "$AETHER_ENV_TEMP"
 mv "$AETHER_ENV_TEMP" "$CONFIG_DIR/aether.env"
-echo "  Wrote default $CONFIG_DIR/aether.env (generated JWT and uplink control credentials)"
+echo "  Wrote default $CONFIG_DIR/aether.env (generated JWT and service credentials)"
 # Lock the credential file before reading or appending any bootstrap secret.
 chmod 600 "$CONFIG_DIR/aether.env"
 chown 0:0 "$CONFIG_DIR/aether.env"
@@ -913,7 +935,7 @@ chmod 0755 "$INSTALL_DIR/uninstall.sh"
 echo "[7/7] Initializing database and starting services ..."
 for runtime_asset in \
     aether.db aether.db-wal aether.db-shm aether-history.db \
-    aether-history.db-wal aether-history.db-shm uplink.outbox; do
+    aether-history.db-wal aether-history.db-shm cloudlink.spool; do
     if [[ -e "$DATA_DIR/$runtime_asset" || -L "$DATA_DIR/$runtime_asset" ]]; then
         echo "ERROR: fresh installation refused; runtime state appeared after preflight: $DATA_DIR/$runtime_asset" >&2
         exit 1

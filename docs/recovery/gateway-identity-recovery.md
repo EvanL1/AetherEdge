@@ -71,7 +71,7 @@ The current `session-accepted`, heartbeat acknowledgement, and application
 acknowledgement still have documented authentication gaps. A successful
 experimental reconnection is not production identity proof.
 
-See the [CloudLink MQTT reference](../reference/cloudlink-mqtt-v1.md),
+See the [CloudLink MQTT reference](../reference/cloudlink-mqtt.md),
 [Gateway enrollment reference](../reference/gateway-enrollment.md),
 [configuration reference](../reference/configuration.md), and
 [CloudLink spool recovery](cloudlink-spool-recovery.md).

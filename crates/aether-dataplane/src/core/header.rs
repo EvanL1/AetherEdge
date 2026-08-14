@@ -8,13 +8,6 @@ use crate::{DataplaneError, DataplaneResult};
 /// AetherEdge shared-memory magic (`AETHER__` as a big-endian integer).
 pub const AETHER_SHM_MAGIC: u64 = u64::from_be_bytes(*b"AETHER__");
 
-/// Current physical SHM layout version.
-///
-/// Version 5 is intentionally incompatible with every earlier layout. It
-/// gives each header field one canonical meaning and persists point quality
-/// in every slot.
-pub const SHM_LAYOUT_VERSION: u32 = 5;
-
 /// Physical shared-memory header.
 ///
 /// Layout: 64 bytes, cache-line aligned. All multi-byte fields use native
@@ -23,8 +16,8 @@ pub const SHM_LAYOUT_VERSION: u32 = 5;
 pub struct ShmHeader {
     /// Physical layout magic.
     pub magic: u64,
-    /// Physical layout version.
-    pub version: u32,
+    /// Reserved contract space. The only accepted layout requires zero.
+    pub(crate) reserved: u32,
     /// Current live slot count.
     pub slot_count: AtomicU32,
     /// Owner-controlled liveness heartbeat in milliseconds since UNIX epoch.
@@ -35,11 +28,14 @@ pub struct ShmHeader {
     pub writer_generation: AtomicU64,
     /// Cross-plane publication identity. Zero is never a valid publication.
     pub publication_epoch: u64,
-    /// Reserved space for a future incompatible layout revision.
-    pub _reserved: [u8; 16],
+    /// Reserved contract space. The only accepted layout requires zero.
+    pub(crate) reserved_tail: [u8; 16],
 }
 
 const _: () = assert!(std::mem::size_of::<ShmHeader>() == 64);
+const _: () = assert!(std::mem::offset_of!(ShmHeader, magic) == 0);
+const _: () = assert!(std::mem::offset_of!(ShmHeader, reserved) == 8);
+const _: () = assert!(std::mem::offset_of!(ShmHeader, slot_count) == 12);
 
 /// Read-only value snapshot of the physical SHM header.
 ///
@@ -49,8 +45,6 @@ const _: () = assert!(std::mem::size_of::<ShmHeader>() == 64);
 pub struct HeaderSnapshot {
     /// Physical layout magic.
     pub magic: u64,
-    /// Physical layout version.
-    pub version: u32,
     /// Current live slot count.
     pub slot_count: u32,
     /// Most recent owner heartbeat.
@@ -75,13 +69,18 @@ impl ShmHeader {
     pub fn snapshot(&self) -> HeaderSnapshot {
         HeaderSnapshot {
             magic: self.magic,
-            version: self.version,
             slot_count: self.slot_count.load(Ordering::Acquire),
             writer_heartbeat: self.writer_heartbeat.load(Ordering::Relaxed),
             layout_hash: self.layout_hash.load(Ordering::Acquire),
             writer_generation: self.writer_generation.load(Ordering::Acquire),
             publication_epoch: self.publication_epoch,
         }
+    }
+
+    /// Returns whether every byte reserved by the one accepted contract is zero.
+    #[must_use]
+    pub(crate) fn reserved_bytes_are_zero(&self) -> bool {
+        self.reserved == 0 && self.reserved_tail.iter().all(|byte| *byte == 0)
     }
 }
 

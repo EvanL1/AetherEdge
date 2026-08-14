@@ -1,4 +1,4 @@
-//! Versioned, industry-neutral domain-pack contract.
+//! Industry-neutral domain-pack contract.
 //!
 //! A pack is declarative data rooted in one directory. This crate validates
 //! the manifest, release compatibility, required identifiers, fail-safe
@@ -19,11 +19,8 @@ use semver::{Version, VersionReq};
 use serde::Deserialize;
 use thiserror::Error;
 
-/// The only pack-manifest schema understood by this release.
-pub const PACK_SCHEMA_VERSION: u32 = 1;
-
 /// The only closed asset-index schema understood by this release.
-pub const PACK_ASSET_INDEX_SCHEMA: &str = "aether.pack.asset-index.v1";
+pub const PACK_ASSET_INDEX_SCHEMA: &str = "aether.pack.asset-index";
 
 /// Maximum size of one indexed Pack asset.
 pub const MAX_PACK_ASSET_BYTES: usize = 1024 * 1024;
@@ -32,17 +29,13 @@ pub const MAX_PACK_ASSET_BYTES: usize = 1024 * 1024;
 pub const MAX_PACK_ASSET_INDEX_BYTES: usize = 64 * 1024;
 
 const INDEXED_ASSET_CATEGORIES: [(&str, &str, &str); 4] = [
-    ("mappings", "mappings", "aether.pack.mapping-set.v1"),
-    ("rules", "rules", "aether.pack.rule.v1"),
-    (
-        "evaluations",
-        "evaluations",
-        "aether.pack.evaluation-suite.v1",
-    ),
+    ("mappings", "mappings", "aether.pack.mapping-set"),
+    ("rules", "rules", "aether.pack.rule"),
+    ("evaluations", "evaluations", "aether.pack.evaluation-suite"),
     (
         "data_processing",
         "data_processing_tasks",
-        "aether.data-processing-task.v1",
+        "aether.data-processing-task",
     ),
 ];
 
@@ -109,7 +102,7 @@ impl ActivePack {
         &self.root
     }
 
-    /// Returns the validated Pack v1 manifest.
+    /// Returns the validated Pack manifest.
     #[must_use]
     pub const fn manifest(&self) -> &PackManifest {
         &self.manifest
@@ -284,7 +277,7 @@ struct ActivePackDto {
 /// Loads the single active-Pack entry point from `<config_directory>/global.yaml`.
 ///
 /// An omitted or empty `packs` list means no domain Pack is active. Every
-/// selected root is then loaded through the regular Pack v1 validator before
+/// selected root is then loaded through the regular Pack validator before
 /// it becomes visible to a runtime process.
 pub fn load_active_packs(
     config_directory: impl AsRef<Path>,
@@ -445,20 +438,12 @@ pub enum PackError {
         #[source]
         source: std::io::Error,
     },
-    /// YAML does not match the closed v1 shape.
+    /// YAML does not match the closed manifest shape.
     #[error("invalid pack manifest: {source}")]
     InvalidManifest {
         /// YAML decoding failure.
         #[source]
         source: serde_yml::Error,
-    },
-    /// The manifest schema is not supported.
-    #[error("unsupported pack schema {found}; this Aether release supports {supported}")]
-    UnsupportedSchema {
-        /// Manifest schema version.
-        found: u32,
-        /// Supported schema version.
-        supported: u32,
     },
     /// The pack version is not SemVer.
     #[error("invalid pack version {value:?}: {source}")]
@@ -552,7 +537,7 @@ pub enum PackError {
         /// Filesystem detail.
         message: String,
     },
-    /// An indexed asset directory does not contain a valid closed v1 index.
+    /// An indexed asset directory does not contain a valid closed index.
     #[error("invalid {category} asset index {path}: {message}")]
     InvalidAssetIndex {
         /// Manifest asset category.
@@ -647,10 +632,9 @@ impl Distribution {
     }
 }
 
-/// A fully validated v1 pack manifest.
+/// A fully validated pack manifest.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackManifest {
-    schema_version: u32,
     id: String,
     name: String,
     version: Version,
@@ -665,7 +649,7 @@ pub struct PackManifest {
     asset_indexes: BTreeMap<String, PackAssetIndex>,
 }
 
-/// Validated v1 index for one Pack-owned asset category.
+/// Validated index for one Pack-owned asset category.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackAssetIndex {
     category: String,
@@ -708,7 +692,7 @@ impl PackAssetDescriptor {
         &self.path
     }
 
-    /// Returns the versioned content schema identity.
+    /// Returns the content schema identity.
     #[must_use]
     pub fn schema(&self) -> &str {
         &self.schema
@@ -722,12 +706,6 @@ impl PackAssetDescriptor {
 }
 
 impl PackManifest {
-    /// Returns the manifest schema version.
-    #[must_use]
-    pub const fn schema_version(&self) -> u32 {
-        self.schema_version
-    }
-
     /// Returns the pack identifier.
     #[must_use]
     pub fn id(&self) -> &str {
@@ -800,7 +778,7 @@ impl PackManifest {
         self.asset_indexes.get(category)
     }
 
-    /// Version 1 accepts only explicitly uncommissioned examples.
+    /// The contract accepts only explicitly uncommissioned examples.
     #[must_use]
     pub const fn examples_commissioned(&self) -> bool {
         false
@@ -810,7 +788,6 @@ impl PackManifest {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ManifestDto {
-    schema_version: u32,
     id: String,
     name: String,
     version: String,
@@ -959,13 +936,6 @@ pub fn parse_pack_manifest(
 ) -> Result<PackManifest, PackError> {
     let dto: ManifestDto =
         serde_yml::from_str(source).map_err(|source| PackError::InvalidManifest { source })?;
-    if dto.schema_version != PACK_SCHEMA_VERSION {
-        return Err(PackError::UnsupportedSchema {
-            found: dto.schema_version,
-            supported: PACK_SCHEMA_VERSION,
-        });
-    }
-
     validate_identifier("id", &dto.id)?;
     validate_identifier("distribution.id", &dto.distribution.id)?;
     validate_identifier("distribution.composition", &dto.distribution.composition)?;
@@ -1046,7 +1016,6 @@ pub fn parse_pack_manifest(
     validate_capabilities(&capabilities)?;
     let asset_indexes = validate_asset_indexes(&root, &assets, &capabilities)?;
     Ok(PackManifest {
-        schema_version: dto.schema_version,
         id: dto.id,
         name: dto.name,
         version,
@@ -1198,7 +1167,7 @@ fn validate_asset_index(
         return Err(PackError::InvalidAssetIndex {
             category: category.to_string(),
             path: index_path,
-            message: format!("unsupported schema {:?}", dto.schema),
+            message: format!("invalid schema {:?}", dto.schema),
         });
     }
     if dto.category != category {
@@ -1227,7 +1196,7 @@ fn validate_asset_index(
                 category: category.to_string(),
                 path: index_path,
                 message: format!(
-                    "asset {:?} declares schema {:?}; Pack v1 requires {:?}",
+                    "asset {:?} declares schema {:?}; Pack requires {:?}",
                     declared.id, declared.schema, expected_asset_schema
                 ),
             });

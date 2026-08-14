@@ -67,6 +67,7 @@ fn validate_write_target(
                 point_id: variable.point.unwrap_or(0),
                 value: f64::NAN,
                 success: false,
+                delivery_possible: false,
             });
         },
     };
@@ -84,6 +85,7 @@ fn validate_write_target(
             point_id: 0,
             value,
             success: false,
+            delivery_possible: false,
         }
     })?;
 
@@ -101,6 +103,7 @@ fn validate_write_target(
             point_id: 0,
             value,
             success: false,
+            delivery_possible: false,
         }
     })?;
 
@@ -168,6 +171,7 @@ fn action_skipped(variable: &RuleVariable, reason: &str) -> ActionResult {
         point_id: variable.point.unwrap_or(0),
         value: f64::NAN,
         success: false,
+        delivery_possible: false,
     }
 }
 
@@ -230,6 +234,17 @@ pub struct ActionResult {
     pub value: f64,
     /// Whether the action succeeded
     pub success: bool,
+    /// Whether execution crossed a write/command boundary where delivery may
+    /// have happened. This is scheduler bookkeeping only and intentionally
+    /// stays out of the public JSON execution record.
+    #[serde(skip)]
+    pub(crate) delivery_possible: bool,
+}
+
+impl ActionResult {
+    pub(crate) const fn delivery_possible(&self) -> bool {
+        self.delivery_possible
+    }
 }
 
 /// Execution details for a single node (for debugging/visualization)
@@ -794,7 +809,7 @@ impl RuleExecutor {
 
             let var_name = var.name.clone();
 
-            // Get instance ID (supports both "instance" and "instance_id" via serde alias)
+            // Get the canonical numeric instance ID.
             let instance_id = match var.instance {
                 Some(id) => id,
                 None => {
@@ -1107,18 +1122,23 @@ impl RuleExecutor {
         pt: &'static str,
         context: &str,
     ) -> ActionResult {
-        let success = match pt {
-            "M" => self
-                .write_measurement_point(instance_id, point, value)
-                .await
-                .is_ok(),
+        let (success, delivery_possible) = match pt {
+            // The current measurement implementation rejects before touching
+            // an owned write plane, so it cannot be treated as an ambiguous
+            // delivery. Keep the tuple explicit for the future adapter.
+            "M" => (
+                self.write_measurement_point(instance_id, point, value)
+                    .await
+                    .is_ok(),
+                false,
+            ),
             "A" => {
                 self.write_action_point(execution, instance_id, point, value, context)
                     .await
             },
             _ => {
                 tracing::warn!("Unknown point type '{}' for {}", pt, context);
-                false
+                (false, false)
             },
         };
 
@@ -1129,6 +1149,7 @@ impl RuleExecutor {
             point_id: point,
             value,
             success,
+            delivery_possible,
         }
     }
 
@@ -1139,7 +1160,7 @@ impl RuleExecutor {
         point: u32,
         value: f64,
         context: &str,
-    ) -> bool {
+    ) -> (bool, bool) {
         let Some(commands) = self.action_commands.as_ref() else {
             tracing::error!(
                 "{} dispatch failed: governed action command facade not configured for instance_id={}, point_id={}",
@@ -1147,7 +1168,7 @@ impl RuleExecutor {
                 instance_id,
                 point
             );
-            return false;
+            return (false, false);
         };
         let mut command =
             RuleActionCommand::new(InstanceId::new(instance_id), PointId::new(point), value);
@@ -1155,7 +1176,11 @@ impl RuleExecutor {
             command = command.with_topology_fence(fence);
         }
         match commands.write_action(command).await {
-            Ok(_) => true,
+            // Once the governed facade is entered, an error can represent a
+            // lost receipt after local/UDS acceptance. Until the wire carries
+            // a persistent idempotency identity, callers must not replay the
+            // same OnChange command automatically.
+            Ok(_) => (true, true),
             Err(error) => {
                 tracing::error!(
                     "{} governed action failed for instance_id={}, point_id={}: {}",
@@ -1164,7 +1189,7 @@ impl RuleExecutor {
                     point,
                     error
                 );
-                false
+                (false, true)
             },
         }
     }

@@ -9,7 +9,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-aether-ports = { version = "0.0.1", path = "../../../../crates/aether-ports" }
+aether-ports = { version = "0.0.2", path = "../../../../crates/aether-ports" }
 async-trait = { workspace = true }
 base64 = "0.22"
 bytes = { workspace = true }

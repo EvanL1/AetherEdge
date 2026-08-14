@@ -1,0 +1,20 @@
+{
+  "contract": "aether.cloudlink",
+  "status": "canonical",
+  "transport": {
+    "binding": "mqtt-3.1.1",
+    "qos": 1,
+    "retain": false,
+    "topic_root": "{prefix}/gateways/{gateway_id}"
+  },
+  "delivery": {
+    "business_digest_fields": ["message_kind", "payload"],
+    "application_ack_required": true,
+    "maximum_message_bytes": 262144
+  },
+  "session": {
+    "protocol_negotiation": false,
+    "gateway_identity": "canonical-lowercase-uuid",
+    "physical_control": false
+  }
+}

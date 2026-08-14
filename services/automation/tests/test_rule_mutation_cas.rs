@@ -8,9 +8,10 @@ use std::sync::{Arc, Mutex};
 use aether_automation::infra::rule_mutation::SqliteRuleMutator;
 use aether_automation::infra::rule_runtime::RuleRuntimeCoordinator;
 use aether_automation::infra::runtime_topology::AutomationTopologyHandle;
-use aether_domain::PointKind;
+use aether_domain::{PointKind, RuleId};
 use aether_ports::{
     AutomationRuleMutator, AutomationRulesRevision, PortErrorKind, RevisionedRuleMutation,
+    RuleMutation,
 };
 use aether_rules::{MemoryRuleLiveState, PointWatchDispatcher, RuleScheduler};
 use aether_shm_bridge::{
@@ -39,6 +40,120 @@ fn scheduler(pool: &sqlx::SqlitePool) -> Arc<RuleScheduler> {
         100,
         PathBuf::from("logs/test-rule-cas"),
     ))
+}
+
+async fn corrupt_disabled_rule(pool: &sqlx::SqlitePool, mutator: &SqliteRuleMutator) -> RuleId {
+    let receipt = mutator
+        .mutate_revisioned(RevisionedRuleMutation::create(
+            "legacy-corrupt",
+            None,
+            AutomationRulesRevision::new(1),
+        ))
+        .await
+        .expect("create disabled rule");
+    let rule_id = receipt.rule_id().expect("created rule id");
+    sqlx::query("UPDATE rules SET trigger_config = ? WHERE id = ?")
+        .bind(r#"{"type":"interval","interval_ms":0}"#)
+        .bind(i64::try_from(rule_id.get()).expect("test rule id fits SQLite"))
+        .execute(pool)
+        .await
+        .expect("emulate corrupt legacy trigger");
+    rule_id
+}
+
+async fn assert_activation_rejected_without_revision_change(
+    pool: &sqlx::SqlitePool,
+    result: aether_ports::PortResult<aether_ports::RuleMutationReceipt>,
+    rule_id: RuleId,
+) {
+    let error = result.expect_err("invalid stored trigger must reject activation");
+    assert_eq!(error.kind(), PortErrorKind::InvalidData);
+    let (enabled, revision): (i64, i64) = (
+        sqlx::query_scalar("SELECT enabled FROM rules WHERE id = ?")
+            .bind(i64::try_from(rule_id.get()).expect("test rule id fits SQLite"))
+            .fetch_one(pool)
+            .await
+            .expect("stored enabled flag"),
+        sqlx::query_scalar(
+            "SELECT revision FROM configuration_revisions WHERE scope = 'automation_rules'",
+        )
+        .fetch_one(pool)
+        .await
+        .expect("rules revision"),
+    );
+    assert_eq!(enabled, 0, "failed activation must remain disabled");
+    assert_eq!(revision, 2, "failed activation must roll back its CAS bump");
+}
+
+#[tokio::test]
+async fn set_enabled_rejects_invalid_stored_trigger_and_rolls_back() {
+    let (_directory, pool) = rules_pool(1).await;
+    let runtime = Arc::new(RuleRuntimeCoordinator::new(scheduler(&pool)));
+    let mutator = SqliteRuleMutator::new(pool.clone(), runtime);
+    let rule_id = corrupt_disabled_rule(&pool, &mutator).await;
+
+    let result = mutator
+        .mutate_revisioned(RevisionedRuleMutation::set_enabled(
+            rule_id,
+            true,
+            AutomationRulesRevision::new(2),
+        ))
+        .await;
+
+    assert_activation_rejected_without_revision_change(&pool, result, rule_id).await;
+}
+
+#[tokio::test]
+async fn set_enabled_rejects_missing_trigger_and_rolls_back() {
+    let (_directory, pool) = rules_pool(1).await;
+    let runtime = Arc::new(RuleRuntimeCoordinator::new(scheduler(&pool)));
+    let mutator = SqliteRuleMutator::new(pool.clone(), runtime);
+    let receipt = mutator
+        .mutate_revisioned(RevisionedRuleMutation::create(
+            "missing-trigger",
+            None,
+            AutomationRulesRevision::new(1),
+        ))
+        .await
+        .expect("create disabled rule shell");
+    let rule_id = receipt.rule_id().expect("created rule id");
+
+    let result = mutator
+        .mutate_revisioned(RevisionedRuleMutation::set_enabled(
+            rule_id,
+            true,
+            AutomationRulesRevision::new(2),
+        ))
+        .await;
+
+    assert_activation_rejected_without_revision_change(&pool, result, rule_id).await;
+}
+
+#[tokio::test]
+async fn update_enable_rejects_invalid_stored_trigger_and_rolls_back() {
+    let (_directory, pool) = rules_pool(1).await;
+    let runtime = Arc::new(RuleRuntimeCoordinator::new(scheduler(&pool)));
+    let mutator = SqliteRuleMutator::new(pool.clone(), runtime);
+    let rule_id = corrupt_disabled_rule(&pool, &mutator).await;
+    let mutation = RuleMutation::Update {
+        rule_id,
+        name: None,
+        description: None,
+        enabled: Some(true),
+        priority: None,
+        cooldown_ms: None,
+        flow_json: None,
+        trigger_config: None,
+    };
+
+    let result = mutator
+        .mutate_revisioned(RevisionedRuleMutation::new(
+            mutation,
+            AutomationRulesRevision::new(2),
+        ))
+        .await;
+
+    assert_activation_rejected_without_revision_change(&pool, result, rule_id).await;
 }
 
 #[tokio::test]

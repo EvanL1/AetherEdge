@@ -154,6 +154,21 @@ fn capability_catalog_is_machine_discoverable_and_classifies_control_as_high_ris
 }
 
 #[test]
+fn command_outcome_query_is_low_risk_idempotent_and_read_only() {
+    let query = capability_catalog()
+        .iter()
+        .find(|descriptor| descriptor.name() == "device.command_outcome.read")
+        .expect("command outcome query capability is registered");
+
+    assert_eq!(query.kind(), OperationKind::Query);
+    assert_eq!(query.risk(), RiskLevel::Low);
+    assert_eq!(query.required_permission(), "device.read");
+    assert!(!query.requires_confirmation());
+    assert_eq!(query.audit_policy(), AuditPolicy::NotRequired);
+    assert!(query.is_idempotent());
+}
+
+#[test]
 fn capability_catalog_classifies_manual_rule_execution_as_audited_control() {
     let execute_rule = capability_catalog()
         .iter()
@@ -243,6 +258,7 @@ async fn confirmed_control_is_audited_before_and_after_dispatch() {
         .expect("confirmed control succeeds");
 
     assert_eq!(receipt.command_id(), CommandId::new(18));
+    assert_eq!(receipt.accepted_at(), TimestampMs::new(2_001));
     assert!(receipt.completion_audit().is_recorded());
     let commands = dispatcher.commands.lock().unwrap();
     assert_eq!(commands.len(), 1);

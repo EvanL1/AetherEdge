@@ -1,5 +1,5 @@
 {
-  "schema": "aether.derived-data.v1",
+  "schema": "aether.derived-data",
   "result_id": "0190aee6-22ac-72da-b214-629a31ccb99c",
   "request_id": "0190aee6-2139-7a87-8448-806f1b843201",
   "task": {
@@ -13,12 +13,12 @@
   },
   "accepted_at": "2026-07-11T12:00:03Z",
   "expires_at": "2026-07-11T13:00:00Z",
-  "input_digest": "sha256:66aade139532bcd80b8ae85f5e6b120332e8b29128df82546440f209064193dc",
+  "input_digest": "sha256:f78edd8e74f4f05f8dc79476f19140abfc85107083fd52f9c5ef6e0e05bfa685",
   "processing_status": "produced",
   "processor": {
     "id": "example-forecast-processor",
     "version": "0.1.0",
-    "contract": "aether.data-processing.forecast.v1"
+    "contract": "aether.data-processing.forecast"
   },
   "artifact": {
     "kind": "model",
@@ -36,7 +36,7 @@
   },
   "warnings": [],
   "data": {
-    "schema": "aether.data-processing.output.forecast.v1",
+    "schema": "aether.data-processing.output.forecast",
     "kind": "forecast",
     "target": "signal",
     "unit": "1",

@@ -123,7 +123,7 @@ fn extracted_home_assistant_features_are_rejected() {
 }
 
 #[test]
-fn manifest_round_trip_validates_schema_version_release_and_checksum() {
+fn manifest_round_trip_validates_release_target_and_checksum() {
     let config = tempfile::tempdir().expect("temporary config directory");
     let manifest = linux_manifest(&["modbus", "mqtt"]);
     manifest
@@ -134,7 +134,6 @@ fn manifest_round_trip_validates_schema_version_release_and_checksum() {
         .expect("validated manifest");
 
     assert_eq!(loaded, manifest);
-    assert_eq!(loaded.schema_version(), 1);
     assert_eq!(loaded.aether_version(), env!("CARGO_PKG_VERSION"));
     assert_eq!(loaded.checksum().algorithm(), "sha256");
     assert_eq!(loaded.checksum().digest().len(), 64);

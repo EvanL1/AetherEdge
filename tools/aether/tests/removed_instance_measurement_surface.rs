@@ -61,12 +61,6 @@ fn source_and_reference_docs_do_not_publish_the_retired_write_route() {
         "automation unexpectedly acquired an instance-measurement write route"
     );
 
-    let legacy_api_reference = read_repository_file("docs/API_REFERENCE.md");
-    assert!(
-        !legacy_api_reference.contains("POST /api/instances/{id}/measurement"),
-        "historical API reference still advertises the nonexistent automation route"
-    );
-
     let mcp_reference = read_repository_file("docs/reference/mcp-tools.md");
     assert!(
         !mcp_reference.contains("### `models_instances_measurement`"),

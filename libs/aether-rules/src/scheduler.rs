@@ -22,14 +22,35 @@ use sqlx::SqlitePool;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
-use tokio::sync::RwLock;
+use tokio::sync::{OwnedSemaphorePermit, RwLock, Semaphore};
 use tokio::time::interval;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 /// Default scheduler tick interval (100ms)
 pub const DEFAULT_TICK_MS: u64 = 100;
+
+/// Default upper bound for one rule evaluation, including governed actions.
+pub const DEFAULT_RULE_EXECUTION_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Local execution-history writes are diagnostic and must not hold the rule
+/// flight or scheduler loop indefinitely when SQLite is contended.
+const RULE_HISTORY_WRITE_TIMEOUT: Duration = Duration::from_millis(500);
+
+/// A corrupted configuration cannot be represented as an executable trigger.
+/// Keeping the fault in the cached rule set makes rule counts and diagnostics
+/// honest while every execution path remains fail-closed.
+const CORRUPT_TRIGGER_REASON: &str = "stored trigger configuration is invalid";
+
+/// Protects scheduler sampling and PointWatch subscription rebuilds from an
+/// unbounded persisted list.
+pub const MAX_ONCHANGE_POINT_REFS: usize = 1_024;
+
+/// Composition-independent safety limit for Tokio semaphore construction and
+/// for the amount of device-control fan-out one scheduler may create.
+pub const MAX_RULE_CONCURRENCY: usize = 64;
 
 /// Reference to a single point inside an instance.
 ///
@@ -69,7 +90,7 @@ pub enum PointKind {
 /// JSON shapes:
 /// - `{"type": "absolute", "threshold": 0.5}` — |new - last| > 0.5
 /// - `{"type": "percent",  "threshold": 1.0}` — |new - last| / |last| > 1%
-#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ValueDeadband {
     Absolute { threshold: f64 },
@@ -95,6 +116,18 @@ impl ValueDeadband {
             },
         }
     }
+
+    fn validate(&self) -> Result<()> {
+        let threshold = match self {
+            Self::Absolute { threshold } | Self::Percent { threshold } => *threshold,
+        };
+        if !threshold.is_finite() || threshold < 0.0 {
+            return Err(crate::RuleError::InvalidFormat(
+                "value deadband threshold must be finite and non-negative".to_string(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// Rule trigger configuration
@@ -103,7 +136,7 @@ impl ValueDeadband {
 /// - `{"type": "interval", "interval_ms": 1000}`
 /// - `{"type": "on_change", "point_refs": [...], "time_deadband_ms": 200,
 ///    "value_deadband": {"type": "absolute", "threshold": 0.5}}`
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum TriggerConfig {
     /// Execute rule at fixed intervals
@@ -135,6 +168,46 @@ impl Default for TriggerConfig {
     fn default() -> Self {
         // Default to 1 second interval
         TriggerConfig::Interval { interval_ms: 1000 }
+    }
+}
+
+impl TriggerConfig {
+    /// Validates scheduling semantics after JSON decoding.
+    pub fn validate(&self) -> Result<()> {
+        match self {
+            Self::Interval { interval_ms } if *interval_ms == 0 => {
+                Err(crate::RuleError::InvalidFormat(
+                    "interval_ms must be greater than zero".to_string(),
+                ))
+            },
+            Self::Interval { .. } => Ok(()),
+            Self::OnChange {
+                point_refs,
+                value_deadband,
+                ..
+            } => {
+                if point_refs.is_empty() {
+                    return Err(crate::RuleError::InvalidFormat(
+                        "on_change point_refs must not be empty".to_string(),
+                    ));
+                }
+                if point_refs.len() > MAX_ONCHANGE_POINT_REFS {
+                    return Err(crate::RuleError::InvalidFormat(format!(
+                        "on_change point_refs exceeds the limit of {MAX_ONCHANGE_POINT_REFS}"
+                    )));
+                }
+                let mut unique = HashSet::with_capacity(point_refs.len());
+                if !point_refs.iter().all(|point| unique.insert(*point)) {
+                    return Err(crate::RuleError::InvalidFormat(
+                        "on_change point_refs must not contain duplicates".to_string(),
+                    ));
+                }
+                if let Some(deadband) = value_deadband {
+                    deadband.validate()?;
+                }
+                Ok(())
+            },
+        }
     }
 }
 
@@ -199,31 +272,35 @@ struct ScheduledRule {
     /// Rule wrapped in Arc to avoid cloning during execution
     rule: Arc<Rule>,
     trigger: TriggerConfig,
+    /// Invalid persisted scheduling data is retained for diagnostics but never
+    /// reaches tick, PointWatch, or subscription publication.
+    trigger_valid: bool,
     last_execution: Option<Instant>,
     /// Track last cooldown trigger time
     last_cooldown_start: Option<Instant>,
     /// OnChange-specific state (last seen values + last trigger time).
     /// Default for Interval rules; populated only for OnChange rules.
     onchange_state: OnChangeState,
+    /// A failed OnChange attempt keeps its baseline unchanged but retries only
+    /// after this bounded backoff, preventing a 100 ms failure storm.
+    retry_not_before: Option<Instant>,
 }
 
 /// Resolve a rule's trigger from its stored `trigger_config`.
 ///
-/// Returns the trigger and whether the stored value was unparseable. An absent
-/// column is the documented legacy default; a *corrupt* one used to take the
-/// same silent path, quietly demoting the rule to a 1s interval.
-fn resolve_trigger(raw: Option<&str>, cooldown_ms: u64) -> (TriggerConfig, bool) {
-    let fallback = || TriggerConfig::Interval {
-        interval_ms: if cooldown_ms > 0 { cooldown_ms } else { 1_000 },
-    };
-
-    match raw {
-        None => (fallback(), false),
-        Some(json) => match serde_json::from_str(json) {
-            Ok(trigger) => (trigger, false),
-            Err(_) => (fallback(), true),
-        },
-    }
+/// Missing and malformed trigger definitions both fail closed. Scheduling has
+/// one canonical source and never infers an interval from `cooldown_ms`.
+fn resolve_trigger(raw: Option<&str>) -> Result<TriggerConfig> {
+    let json = raw.ok_or_else(|| {
+        crate::RuleError::InvalidFormat(format!(
+            "{CORRUPT_TRIGGER_REASON}: trigger_config is required"
+        ))
+    })?;
+    let trigger: TriggerConfig = serde_json::from_str(json).map_err(|error| {
+        crate::RuleError::InvalidFormat(format!("{CORRUPT_TRIGGER_REASON}: {error}"))
+    })?;
+    trigger.validate()?;
+    Ok(trigger)
 }
 
 /// Carry per-rule scheduling state from the previous rule set into a freshly
@@ -242,9 +319,15 @@ fn preserve_schedule_state(previous: &[ScheduledRule], loaded: &mut [ScheduledRu
         let Some(prior) = carried.get(&entry.rule.id) else {
             continue;
         };
-        entry.last_execution = prior.last_execution;
+        if prior.trigger_valid && entry.trigger_valid && prior.trigger == entry.trigger {
+            entry.last_execution = prior.last_execution;
+            entry.onchange_state = prior.onchange_state.clone();
+            entry.retry_not_before = prior.retry_not_before;
+        }
+        // A successful prior action remains under cooldown even when an
+        // operator edits scheduling metadata; reload must not immediately
+        // replay a recently accepted command.
         entry.last_cooldown_start = prior.last_cooldown_start;
-        entry.onchange_state = prior.onchange_state.clone();
     }
 }
 
@@ -255,7 +338,7 @@ impl crate::point_watch_dispatcher::RuleSubscriptionInfo for ScheduledRule {
         self.rule.id
     }
     fn is_enabled(&self) -> bool {
-        self.rule.enabled
+        self.rule.enabled && self.trigger_valid
     }
     fn trigger(&self) -> &TriggerConfig {
         &self.trigger
@@ -282,6 +365,20 @@ pub struct RuleScheduler {
     logger_manager: RuleLoggerManager,
     /// Maximum concurrent rule executions (default: 4)
     max_concurrency: usize,
+    /// Complete execution deadline for one rule, including governed commands.
+    rule_execution_timeout: Duration,
+    /// Process-wide execution capacity shared by every scheduler entry path.
+    /// Scheduled and PointWatch batches wait inside their existing bounded
+    /// streams; manual requests never queue and return a busy error instead.
+    execution_slots: Arc<Semaphore>,
+    /// Per-rule execution reservations shared by scheduled, PointWatch, and
+    /// manual paths. Scheduled/PointWatch overlaps are coalesced, manual
+    /// overlaps report a busy error, and unrelated rule IDs remain independent.
+    in_flight: Arc<RuleFlights>,
+    /// Rotating cursors keep a bounded one-wave cycle fair when more rules are
+    /// due than can execute concurrently.
+    scheduled_cursor: AtomicUsize,
+    watch_cursor: AtomicUsize,
     /// PointWatch fast path: receive events from PointWatchDispatcher.
     /// When present, `start()` selects on this channel alongside the
     /// 100 ms tick and immediately executes matching OnChange rules.
@@ -293,6 +390,81 @@ pub struct RuleScheduler {
     /// bitmap or manifest.
     pw_dispatcher:
         Option<Arc<std::sync::Mutex<crate::point_watch_dispatcher::PointWatchDispatcher>>>,
+}
+
+#[derive(Default)]
+struct RuleFlights {
+    rule_ids: std::sync::Mutex<HashSet<i64>>,
+}
+
+impl RuleFlights {
+    fn try_enter(self: &Arc<Self>, rule_id: i64) -> Option<RuleFlightGuard> {
+        let mut rule_ids = self
+            .rule_ids
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if !rule_ids.insert(rule_id) {
+            return None;
+        }
+        Some(RuleFlightGuard {
+            rule_id,
+            flights: Arc::clone(self),
+        })
+    }
+}
+
+struct RuleFlightGuard {
+    rule_id: i64,
+    flights: Arc<RuleFlights>,
+}
+
+struct ExecutionReservation {
+    _rule: RuleFlightGuard,
+    _slot: OwnedSemaphorePermit,
+}
+
+impl ExecutionReservation {
+    /// Release process capacity as soon as rule execution finishes while
+    /// retaining the per-rule reservation through logging and state updates.
+    fn finish_execution(self) -> RuleFlightGuard {
+        let Self { _rule, _slot } = self;
+        drop(_slot);
+        _rule
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReservationBusy {
+    Rule,
+    Capacity,
+}
+
+impl Drop for RuleFlightGuard {
+    fn drop(&mut self) {
+        self.flights
+            .rule_ids
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(&self.rule_id);
+    }
+}
+
+const fn normalized_tick_ms(tick_ms: u64) -> u64 {
+    if tick_ms == 0 {
+        DEFAULT_TICK_MS
+    } else {
+        tick_ms
+    }
+}
+
+fn bounded_fair_batch<T>(mut due: Vec<T>, cursor: &AtomicUsize, limit: usize) -> Vec<T> {
+    if due.len() <= limit {
+        return due;
+    }
+    let start = cursor.fetch_add(limit, Ordering::Relaxed) % due.len();
+    due.rotate_left(start);
+    due.truncate(limit);
+    due
 }
 
 impl RuleScheduler {
@@ -313,9 +485,14 @@ impl RuleScheduler {
             pool,
             rules: Arc::new(RwLock::new(Vec::new())),
             shutdown: CancellationToken::new(),
-            tick_ms,
+            tick_ms: normalized_tick_ms(tick_ms),
             logger_manager: RuleLoggerManager::new(log_root),
             max_concurrency: 4,
+            rule_execution_timeout: DEFAULT_RULE_EXECUTION_TIMEOUT,
+            execution_slots: Arc::new(Semaphore::new(4)),
+            in_flight: Arc::new(RuleFlights::default()),
+            scheduled_cursor: AtomicUsize::new(0),
+            watch_cursor: AtomicUsize::new(0),
             watch_rx: None,
             pw_dispatcher: None,
         }
@@ -346,17 +523,76 @@ impl RuleScheduler {
             pool,
             rules: Arc::new(RwLock::new(Vec::new())),
             shutdown: CancellationToken::new(),
-            tick_ms,
+            tick_ms: normalized_tick_ms(tick_ms),
             logger_manager: RuleLoggerManager::new(log_root),
             max_concurrency: 4,
+            rule_execution_timeout: DEFAULT_RULE_EXECUTION_TIMEOUT,
+            execution_slots: Arc::new(Semaphore::new(4)),
+            in_flight: Arc::new(RuleFlights::default()),
+            scheduled_cursor: AtomicUsize::new(0),
+            watch_cursor: AtomicUsize::new(0),
             watch_rx: None,
             pw_dispatcher: None,
         }
     }
 
     /// Set maximum concurrent rule executions (must be called before wrapping in Arc)
-    pub fn set_max_concurrency(&mut self, n: usize) {
-        self.max_concurrency = n.max(1);
+    pub fn set_max_concurrency(&mut self, n: usize) -> Result<()> {
+        if !(1..=MAX_RULE_CONCURRENCY).contains(&n) {
+            return Err(crate::RuleError::InvalidFormat(format!(
+                "max_concurrency must be in 1..={MAX_RULE_CONCURRENCY}"
+            )));
+        }
+        self.max_concurrency = n;
+        self.execution_slots = Arc::new(Semaphore::new(n));
+        Ok(())
+    }
+
+    /// Configures the complete deadline for one rule, including governed
+    /// commands, before the scheduler is shared.
+    pub fn set_execution_timeout(&mut self, rule: Duration) -> Result<()> {
+        if rule.is_zero() {
+            return Err(crate::RuleError::InvalidFormat(
+                "rule execution timeout must be non-zero".to_string(),
+            ));
+        }
+        self.rule_execution_timeout = rule;
+        Ok(())
+    }
+
+    fn try_reserve_execution(
+        &self,
+        rule_id: i64,
+    ) -> std::result::Result<ExecutionReservation, ReservationBusy> {
+        let rule = self
+            .in_flight
+            .try_enter(rule_id)
+            .ok_or(ReservationBusy::Rule)?;
+        let slot = Arc::clone(&self.execution_slots)
+            .try_acquire_owned()
+            .map_err(|_| ReservationBusy::Capacity)?;
+        Ok(ExecutionReservation {
+            _rule: rule,
+            _slot: slot,
+        })
+    }
+
+    async fn reserve_background_execution(
+        &self,
+        rule_id: i64,
+    ) -> std::result::Result<ExecutionReservation, ReservationBusy> {
+        let rule = self
+            .in_flight
+            .try_enter(rule_id)
+            .ok_or(ReservationBusy::Rule)?;
+        let slot = Arc::clone(&self.execution_slots)
+            .acquire_owned()
+            .await
+            .map_err(|_| ReservationBusy::Capacity)?;
+        Ok(ExecutionReservation {
+            _rule: rule,
+            _slot: slot,
+        })
     }
 
     /// Rebuild the `PointWatchDispatcher` subscription index from the currently
@@ -403,23 +639,28 @@ impl RuleScheduler {
         let mut scheduled: Vec<ScheduledRule> = db_rules
             .into_iter()
             .map(|rule| {
-                let (trigger, corrupt) =
-                    resolve_trigger(rule.trigger_config.as_deref(), rule.cooldown_ms);
-                if corrupt {
-                    error!(
-                        rule_id = rule.id,
-                        rule_name = %rule.name,
-                        "Rule trigger_config is unparseable; falling back to the cooldown \
-                         interval. This rule is not running on its configured schedule."
-                    );
-                }
+                let (trigger, trigger_valid) = match resolve_trigger(rule.trigger_config.as_deref())
+                {
+                    Ok(trigger) => (trigger, true),
+                    Err(error) => {
+                        error!(
+                            rule_id = rule.id,
+                            rule_name = %rule.name,
+                            %error,
+                            "Rule trigger configuration is invalid; execution is disabled"
+                        );
+                        (TriggerConfig::default(), false)
+                    },
+                };
 
                 ScheduledRule {
                     rule: Arc::new(rule),
                     trigger,
+                    trigger_valid,
                     last_execution: None,
                     last_cooldown_start: None,
                     onchange_state: OnChangeState::default(),
+                    retry_not_before: None,
                 }
             })
             .collect();
@@ -452,6 +693,7 @@ impl RuleScheduler {
         info!("Scheduler start ({}ms)", self.tick_ms);
 
         let mut tick_interval = interval(Duration::from_millis(self.tick_ms));
+        tick_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         loop {
             // Branch 1 (common): 100ms tick
@@ -525,7 +767,7 @@ impl RuleScheduler {
             let rules = self.rules.read().await;
             rules
                 .iter()
-                .filter(|s| s.rule.enabled)
+                .filter(|s| s.rule.enabled && s.trigger_valid)
                 .filter_map(|s| match &s.trigger {
                     TriggerConfig::OnChange { point_refs, .. } => Some(point_refs.clone()),
                     _ => None,
@@ -548,7 +790,7 @@ impl RuleScheduler {
                 .iter()
                 .enumerate()
                 .filter_map(|(idx, scheduled)| {
-                    if !scheduled.rule.enabled {
+                    if !scheduled.rule.enabled || !scheduled.trigger_valid {
                         return None;
                     }
 
@@ -589,8 +831,11 @@ impl RuleScheduler {
                     } else {
                         true
                     };
+                    let retry_ok = scheduled
+                        .retry_not_before
+                        .is_none_or(|deadline| now >= deadline);
 
-                    if should_execute && cooldown_ok {
+                    if should_execute && cooldown_ok && retry_ok {
                         Some((idx, Arc::clone(&scheduled.rule), is_onchange))
                     } else {
                         None
@@ -598,6 +843,14 @@ impl RuleScheduler {
                 })
                 .collect()
         }; // Read lock released here (~10μs)
+        // One cycle starts at most one process-capacity wave. This bounds
+        // PointWatch latency and shutdown drain without cancelling a batch
+        // after a command may already have crossed the transport edge.
+        let rules_to_execute = bounded_fair_batch(
+            rules_to_execute,
+            &self.scheduled_cursor,
+            self.max_concurrency,
+        );
 
         if rules_to_execute.is_empty() {
             return Ok(());
@@ -608,6 +861,7 @@ impl RuleScheduler {
         use futures::stream::{self, StreamExt};
 
         struct ExecutionOutcome {
+            _rule: RuleFlightGuard,
             idx: usize,
             rule_id: i64,
             rule_name: String,
@@ -617,42 +871,75 @@ impl RuleScheduler {
 
         // Execute rules concurrently (max self.max_concurrency parallel)
         let executor = Arc::clone(&self.executor);
+        let execution_timeout = self.rule_execution_timeout;
         let execution_futures = rules_to_execute
             .into_iter()
             .map(|(idx, rule, is_onchange)| {
                 let executor = Arc::clone(&executor);
                 async move {
+                    if self.shutdown.is_cancelled() {
+                        return None;
+                    }
+                    let reservation = match self.reserve_background_execution(rule.id).await {
+                        Ok(reservation) => reservation,
+                        Err(ReservationBusy::Rule) => {
+                            debug!(
+                                rule_id = rule.id,
+                                "Coalesced scheduled trigger while the rule is already executing"
+                            );
+                            return None;
+                        },
+                        Err(ReservationBusy::Capacity) => {
+                            error!(
+                                rule_id = rule.id,
+                                "Rule execution semaphore closed unexpectedly"
+                            );
+                            return None;
+                        },
+                    };
                     debug!("Executing rule: {}", rule.id);
                     let rule_id = rule.id;
                     let rule_name = rule.name.clone();
-                    let result = executor.execute(&rule).await;
-                    ExecutionOutcome {
+                    let result = execute_with_timeout(&executor, &rule, execution_timeout).await;
+                    Some(ExecutionOutcome {
+                        _rule: reservation.finish_execution(),
                         idx,
                         rule_id,
                         rule_name,
                         is_onchange,
                         result,
-                    }
+                    })
                 }
             });
 
         let execution_results: Vec<ExecutionOutcome> = stream::iter(execution_futures)
             .buffer_unordered(self.max_concurrency)
+            .filter_map(std::future::ready)
             .collect()
             .await;
 
         // Process results sequentially (logging and local history writes)
         struct TimestampUpdate {
+            /// Keep the rule reserved until trigger/cooldown state reflects
+            /// the completed execution.
+            _rule: RuleFlightGuard,
             idx: usize,
             rule_id: i64,
             start_cooldown: bool,
             is_onchange: bool,
+            /// Once a device action may have been accepted, advance the trigger
+            /// baseline even when the command result is a failure. The current
+            /// UDS wire has no end-to-end deduplication identity, so replaying
+            /// an ambiguous command would be less safe than recording the
+            /// attempted trigger.
+            advance_onchange: bool,
             /// Per-point values surfaced by the executor (SHM-first read).
             /// Used to advance OnChange last_value against what executor
             /// actually saw from SHM.
             executor_point_values: Arc<HashMap<String, f64>>,
         }
         let mut updates: Vec<TimestampUpdate> = Vec::with_capacity(execution_results.len());
+        let mut history_results = Vec::with_capacity(execution_results.len());
 
         for outcome in execution_results {
             match outcome.result {
@@ -663,9 +950,7 @@ impl RuleScheduler {
                         .get_logger(outcome.rule_id, &outcome.rule_name);
                     logger.log_execution(&result, &result.variable_values);
 
-                    // Persist locally for API/WebSocket diagnostics.
-                    self.write_rule_exec(outcome.rule_id, &outcome.rule_name, &result)
-                        .await;
+                    history_results.push((outcome.rule_id, result.clone()));
 
                     let start_cooldown = result.success && !result.actions_executed.is_empty();
 
@@ -680,11 +965,17 @@ impl RuleScheduler {
                     }
 
                     let executor_point_values = Arc::clone(&result.point_values);
+                    let advance_onchange = result
+                        .actions_executed
+                        .iter()
+                        .any(crate::ActionResult::delivery_possible);
                     updates.push(TimestampUpdate {
+                        _rule: outcome._rule,
                         idx: outcome.idx,
                         rule_id: outcome.rule_id,
                         start_cooldown,
                         is_onchange: outcome.is_onchange,
+                        advance_onchange,
                         executor_point_values,
                     });
                 },
@@ -692,10 +983,16 @@ impl RuleScheduler {
                     error!("Rule {} err: {}", outcome.rule_id, e);
                     // Still update last_execution to prevent retry spam
                     updates.push(TimestampUpdate {
+                        _rule: outcome._rule,
                         idx: outcome.idx,
                         rule_id: outcome.rule_id,
                         start_cooldown: false,
                         is_onchange: outcome.is_onchange,
+                        // The only executor-level error today is the outer
+                        // deadline. Cancellation may have interrupted an
+                        // in-flight command after local transport acceptance,
+                        // so retrying automatically would risk a duplicate.
+                        advance_onchange: outcome.is_onchange,
                         executor_point_values: Arc::new(HashMap::new()),
                     });
                 },
@@ -712,6 +1009,8 @@ impl RuleScheduler {
                         continue;
                     }
                     scheduled.last_execution = Some(now);
+                    scheduled.retry_not_before =
+                        (!update.advance_onchange).then_some(now + Duration::from_secs(1));
                     if update.start_cooldown {
                         scheduled.last_cooldown_start = Some(now);
                     }
@@ -721,6 +1020,7 @@ impl RuleScheduler {
                     // the value at the moment of this trigger, not the
                     // ever-changing latest sample.
                     if update.is_onchange
+                        && update.advance_onchange
                         && let TriggerConfig::OnChange { point_refs, .. } = &scheduled.trigger
                     {
                         for pref in point_refs {
@@ -745,6 +1045,11 @@ impl RuleScheduler {
             }
         } // Write lock released here (~100μs)
 
+        // Control state is committed in memory before best-effort diagnostics.
+        // The entire history wave shares one deadline, so N contended writes
+        // cannot turn a 500 ms policy into N x 500 ms scheduler latency.
+        persist_rule_execution_batch(&self.pool, history_results, RULE_HISTORY_WRITE_TIMEOUT).await;
+
         Ok(())
     }
 
@@ -757,22 +1062,68 @@ impl RuleScheduler {
     pub async fn status(&self) -> SchedulerStatus {
         let rules = self.rules.read().await;
         let enabled_count = rules.iter().filter(|r| r.rule.enabled).count();
+        let (point_watch_configured, point_watch_subscriptions, point_watch_dropped_events) = self
+            .pw_dispatcher
+            .as_ref()
+            .map(|dispatcher| {
+                let dispatcher = dispatcher
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                (
+                    true,
+                    dispatcher.subscription_count(),
+                    dispatcher.dropped_count(),
+                )
+            })
+            .unwrap_or((false, 0, 0));
 
         SchedulerStatus {
             running: self.is_running(),
             total_rules: rules.len(),
             enabled_rules: enabled_count,
+            invalid_enabled_rules: rules
+                .iter()
+                .filter(|rule| rule.rule.enabled && !rule.trigger_valid)
+                .count(),
             tick_interval_ms: self.tick_ms,
+            point_watch_configured,
+            point_watch_subscriptions,
+            point_watch_dropped_events,
+            rule_log: self.logger_manager.stats(),
         }
     }
 
-    /// Execute a specific rule by ID (manual trigger)
+    /// Drains the bounded rule-log worker. Call from `spawn_blocking` after all
+    /// scheduler entry paths have stopped producing records.
+    pub fn shutdown_rule_logging(&self) -> std::io::Result<()> {
+        self.logger_manager.shutdown_blocking()
+    }
+
+    /// Execute a specific rule by ID (manual trigger).
+    ///
+    /// Manual requests preserve their synchronous acceptance semantics: if the
+    /// same rule is already running, the request receives a scheduler-busy
+    /// error instead of silently claiming that another execution was its own.
     pub async fn execute_rule(&self, rule_id: i64) -> Result<RuleExecutionResult> {
         // Load the rule from database
         let rule = repository::get_rule_for_execution(&self.pool, rule_id).await?;
 
-        // Execute it
-        self.executor.execute(&rule).await
+        let _reservation = self
+            .try_reserve_execution(rule_id)
+            .map_err(|busy| match busy {
+                ReservationBusy::Rule => crate::RuleError::SchedulerError(format!(
+                    "rule {rule_id} is already executing; overlapping manual execution was rejected"
+                )),
+                ReservationBusy::Capacity => crate::RuleError::SchedulerError(format!(
+                    "rule execution capacity is busy (max_concurrency={}); manual execution of rule {rule_id} was rejected",
+                    self.max_concurrency
+                )),
+            })?;
+
+        // Manual execution validates the persisted trigger as well. A damaged
+        // rule cannot bypass scheduler fail-closed behavior via the API.
+        resolve_trigger(rule.trigger_config.as_deref())?;
+        execute_with_timeout(&self.executor, &rule, self.rule_execution_timeout).await
     }
 
     /// Batch-fetch current values for all subscribed points.
@@ -800,13 +1151,6 @@ impl RuleScheduler {
         out
     }
 
-    /// Persist a rule execution in the local SQLite history.
-    async fn write_rule_exec(&self, rule_id: i64, _rule_name: &str, result: &RuleExecutionResult) {
-        if let Err(error) = persist_rule_execution(&self.pool, result).await {
-            warn!(rule_id, %error, "failed to persist rule execution history");
-        }
-    }
-
     // ──────────────────────────────────────────────────────────────────────
     // PointWatch fast-path execution
     // ──────────────────────────────────────────────────────────────────────
@@ -818,8 +1162,9 @@ impl RuleScheduler {
     /// from the current SHM generation before deadband evaluation, so stale,
     /// duplicated, or spuriously routed hints cannot become rule inputs.
     ///
-    /// Does NOT remove the 100 ms fallback — both paths run in parallel.
-    /// The tick path provides the fallback when the UDS is down or hints drop.
+    /// Does NOT remove the 100 ms fallback. The paths may run in parallel for
+    /// different rules; same-rule overlap is coalesced. The tick path provides
+    /// the fallback when the UDS is down or hints drop.
     async fn execute_watch_triggered(
         &self,
         watch_event: &crate::point_watch_dispatcher::WatchEvent,
@@ -833,7 +1178,9 @@ impl RuleScheduler {
             rules
                 .iter()
                 .filter(|scheduled| {
-                    scheduled.rule.enabled && rule_id_set.contains(&scheduled.rule.id)
+                    scheduled.rule.enabled
+                        && scheduled.trigger_valid
+                        && rule_id_set.contains(&scheduled.rule.id)
                 })
                 .filter_map(|scheduled| match &scheduled.trigger {
                     TriggerConfig::OnChange { point_refs, .. } => Some(point_refs.clone()),
@@ -853,7 +1200,10 @@ impl RuleScheduler {
                 .iter()
                 .enumerate()
                 .filter_map(|(idx, scheduled)| {
-                    if !scheduled.rule.enabled || !rule_id_set.contains(&scheduled.rule.id) {
+                    if !scheduled.rule.enabled
+                        || !scheduled.trigger_valid
+                        || !rule_id_set.contains(&scheduled.rule.id)
+                    {
                         return None;
                     }
                     let TriggerConfig::OnChange {
@@ -877,10 +1227,14 @@ impl RuleScheduler {
                             now.duration_since(start).as_millis() as u64
                                 >= scheduled.rule.cooldown_ms
                         });
-                    (changed && cooldown_ok).then(|| (idx, Arc::clone(&scheduled.rule)))
+                    let retry_ok = scheduled
+                        .retry_not_before
+                        .is_none_or(|deadline| now >= deadline);
+                    (changed && cooldown_ok && retry_ok).then(|| (idx, Arc::clone(&scheduled.rule)))
                 })
                 .collect()
         };
+        let to_execute = bounded_fair_batch(to_execute, &self.watch_cursor, self.max_concurrency);
 
         if to_execute.is_empty() {
             return Ok(());
@@ -889,21 +1243,51 @@ impl RuleScheduler {
         // Execute the matching rules
         use futures::stream::{self, StreamExt};
         let executor = Arc::clone(&self.executor);
-        let results: Vec<(usize, i64, String, Result<RuleExecutionResult>)> =
-            stream::iter(to_execute.into_iter().map(|(idx, rule)| {
-                let executor = Arc::clone(&executor);
-                async move {
-                    let id = rule.id;
-                    let name = rule.name.clone();
-                    let result = executor.execute(&rule).await;
-                    (idx, id, name, result)
+        let execution_timeout = self.rule_execution_timeout;
+        let results: Vec<(
+            RuleFlightGuard,
+            usize,
+            i64,
+            String,
+            Result<RuleExecutionResult>,
+        )> = stream::iter(to_execute.into_iter().map(|(idx, rule)| {
+            let executor = Arc::clone(&executor);
+            async move {
+                if self.shutdown.is_cancelled() {
+                    return None;
                 }
-            }))
-            .buffer_unordered(self.max_concurrency)
-            .collect()
-            .await;
+                let reservation = match self.reserve_background_execution(rule.id).await {
+                    Ok(reservation) => reservation,
+                    Err(ReservationBusy::Rule) => {
+                        debug!(
+                            rule_id = rule.id,
+                            "Coalesced PointWatch trigger while the rule is already executing"
+                        );
+                        return None;
+                    },
+                    Err(ReservationBusy::Capacity) => {
+                        error!(
+                            rule_id = rule.id,
+                            "Rule execution semaphore closed unexpectedly"
+                        );
+                        return None;
+                    },
+                };
+                let id = rule.id;
+                let name = rule.name.clone();
+                let result = execute_with_timeout(&executor, &rule, execution_timeout).await;
+                Some((reservation.finish_execution(), idx, id, name, result))
+            }
+        }))
+        .buffer_unordered(self.max_concurrency)
+        .filter_map(std::future::ready)
+        .collect()
+        .await;
 
         struct WatchUpdate {
+            /// Keep the rule reserved until OnChange/cooldown state reflects
+            /// the completed execution.
+            _rule: RuleFlightGuard,
             idx: usize,
             rule_id: i64,
             start_cooldown: bool,
@@ -911,29 +1295,36 @@ impl RuleScheduler {
             point_values: Arc<HashMap<String, f64>>,
         }
         let mut updates = Vec::with_capacity(results.len());
-        for (idx, rule_id, rule_name, result) in results {
+        let mut history_results = Vec::with_capacity(results.len());
+        for (rule_reservation, idx, rule_id, rule_name, result) in results {
             match result {
                 Ok(exec_result) => {
                     let logger = self.logger_manager.get_logger(rule_id, &rule_name);
                     logger.log_execution(&exec_result, &exec_result.variable_values);
-                    self.write_rule_exec(rule_id, &rule_name, &exec_result)
-                        .await;
+                    history_results.push((rule_id, exec_result.clone()));
                     updates.push(WatchUpdate {
+                        _rule: rule_reservation,
                         idx,
                         rule_id,
                         start_cooldown: exec_result.success
                             && !exec_result.actions_executed.is_empty(),
-                        advance_onchange: true,
+                        advance_onchange: exec_result
+                            .actions_executed
+                            .iter()
+                            .any(crate::ActionResult::delivery_possible),
                         point_values: Arc::clone(&exec_result.point_values),
                     });
                 },
                 Err(error) => {
                     error!("Watch-triggered rule {} err: {}", rule_id, error);
                     updates.push(WatchUpdate {
+                        _rule: rule_reservation,
                         idx,
                         rule_id,
                         start_cooldown: false,
-                        advance_onchange: false,
+                        // See the scheduled-path deadline note above: an
+                        // automatic retry is unsafe after ambiguous delivery.
+                        advance_onchange: true,
                         point_values: Arc::new(HashMap::new()),
                     });
                 },
@@ -950,6 +1341,8 @@ impl RuleScheduler {
                     continue;
                 }
                 scheduled.last_execution = Some(now);
+                scheduled.retry_not_before =
+                    (!update.advance_onchange).then_some(now + Duration::from_secs(1));
                 if update.start_cooldown {
                     scheduled.last_cooldown_start = Some(now);
                 }
@@ -973,6 +1366,8 @@ impl RuleScheduler {
                 }
             }
         }
+
+        persist_rule_execution_batch(&self.pool, history_results, RULE_HISTORY_WRITE_TIMEOUT).await;
 
         Ok(())
     }
@@ -1051,6 +1446,22 @@ fn rule_execution_port_error(error: crate::RuleError) -> aether_ports::PortError
     PortError::new(kind, error.to_string())
 }
 
+async fn execute_with_timeout(
+    executor: &RuleExecutor,
+    rule: &Rule,
+    deadline: Duration,
+) -> Result<RuleExecutionResult> {
+    tokio::time::timeout(deadline, executor.execute(rule))
+        .await
+        .map_err(|_| {
+            crate::RuleError::ExecutionError(format!(
+                "rule {} execution exceeded {} ms",
+                rule.id,
+                deadline.as_millis()
+            ))
+        })?
+}
+
 async fn persist_rule_execution(pool: &SqlitePool, result: &RuleExecutionResult) -> Result<()> {
     let payload = serde_json::to_string(result)?;
     sqlx::query(
@@ -1066,13 +1477,44 @@ async fn persist_rule_execution(pool: &SqlitePool, result: &RuleExecutionResult)
     Ok(())
 }
 
+async fn persist_rule_execution_batch(
+    pool: &SqlitePool,
+    results: Vec<(i64, RuleExecutionResult)>,
+    deadline: Duration,
+) {
+    if results.is_empty() {
+        return;
+    }
+    use futures::stream::{self, StreamExt};
+
+    let count = results.len();
+    let writes =
+        stream::iter(results).for_each_concurrent(Some(8), |(rule_id, result)| async move {
+            if let Err(error) = persist_rule_execution(pool, &result).await {
+                warn!(rule_id, %error, "failed to persist rule execution history");
+            }
+        });
+    if tokio::time::timeout(deadline, writes).await.is_err() {
+        warn!(
+            count,
+            timeout_ms = deadline.as_millis(),
+            "Rule execution history batch exceeded its total deadline; unfinished diagnostics were dropped"
+        );
+    }
+}
+
 /// Scheduler status information
 #[derive(Debug, Clone)]
 pub struct SchedulerStatus {
     pub running: bool,
     pub total_rules: usize,
     pub enabled_rules: usize,
+    pub invalid_enabled_rules: usize,
     pub tick_interval_ms: u64,
+    pub point_watch_configured: bool,
+    pub point_watch_subscriptions: usize,
+    pub point_watch_dropped_events: u64,
+    pub rule_log: crate::logger::RuleLogStats,
 }
 
 #[cfg(test)]
@@ -1080,10 +1522,13 @@ mod tests {
     use super::*;
     use crate::types::{RuleFlow, RuleNode, RuleValueAssignment, RuleVariable, RuleWires};
     use crate::{RuleActionCommand, RuleActionCommandFacade};
+    use aether_domain::{CommandId, TimestampMs};
     use aether_ports::{CommandReceipt, PortError, PortErrorKind, PortResult};
     use async_trait::async_trait;
     use serde_json::json;
     use std::collections::HashMap;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::sync::Notify;
 
     struct FailingActionCommands;
 
@@ -1097,12 +1542,104 @@ mod tests {
         }
     }
 
+    struct CountingFailingActionCommands {
+        calls: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl RuleActionCommandFacade for CountingFailingActionCommands {
+        async fn write_action(&self, _command: RuleActionCommand) -> PortResult<CommandReceipt> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Err(PortError::new(
+                PortErrorKind::Unavailable,
+                "simulated lost/failed command receipt",
+            ))
+        }
+    }
+
+    struct BlockingActionCommands {
+        calls: AtomicUsize,
+        entered: Notify,
+        release: Notify,
+    }
+
+    impl BlockingActionCommands {
+        fn new() -> Self {
+            Self {
+                calls: AtomicUsize::new(0),
+                entered: Notify::new(),
+                release: Notify::new(),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl RuleActionCommandFacade for BlockingActionCommands {
+        async fn write_action(&self, _command: RuleActionCommand) -> PortResult<CommandReceipt> {
+            let call = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
+            self.entered.notify_one();
+            self.release.notified().await;
+            Ok(CommandReceipt::new(
+                CommandId::new(call as u128),
+                TimestampMs::new(1),
+            ))
+        }
+    }
+
     #[test]
     fn test_trigger_config_default() {
         let TriggerConfig::Interval { interval_ms } = TriggerConfig::default() else {
             panic!("Default should be Interval");
         };
         assert_eq!(interval_ms, 1000);
+    }
+
+    #[test]
+    fn single_flight_is_per_rule_and_releases_with_its_guard() {
+        let flights = Arc::new(RuleFlights::default());
+        let first = flights.try_enter(7).expect("first rule-7 execution");
+        assert!(
+            flights.try_enter(7).is_none(),
+            "the same rule must not overlap"
+        );
+        let other = flights
+            .try_enter(8)
+            .expect("a different rule must remain independent");
+
+        drop(first);
+        assert!(
+            flights.try_enter(7).is_some(),
+            "dropping the execution guard makes the rule eligible again"
+        );
+        drop(other);
+    }
+
+    #[test]
+    fn bounded_cycle_is_one_wave_and_rotates_fairly() {
+        let cursor = AtomicUsize::new(0);
+        let due = vec![0, 1, 2, 3, 4];
+
+        assert_eq!(bounded_fair_batch(due.clone(), &cursor, 2), [0, 1]);
+        assert_eq!(bounded_fair_batch(due.clone(), &cursor, 2), [2, 3]);
+        assert_eq!(bounded_fair_batch(due, &cursor, 2), [4, 0]);
+    }
+
+    #[tokio::test]
+    async fn zero_tick_uses_the_safe_default_interval() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("open scheduler database");
+        let logs = tempfile::tempdir().expect("temporary rule logs");
+        let scheduler = RuleScheduler::new(
+            Arc::new(crate::MemoryRuleLiveState::new()),
+            pool,
+            0,
+            logs.path().to_path_buf(),
+        );
+
+        assert_eq!(scheduler.status().await.tick_interval_ms, DEFAULT_TICK_MS);
     }
 
     /// Helper to create a minimal test rule
@@ -1179,6 +1716,17 @@ mod tests {
         }
     }
 
+    fn create_predispatch_skipped_action_rule(id: i64) -> Rule {
+        let mut rule = create_action_rule(id, 0);
+        let RuleNode::ChangeValue { rule: actions, .. } =
+            rule.flow.nodes.get_mut("action").expect("action node")
+        else {
+            panic!("test rule action node must be ChangeValue");
+        };
+        actions[0].value = json!("UNKNOWN_ASSIGNMENT_VALUE");
+        rule
+    }
+
     async fn rule_pool(rule: &Rule) -> SqlitePool {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
@@ -1200,6 +1748,11 @@ mod tests {
         .execute(&pool)
         .await
         .expect("create rules table");
+        insert_rule(&pool, rule).await;
+        pool
+    }
+
+    async fn insert_rule(pool: &SqlitePool, rule: &Rule) {
         sqlx::query(
             "INSERT INTO rules \
              (id, name, description, enabled, priority, cooldown_ms, trigger_config, nodes_json) \
@@ -1213,10 +1766,9 @@ mod tests {
         .bind(i64::try_from(rule.cooldown_ms).expect("test cooldown fits i64"))
         .bind(&rule.trigger_config)
         .bind(serde_json::to_string(&rule.flow).expect("serialize test flow"))
-        .execute(&pool)
+        .execute(pool)
         .await
         .expect("insert action rule");
-        pool
     }
 
     fn failing_action_scheduler(pool: SqlitePool, log_root: PathBuf) -> RuleScheduler {
@@ -1264,6 +1816,8 @@ mod tests {
             last_execution: None,
             last_cooldown_start: None,
             onchange_state: OnChangeState::default(),
+            trigger_valid: true,
+            retry_not_before: None,
         });
 
         scheduler.tick().await.expect("run scheduler tick");
@@ -1276,6 +1830,377 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn onchange_predispatch_skip_preserves_baseline_and_applies_backoff() {
+        let rule = create_predispatch_skipped_action_rule(320);
+        let pool = rule_pool(&rule).await;
+        let live_state = Arc::new(crate::MemoryRuleLiveState::new());
+        assert!(live_state.set_instance(1, 0, 0, 10.0, 1));
+        let logs = tempfile::tempdir().expect("temporary rule logs");
+        let scheduler = RuleScheduler::with_state_store(
+            live_state,
+            pool,
+            1,
+            logs.path().to_path_buf(),
+            Arc::new(aether_calc::MemoryStateStore::new()),
+            None,
+        );
+        let point = pref(1, 0);
+        scheduler.rules.write().await.push(ScheduledRule {
+            rule: Arc::new(rule),
+            trigger: TriggerConfig::OnChange {
+                point_refs: vec![point],
+                time_deadband_ms: None,
+                value_deadband: None,
+            },
+            trigger_valid: true,
+            last_execution: None,
+            last_cooldown_start: None,
+            onchange_state: OnChangeState::default(),
+            retry_not_before: None,
+        });
+
+        scheduler.tick().await.expect("evaluate skipped action");
+
+        let rules = scheduler.rules.read().await;
+        assert!(rules[0].last_execution.is_some());
+        assert!(
+            rules[0].onchange_state.last_value.is_empty(),
+            "a skip before the command facade must not consume the input transition"
+        );
+        assert!(
+            rules[0].onchange_state.last_trigger.is_none(),
+            "a pre-dispatch skip is not an OnChange delivery attempt"
+        );
+        assert!(
+            rules[0]
+                .retry_not_before
+                .is_some_and(|retry| retry > Instant::now()),
+            "pre-dispatch failures get bounded retry backoff"
+        );
+    }
+
+    #[tokio::test]
+    async fn onchange_failed_receipt_advances_baseline_and_is_not_replayed() {
+        let rule = create_action_rule(321, 0);
+        let pool = rule_pool(&rule).await;
+        let live_state = Arc::new(crate::MemoryRuleLiveState::new());
+        assert!(live_state.set_instance(1, 0, 0, 10.0, 1));
+        let commands = Arc::new(CountingFailingActionCommands {
+            calls: AtomicUsize::new(0),
+        });
+        let command_facade: Arc<dyn RuleActionCommandFacade> = commands.clone();
+        let logs = tempfile::tempdir().expect("temporary rule logs");
+        let scheduler = RuleScheduler::with_state_store(
+            live_state,
+            pool,
+            1,
+            logs.path().to_path_buf(),
+            Arc::new(aether_calc::MemoryStateStore::new()),
+            Some(command_facade),
+        );
+        let point = pref(1, 0);
+        scheduler.rules.write().await.push(ScheduledRule {
+            rule: Arc::new(rule),
+            trigger: TriggerConfig::OnChange {
+                point_refs: vec![point],
+                time_deadband_ms: None,
+                value_deadband: None,
+            },
+            trigger_valid: true,
+            last_execution: None,
+            last_cooldown_start: None,
+            onchange_state: OnChangeState::default(),
+            retry_not_before: None,
+        });
+
+        scheduler.tick().await.expect("first delivery attempt");
+        scheduler.tick().await.expect("same-value follow-up tick");
+
+        assert_eq!(
+            commands.calls.load(Ordering::SeqCst),
+            1,
+            "a failed/ambiguous command receipt must not replay the same transition"
+        );
+        let rules = scheduler.rules.read().await;
+        assert_eq!(rules[0].onchange_state.last_value[&point.cache_key()], 10.0);
+        assert!(rules[0].onchange_state.last_trigger.is_some());
+        assert!(rules[0].retry_not_before.is_none());
+    }
+
+    #[tokio::test]
+    async fn onchange_command_deadline_advances_baseline_and_is_not_replayed() {
+        let rule = create_action_rule(322, 0);
+        let pool = rule_pool(&rule).await;
+        let live_state = Arc::new(crate::MemoryRuleLiveState::new());
+        assert!(live_state.set_instance(1, 0, 0, 10.0, 1));
+        let commands = Arc::new(BlockingActionCommands::new());
+        let command_facade: Arc<dyn RuleActionCommandFacade> = commands.clone();
+        let logs = tempfile::tempdir().expect("temporary rule logs");
+        let mut scheduler = RuleScheduler::with_state_store(
+            live_state,
+            pool,
+            1,
+            logs.path().to_path_buf(),
+            Arc::new(aether_calc::MemoryStateStore::new()),
+            Some(command_facade),
+        );
+        scheduler
+            .set_execution_timeout(Duration::from_millis(10))
+            .expect("valid test timeout");
+        let point = pref(1, 0);
+        scheduler.rules.write().await.push(ScheduledRule {
+            rule: Arc::new(rule),
+            trigger: TriggerConfig::OnChange {
+                point_refs: vec![point],
+                time_deadband_ms: None,
+                value_deadband: None,
+            },
+            trigger_valid: true,
+            last_execution: None,
+            last_cooldown_start: None,
+            onchange_state: OnChangeState::default(),
+            retry_not_before: None,
+        });
+
+        scheduler
+            .tick()
+            .await
+            .expect("deadline outcome is recorded");
+        scheduler.tick().await.expect("same-value follow-up tick");
+
+        assert_eq!(
+            commands.calls.load(Ordering::SeqCst),
+            1,
+            "an ambiguous command timeout must not replay the same transition"
+        );
+        let rules = scheduler.rules.read().await;
+        assert_eq!(rules[0].onchange_state.last_value[&point.cache_key()], 10.0);
+        assert!(rules[0].onchange_state.last_trigger.is_some());
+    }
+
+    #[tokio::test]
+    async fn tick_pointwatch_and_manual_share_one_rule_flight() {
+        let rule = create_action_rule(33, 0);
+        let pool = rule_pool(&rule).await;
+        let live_state = Arc::new(crate::MemoryRuleLiveState::new());
+        assert!(live_state.set_instance(1, 0, 0, 10.0, 1));
+        assert!(live_state.set_instance(42, 1, 7, 0.0, 1));
+        let commands = Arc::new(BlockingActionCommands::new());
+        let command_facade: Arc<dyn RuleActionCommandFacade> = commands.clone();
+        let logs = tempfile::tempdir().expect("temporary rule logs");
+        let scheduler = Arc::new(RuleScheduler::with_state_store(
+            live_state,
+            pool,
+            1,
+            logs.path().to_path_buf(),
+            Arc::new(aether_calc::MemoryStateStore::new()),
+            Some(command_facade),
+        ));
+        let point = PointRef {
+            instance: 1,
+            point_type: PointKind::Measurement,
+            point: 0,
+        };
+        scheduler.rules.write().await.push(ScheduledRule {
+            rule: Arc::new(rule),
+            trigger: TriggerConfig::OnChange {
+                point_refs: vec![point],
+                time_deadband_ms: None,
+                value_deadband: None,
+            },
+            last_execution: None,
+            last_cooldown_start: None,
+            onchange_state: OnChangeState::default(),
+            trigger_valid: true,
+            retry_not_before: None,
+        });
+
+        let tick_task = {
+            let scheduler = Arc::clone(&scheduler);
+            tokio::spawn(async move { scheduler.tick().await })
+        };
+        tokio::time::timeout(Duration::from_secs(1), commands.entered.notified())
+            .await
+            .expect("tick entered the governed action");
+
+        let manual = scheduler
+            .execute_rule(33)
+            .await
+            .expect_err("manual overlap must be rejected");
+        assert!(
+            matches!(manual, crate::RuleError::SchedulerError(message) if message.contains("already executing"))
+        );
+        scheduler
+            .execute_watch_triggered(&crate::point_watch_dispatcher::WatchEvent {
+                rule_ids: vec![33],
+                channel_id: 10,
+                point_kind: aether_domain::PointKind::Telemetry,
+                point_id: 0,
+                value: 999.0,
+                raw: 999.0,
+                timestamp_ms: 1,
+            })
+            .await
+            .expect("PointWatch overlap is coalesced");
+        assert_eq!(
+            commands.calls.load(Ordering::SeqCst),
+            1,
+            "PointWatch and manual paths must not dispatch a second command"
+        );
+
+        commands.release.notify_one();
+        tick_task
+            .await
+            .expect("tick task join")
+            .expect("tick completed");
+        assert_eq!(commands.calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn process_limit_is_shared_by_different_rules_across_every_entry_path() {
+        let tick_rule = create_action_rule(34, 0);
+        let watch_rule = create_action_rule(35, 0);
+        let manual_rule = create_action_rule(36, 0);
+        let pool = rule_pool(&tick_rule).await;
+        insert_rule(&pool, &watch_rule).await;
+        insert_rule(&pool, &manual_rule).await;
+        let live_state = Arc::new(crate::MemoryRuleLiveState::new());
+        assert!(live_state.set_instance(1, 0, 0, 10.0, 1));
+        assert!(live_state.set_instance(2, 0, 0, 20.0, 1));
+        assert!(live_state.set_instance(42, 1, 7, 0.0, 1));
+        let commands = Arc::new(BlockingActionCommands::new());
+        let command_facade: Arc<dyn RuleActionCommandFacade> = commands.clone();
+        let logs = tempfile::tempdir().expect("temporary rule logs");
+        let mut scheduler = RuleScheduler::with_state_store(
+            Arc::clone(&live_state),
+            pool,
+            1,
+            logs.path().to_path_buf(),
+            Arc::new(aether_calc::MemoryStateStore::new()),
+            Some(command_facade),
+        );
+        scheduler
+            .set_max_concurrency(1)
+            .expect("valid test concurrency");
+        assert_eq!(scheduler.execution_slots.available_permits(), 1);
+        let scheduler = Arc::new(scheduler);
+        scheduler.rules.write().await.extend([
+            ScheduledRule {
+                rule: Arc::new(tick_rule),
+                trigger: TriggerConfig::OnChange {
+                    point_refs: vec![pref(1, 0)],
+                    time_deadband_ms: None,
+                    value_deadband: None,
+                },
+                last_execution: None,
+                last_cooldown_start: None,
+                onchange_state: OnChangeState::default(),
+                trigger_valid: true,
+                retry_not_before: None,
+            },
+            ScheduledRule {
+                rule: Arc::new(watch_rule),
+                trigger: TriggerConfig::OnChange {
+                    point_refs: vec![pref(2, 0)],
+                    time_deadband_ms: None,
+                    value_deadband: None,
+                },
+                last_execution: None,
+                last_cooldown_start: None,
+                onchange_state: OnChangeState {
+                    last_value: HashMap::from([(pref(2, 0).cache_key(), 20.0)]),
+                    last_trigger: None,
+                },
+                trigger_valid: true,
+                retry_not_before: None,
+            },
+        ]);
+
+        let tick_task = {
+            let scheduler = Arc::clone(&scheduler);
+            tokio::spawn(async move { scheduler.tick().await })
+        };
+        tokio::time::timeout(Duration::from_secs(1), commands.entered.notified())
+            .await
+            .expect("first scheduled rule acquired the only process slot");
+
+        assert!(live_state.set_instance(2, 0, 0, 30.0, 2));
+        let watch_task = {
+            let scheduler = Arc::clone(&scheduler);
+            tokio::spawn(async move {
+                scheduler
+                    .execute_watch_triggered(&crate::point_watch_dispatcher::WatchEvent {
+                        rule_ids: vec![35],
+                        channel_id: 10,
+                        point_kind: aether_domain::PointKind::Telemetry,
+                        point_id: 0,
+                        value: 30.0,
+                        raw: 30.0,
+                        timestamp_ms: 2,
+                    })
+                    .await
+            })
+        };
+        tokio::task::yield_now().await;
+        let manual = scheduler
+            .execute_rule(36)
+            .await
+            .expect_err("manual capacity overlap must return busy");
+        assert!(
+            matches!(manual, crate::RuleError::SchedulerError(message) if message.contains("capacity is busy") && message.contains("max_concurrency=1"))
+        );
+        assert_eq!(
+            commands.calls.load(Ordering::SeqCst),
+            1,
+            "different tick, PointWatch, and manual rules share one global slot"
+        );
+
+        commands.release.notify_one();
+        tokio::time::timeout(Duration::from_secs(1), commands.entered.notified())
+            .await
+            .expect("queued PointWatch rule acquired the released process slot");
+        assert_eq!(
+            commands.calls.load(Ordering::SeqCst),
+            2,
+            "background work waits for capacity instead of exceeding the limit"
+        );
+        commands.release.notify_one();
+        tick_task
+            .await
+            .expect("tick task join")
+            .expect("tick completed");
+        watch_task
+            .await
+            .expect("PointWatch task join")
+            .expect("PointWatch completed");
+    }
+
+    #[tokio::test]
+    async fn invalid_concurrency_is_rejected_without_constructing_a_semaphore() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("open scheduler database");
+        let logs = tempfile::tempdir().expect("temporary rule logs");
+        let mut scheduler = RuleScheduler::new(
+            Arc::new(crate::MemoryRuleLiveState::new()),
+            pool,
+            100,
+            logs.path().to_path_buf(),
+        );
+
+        assert!(scheduler.set_max_concurrency(0).is_err());
+        assert!(
+            scheduler
+                .set_max_concurrency(MAX_RULE_CONCURRENCY + 1)
+                .is_err()
+        );
+        assert_eq!(scheduler.max_concurrency, 4);
+        assert_eq!(scheduler.execution_slots.available_permits(), 4);
+    }
+
     #[test]
     fn test_scheduled_rule_trigger_interval() {
         let rule = Arc::new(create_test_rule(1, "Interval Test", 0));
@@ -1286,6 +2211,8 @@ mod tests {
             last_execution: None,
             last_cooldown_start: None,
             onchange_state: OnChangeState::default(),
+            trigger_valid: true,
+            retry_not_before: None,
         };
 
         // Verify trigger config
@@ -1309,6 +2236,8 @@ mod tests {
             last_execution: None,
             last_cooldown_start: None,
             onchange_state: OnChangeState::default(),
+            trigger_valid: true,
+            retry_not_before: None,
         };
 
         let scheduled2 = ScheduledRule {
@@ -1317,6 +2246,8 @@ mod tests {
             last_execution: None,
             last_cooldown_start: None,
             onchange_state: OnChangeState::default(),
+            trigger_valid: true,
+            retry_not_before: None,
         };
 
         // Verify they are independent
@@ -1378,6 +2309,8 @@ mod tests {
             last_execution: None,
             last_cooldown_start: None,
             onchange_state,
+            trigger_valid: true,
+            retry_not_before: None,
         });
 
         scheduler
@@ -1448,6 +2381,55 @@ mod tests {
         assert_eq!(payload["success"], true);
         assert_eq!(payload["variable_values"]["soc"], 52.5);
         assert!(error.is_none());
+    }
+
+    #[tokio::test]
+    async fn sixty_four_contended_history_writes_share_one_total_deadline() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("open in-memory sqlite");
+        sqlx::query(
+            "CREATE TABLE rule_history (\
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,\
+                 rule_id INTEGER NOT NULL,\
+                 triggered_at TIMESTAMP NOT NULL,\
+                 execution_result TEXT,\
+                 error TEXT\
+             )",
+        )
+        .execute(&pool)
+        .await
+        .expect("create history table");
+        let held = pool.acquire().await.expect("hold the only DB connection");
+        let result = RuleExecutionResult {
+            rule_id: 1,
+            success: true,
+            actions_executed: Vec::new(),
+            error: None,
+            execution_path: vec!["start".to_string(), "end".to_string()],
+            matched_condition: None,
+            variable_values: Arc::new(HashMap::new()),
+            point_values: Arc::new(HashMap::new()),
+            node_details: HashMap::new(),
+        };
+        let results = (0..64)
+            .map(|id| {
+                let mut result = result.clone();
+                result.rule_id = id;
+                (id, result)
+            })
+            .collect();
+        let started = Instant::now();
+
+        persist_rule_execution_batch(&pool, results, Duration::from_millis(20)).await;
+
+        assert!(
+            started.elapsed() < Duration::from_millis(200),
+            "64 blocked writes must not each consume an independent deadline"
+        );
+        drop(held);
     }
 
     #[tokio::test]
@@ -1841,6 +2823,8 @@ mod tests {
             last_execution: Some(now),
             last_cooldown_start: Some(now),
             onchange_state: onchange,
+            trigger_valid: true,
+            retry_not_before: None,
         }];
         let mut loaded = vec![
             ScheduledRule {
@@ -1849,6 +2833,8 @@ mod tests {
                 last_execution: None,
                 last_cooldown_start: None,
                 onchange_state: OnChangeState::default(),
+                trigger_valid: true,
+                retry_not_before: None,
             },
             ScheduledRule {
                 rule: Arc::new(create_test_rule(2, "added", 0)),
@@ -1856,6 +2842,8 @@ mod tests {
                 last_execution: None,
                 last_cooldown_start: None,
                 onchange_state: OnChangeState::default(),
+                trigger_valid: true,
+                retry_not_before: None,
             },
         ];
 
@@ -1880,22 +2868,16 @@ mod tests {
     }
 
     #[test]
-    fn an_absent_trigger_config_is_the_legacy_default_not_a_fault() {
-        let (trigger, corrupt) = resolve_trigger(None, 5_000);
-
-        assert!(!corrupt, "a NULL column is the documented legacy default");
-        let TriggerConfig::Interval { interval_ms } = trigger else {
-            panic!("legacy rules fall back to an interval trigger");
-        };
-        assert_eq!(interval_ms, 5_000);
+    fn an_absent_trigger_config_fails_closed() {
+        let error = resolve_trigger(None).expect_err("trigger_config is mandatory");
+        assert!(error.to_string().contains("trigger_config is required"));
     }
 
     #[test]
     fn a_valid_trigger_config_is_parsed() {
-        let (trigger, corrupt) =
-            resolve_trigger(Some(r#"{"type":"interval","interval_ms":250}"#), 5_000);
+        let trigger = resolve_trigger(Some(r#"{"type":"interval","interval_ms":250}"#))
+            .expect("valid trigger");
 
-        assert!(!corrupt);
         let TriggerConfig::Interval { interval_ms } = trigger else {
             panic!("expected the configured interval trigger");
         };
@@ -1903,15 +2885,36 @@ mod tests {
     }
 
     #[test]
-    fn a_corrupt_trigger_config_is_reported_not_silently_treated_as_legacy() {
-        // `.ok()` collapsed "column is NULL" and "column is corrupt" into the same
-        // silent fallback, so a damaged rule quietly ran on a 1s interval instead.
-        let (trigger, corrupt) = resolve_trigger(Some("{not json"), 0);
+    fn corrupt_and_semantically_invalid_triggers_fail_closed() {
+        for invalid in [
+            "{not json",
+            r#"{"type":"interval","interval_ms":0}"#,
+            r#"{"type":"on_change","point_refs":[]}"#,
+            r#"{"type":"on_change","point_refs":[{"instance":1,"point_type":"measurement","point":0},{"instance":1,"point_type":"measurement","point":0}]}"#,
+            r#"{"type":"on_change","point_refs":[{"instance":1,"point_type":"measurement","point":0}],"value_deadband":{"type":"absolute","threshold":-0.1}}"#,
+        ] {
+            assert!(
+                resolve_trigger(Some(invalid)).is_err(),
+                "invalid trigger must never be converted into an executable fallback: {invalid}"
+            );
+        }
 
-        assert!(corrupt, "unparseable stored config must be surfaced");
-        let TriggerConfig::Interval { interval_ms } = trigger else {
-            panic!("a corrupt config still falls back to an interval trigger");
-        };
-        assert_eq!(interval_ms, 1_000);
+        let refs = (0..=MAX_ONCHANGE_POINT_REFS)
+            .map(|point| PointRef {
+                instance: 1,
+                point_type: PointKind::Measurement,
+                point: point as u32,
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            TriggerConfig::OnChange {
+                point_refs: refs,
+                time_deadband_ms: None,
+                value_deadband: None,
+            }
+            .validate()
+            .is_err(),
+            "oversized subscription lists must fail before scheduler publication"
+        );
     }
 }

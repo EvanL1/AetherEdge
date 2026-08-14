@@ -72,6 +72,7 @@ impl StorageBackend for PostgresBackend {
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS history (
                 time         TIMESTAMPTZ NOT NULL,
+                ingestion_id UUID,
                 series_key   TEXT NOT NULL,
                 point_id     TEXT NOT NULL,
                 value        DOUBLE PRECISION,
@@ -81,9 +82,24 @@ impl StorageBackend for PostgresBackend {
         .execute(&self.pool)
         .await?;
 
+        // In-place compatibility migration for deployments created before
+        // ingestion identities existed. Legacy NULL rows remain untouched.
+        sqlx::query("ALTER TABLE history ADD COLUMN IF NOT EXISTS ingestion_id UUID")
+            .execute(&self.pool)
+            .await?;
+
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_history_key_point_time
              ON history (series_key, point_id, time DESC)",
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Include the partitioning column so this index is legal both before
+        // and after TimescaleDB converts the table into a time hypertable.
+        sqlx::query(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_history_ingestion_identity
+             ON history (time, ingestion_id)",
         )
         .execute(&self.pool)
         .await?;
@@ -106,22 +122,27 @@ impl StorageBackend for PostgresBackend {
         let len = points.len();
 
         let times: Vec<DateTime<Utc>> = points.iter().map(|p| p.time).collect();
+        let ingestion_ids: Vec<uuid::Uuid> = points.iter().map(DataPoint::ingestion_id).collect();
         let keys: Vec<&str> = points.iter().map(|p| p.series_key.as_str()).collect();
         let pids: Vec<&str> = points.iter().map(|p| p.point_id.as_str()).collect();
         let values: Vec<Option<f64>> = points.iter().map(|p| p.value).collect();
         let svalues: Vec<Option<&str>> = points.iter().map(|p| p.string_value.as_deref()).collect();
 
         sqlx::query(
-            "INSERT INTO history (time, series_key, point_id, value, string_value)
+            "INSERT INTO history
+                 (time, ingestion_id, series_key, point_id, value, string_value)
              SELECT * FROM UNNEST(
                  $1::TIMESTAMPTZ[],
-                 $2::TEXT[],
+                 $2::UUID[],
                  $3::TEXT[],
-                 $4::FLOAT8[],
-                 $5::TEXT[]
-             )",
+                 $4::TEXT[],
+                 $5::FLOAT8[],
+                 $6::TEXT[]
+             )
+             ON CONFLICT (time, ingestion_id) DO NOTHING",
         )
         .bind(times)
+        .bind(ingestion_ids)
         .bind(keys)
         .bind(pids)
         .bind(values)
@@ -445,14 +466,13 @@ mod postgres_integration_tests {
     }
 
     fn point(series_key: &str, point_id: &str, value: f64, offset_secs: i64) -> DataPoint {
-        DataPoint {
-            time: DateTime::<Utc>::from_timestamp(1_700_000_000 + offset_secs, 0)
-                .expect("representable"),
-            series_key: series_key.to_string(),
-            point_id: point_id.to_string(),
-            value: Some(value),
-            string_value: None,
-        }
+        DataPoint::new(
+            DateTime::<Utc>::from_timestamp(1_700_000_000 + offset_secs, 0).expect("representable"),
+            series_key,
+            point_id,
+            Some(value),
+            None,
+        )
     }
 
     fn window() -> (DateTime<Utc>, DateTime<Utc>) {
@@ -547,6 +567,135 @@ mod postgres_integration_tests {
             results[1].count, 1,
             "a duplicated request item must not read as 'no history for this point'"
         );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a PostgreSQL server (AETHER_TEST_PG_DSN)"]
+    async fn retry_after_a_lost_commit_response_is_idempotent() {
+        let backend = backend("t_ingestion_retry").await;
+        let admitted = point("inst:1:M", "7", 42.5, 0);
+
+        // The first transaction commits but the caller loses its response.
+        assert_eq!(
+            backend
+                .write_batch(vec![admitted.clone()])
+                .await
+                .expect("first commit"),
+            1
+        );
+        assert_eq!(
+            backend
+                .write_batch(vec![admitted])
+                .await
+                .expect("ambiguous commit retry"),
+            1
+        );
+        let stored: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM history")
+            .fetch_one(&backend.pool)
+            .await
+            .expect("count stored identities");
+        assert_eq!(stored, 1);
+
+        backend
+            .write_batch(vec![
+                point("inst:1:M", "7", 42.5, 0),
+                point("inst:1:M", "7", 42.5, 0),
+            ])
+            .await
+            .expect("store equal independent admissions");
+        let stored: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM history")
+            .fetch_one(&backend.pool)
+            .await
+            .expect("count independent admissions");
+        assert_eq!(stored, 3);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a PostgreSQL server (AETHER_TEST_PG_DSN)"]
+    async fn an_unrelated_unique_violation_is_not_an_idempotent_retry() {
+        let backend = backend("t_ingestion_other_constraint").await;
+        sqlx::query(
+            "CREATE UNIQUE INDEX test_history_business_constraint
+             ON history (series_key, point_id)",
+        )
+        .execute(&backend.pool)
+        .await
+        .expect("add unrelated integrity constraint");
+
+        backend
+            .write_batch(vec![point("inst:1:M", "7", 1.0, 0)])
+            .await
+            .expect("write first row");
+        backend
+            .write_batch(vec![point("inst:1:M", "7", 2.0, 1)])
+            .await
+            .expect_err("a non-ingestion uniqueness violation must fail the batch");
+
+        let stored: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM history")
+            .fetch_one(&backend.pool)
+            .await
+            .expect("count rows after rejected conflict");
+        assert_eq!(stored, 1);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a PostgreSQL server (AETHER_TEST_PG_DSN)"]
+    async fn legacy_schema_migrates_in_place_with_a_timescale_compatible_unique_index() {
+        let backend = backend("t_ingestion_migration").await;
+        sqlx::query("DROP INDEX idx_history_ingestion_identity")
+            .execute(&backend.pool)
+            .await
+            .expect("drop new index to model legacy schema");
+        sqlx::query("ALTER TABLE history DROP COLUMN ingestion_id")
+            .execute(&backend.pool)
+            .await
+            .expect("drop new column to model legacy schema");
+        sqlx::query(
+            "INSERT INTO history (time, series_key, point_id, value, string_value)
+             VALUES
+                 (to_timestamp(1700000000), 'inst:legacy:M', '7', 9.5, NULL),
+                 (to_timestamp(1700000000), 'inst:legacy:M', '8', 10.5, NULL)",
+        )
+        .execute(&backend.pool)
+        .await
+        .expect("insert legacy row");
+
+        backend.init_schema().await.expect("migrate legacy schema");
+
+        let legacy_identity_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM history
+             WHERE series_key = 'inst:legacy:M' AND ingestion_id IS NULL",
+        )
+        .fetch_one(&backend.pool)
+        .await
+        .expect("read legacy rows after migration");
+        assert_eq!(legacy_identity_count, 2);
+        let index_definition: String = sqlx::query_scalar(
+            "SELECT indexdef FROM pg_indexes
+             WHERE schemaname = current_schema()
+               AND indexname = 'idx_history_ingestion_identity'",
+        )
+        .fetch_one(&backend.pool)
+        .await
+        .expect("read ingestion index definition");
+        assert!(index_definition.starts_with("CREATE UNIQUE INDEX"));
+        assert!(index_definition.contains("time"));
+        assert!(index_definition.contains("ingestion_id"));
+
+        let fresh = point("inst:fresh:M", "8", 10.5, 1);
+        backend
+            .write_batch(vec![fresh.clone()])
+            .await
+            .expect("write migrated schema");
+        backend
+            .write_batch(vec![fresh])
+            .await
+            .expect("retry migrated schema");
+        let stored: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM history")
+            .fetch_one(&backend.pool)
+            .await
+            .expect("count legacy and fresh rows");
+        assert_eq!(stored, 3);
     }
 
     #[tokio::test]

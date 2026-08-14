@@ -12,8 +12,8 @@ keywords = ["iot", "edge", "gateway", "offline"]
 categories = ["embedded", "asynchronous"]
 
 [dependencies]
-aether-domain = { version = "0.0.1", path = "../../crates/aether-domain" }
-aether-ports = { version = "0.0.1", path = "../../crates/aether-ports" }
+aether-domain = { version = "0.0.2", path = "../../crates/aether-domain" }
+aether-ports = { version = "0.0.2", path = "../../crates/aether-ports" }
 async-trait = { workspace = true }
 base64 = "0.22"
 ed25519-dalek = { version = "2.2", features = ["rand_core", "zeroize"] }
@@ -36,7 +36,7 @@ default = []
 sqlite-audit = ["dep:sqlx"]
 
 [dev-dependencies]
-aether-application = { version = "0.0.1", path = "../../crates/aether-application" }
+aether-application = { version = "0.0.2", path = "../../crates/aether-application" }
 aether-testkit = { path = "../../crates/aether-testkit" }
 tempfile = { workspace = true }
 tokio = { workspace = true }

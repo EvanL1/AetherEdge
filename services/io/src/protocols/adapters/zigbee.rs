@@ -45,8 +45,8 @@ use crate::protocols::core::metadata::{
 };
 use crate::protocols::core::point::TransformConfig;
 use crate::protocols::core::traits::{
-    ConnectionState, DataEvent, DataEventReceiver, DataEventSender, Diagnostics, PollResult,
-    data_event_channel,
+    ConnectionState, DataEvent, DataEventReceiver, DataEventSink, Diagnostics, PollResult,
+    data_event_channel_with_capacity,
 };
 
 /// TCP read buffer size
@@ -205,7 +205,7 @@ pub(crate) struct ZigbeeChannel {
     /// Connection state (atomic for lock-free access)
     state: Arc<AtomicU8>,
     /// Event sender for the unified channel task.
-    event_tx: DataEventSender,
+    event_tx: DataEventSink,
     /// Sole event receiver, taken once by the unified channel task.
     event_rx: Option<DataEventReceiver>,
     /// Diagnostics counters
@@ -220,7 +220,16 @@ impl ZigbeeChannel {
         points: Vec<ZigbeePointConfig>,
     ) -> Result<Self> {
         validate_point_set(&points)?;
-        let (event_tx, event_rx) = data_event_channel();
+        let acquisition_points = points
+            .iter()
+            .filter(|point| {
+                matches!(
+                    point.point_type,
+                    aether_core::PointType::Telemetry | aether_core::PointType::Signal
+                )
+            })
+            .count();
+        let (event_tx, event_rx) = data_event_channel_with_capacity(acquisition_points);
 
         Ok(Self {
             config,
@@ -255,9 +264,9 @@ impl ZigbeeChannel {
     }
 
     /// Set connection state and queue an event.
-    fn set_state(state: &AtomicU8, event_tx: &DataEventSender, new_state: ConnectionState) {
+    fn set_state(state: &AtomicU8, event_tx: &DataEventSink, new_state: ConnectionState) {
         state.store(new_state as u8, Ordering::SeqCst);
-        let _ = event_tx.try_send(DataEvent::ConnectionChanged(new_state));
+        event_tx.publish(DataEvent::ConnectionChanged(new_state));
     }
 
     /// Process an attribute report into a DataPoint.
@@ -327,7 +336,7 @@ impl ZigbeeChannel {
         codec: Box<dyn FrameCodec>,
         channel_id: u32,
         state: Arc<AtomicU8>,
-        event_tx: DataEventSender,
+        event_tx: DataEventSink,
         diagnostics: Arc<AtomicDiagnostics>,
         point_lookup: HashMap<PointLookupKey, Vec<ZigbeePointConfig>>,
     ) {
@@ -376,7 +385,7 @@ impl ZigbeeChannel {
                 Err(e) => {
                     error!(channel_id, error = %e, "Zigbee TCP read error");
                     Self::set_state(&state, &event_tx, ConnectionState::Reconnecting);
-                    let _ = event_tx.try_send(DataEvent::Error(e.to_string()));
+                    event_tx.publish(DataEvent::Error(e.to_string()));
                     diagnostics.record_error(e.to_string());
                     break;
                 },
@@ -390,7 +399,7 @@ impl ZigbeeChannel {
     fn handle_frame(
         frame: &ZigbeeFrame,
         channel_id: u32,
-        event_tx: &DataEventSender,
+        event_tx: &DataEventSink,
         diagnostics: &AtomicDiagnostics,
         point_lookup: &HashMap<PointLookupKey, Vec<ZigbeePointConfig>>,
     ) {
@@ -403,7 +412,7 @@ impl ZigbeeChannel {
                         batch.add(data_point);
                     }
                     diagnostics.add_read(batch.len() as u64);
-                    let _ = event_tx.try_send(DataEvent::DataUpdate(batch));
+                    event_tx.publish(DataEvent::DataUpdate(batch));
                     debug!(
                         channel_id,
                         ieee = format!("0x{:016X}", report.ieee_addr),
@@ -536,6 +545,7 @@ impl ChannelRuntime for ZigbeeChannel {
         // Abort event loop
         if let Some(handle) = self.event_loop_handle.take() {
             handle.abort();
+            let _ = handle.await;
         }
 
         Self::set_state(&self.state, &self.event_tx, ConnectionState::Disconnected);

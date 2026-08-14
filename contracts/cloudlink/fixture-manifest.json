@@ -1,0 +1,182 @@
+{
+  "schema": "aether.fixture-manifest",
+  "contract": "aether.cloudlink",
+  "status": "canonical-local-cloudlink-contract",
+  "source": "AetherEdge canonical CloudLink contract; external AetherContracts provenance is recorded separately",
+  "derived_fixtures": [
+    "conflicting-replay.valid-digest.json",
+    "payload-broker-attestation.json",
+    "runtime-manifest-invalid-semver.json",
+    "session-hello-auth-invalid.json",
+    "session-hello-auth-required.json",
+    "session-challenge.valid.json",
+    "session-accepted-duplicate-cursor.json"
+  ],
+  "hash_algorithm": "sha256",
+  "fixtures": [
+    {
+      "file": "alarm-event.valid.json",
+      "schema_id": "alarm-event.schema.json",
+      "expectation": "valid",
+      "sha256": "8451e139a49dab1bb9db5d51861e1ae67bfb9a13cc23f27bb3248e5ca3678d4b"
+    },
+    {
+      "file": "conflicting-replay.json",
+      "schema_id": "telemetry-batch.schema.json",
+      "expectation": "context-invalid",
+      "failure_code": "DIGEST_MISMATCH",
+      "sha256": "68ae32b55335a6679c5da703e5a3dce5032e17c66dd30c5103e2b7f1044b6267"
+    },
+    {
+      "file": "conflicting-replay.valid-digest.json",
+      "schema_id": "telemetry-batch.schema.json",
+      "expectation": "context-invalid",
+      "failure_code": "DIGEST_CONFLICT",
+      "sha256": "69284c13004cd112de0821ad2587b42cf11eb48c2f7cdd6a7b16d0d13ae316cf"
+    },
+    {
+      "file": "data-loss.valid.json",
+      "schema_id": "data-loss.schema.json",
+      "expectation": "valid",
+      "sha256": "1d769e9cd9fb32d27b5c32435400cdbb7ced25959306ad8acb4f3fd2c319bff9"
+    },
+    {
+      "file": "durable-ack.valid.json",
+      "schema_id": "durable-ack.schema.json",
+      "expectation": "valid",
+      "sha256": "e0d5604d2be326e949f6f3cef59f08ff79cafee41637f7b3b2e95a6272e05ce0"
+    },
+    {
+      "file": "heartbeat-ack.valid.json",
+      "schema_id": "heartbeat.schema.json",
+      "expectation": "valid",
+      "sha256": "58728e0716ce6702a8578f953eefcd7d5ca1afcd9156a97e36ceb07ded4d58bb"
+    },
+    {
+      "file": "heartbeat.valid.json",
+      "schema_id": "heartbeat.schema.json",
+      "expectation": "valid",
+      "sha256": "1e8fe4a79fef24057a3fa1c1443579c5824a37a87889235cbadc365a4e82d91d"
+    },
+    {
+      "file": "invalid-digest.json",
+      "schema_id": "durable-ack.schema.json",
+      "expectation": "wire-invalid",
+      "failure_code": "INVALID_DIGEST",
+      "sha256": "1ef086aa9a11c148c50c7b4b571a7a41bcbe1d12ac3c6e2178bffce446630057"
+    },
+    {
+      "file": "overflow-uint64.json",
+      "schema_id": "heartbeat.schema.json",
+      "expectation": "wire-invalid",
+      "failure_code": "INTEGER_OUT_OF_RANGE",
+      "sha256": "0ab1a4d9d94c60e17c17f156ed1cc5ae7ed1766deb2ec29d92b405522aae4c8c"
+    },
+    {
+      "file": "oversized-payload.json",
+      "schema_id": "session-hello.schema.json",
+      "expectation": "wire-invalid",
+      "failure_code": "FIELD_BOUND",
+      "sha256": "7a43ae9ba06fafa14828c3d12a55c6eeacd13b852c958da0ca8ca6710cc24cf2"
+    },
+    {
+      "file": "payload-broker-attestation.json",
+      "schema_id": "telemetry-batch.schema.json",
+      "expectation": "wire-invalid",
+      "failure_code": "UNKNOWN_FIELD",
+      "sha256": "400bc530dd2b8445548903e5abb9e9d702c250127bf9e0413fba6abc0cc6da07"
+    },
+    {
+      "file": "replay-request.valid.json",
+      "schema_id": "replay-request.schema.json",
+      "expectation": "valid",
+      "sha256": "98ddb3e3ec3d8a0b164034fdf45c66b1daf7258651c239de0c07201642f1dd52"
+    },
+    {
+      "file": "runtime-manifest-invalid-semver.json",
+      "schema_id": "runtime-manifest-report.schema.json",
+      "expectation": "wire-invalid",
+      "failure_code": "SEMVER_INVALID",
+      "sha256": "eee1c87fc8648f42cef9aace04546451e22b0c309b680a595ad2e90e83eff1fd"
+    },
+    {
+      "file": "runtime-manifest-report.valid.json",
+      "schema_id": "runtime-manifest-report.schema.json",
+      "expectation": "valid",
+      "sha256": "656f7a3fc6c37633458754beba7c8af7346bd0ff00e4aa7b20331aca568662d7"
+    },
+    {
+      "file": "session-accepted-duplicate-cursor.json",
+      "schema_id": "session-accepted.schema.json",
+      "expectation": "context-invalid",
+      "failure_code": "CURSOR_CONFLICT",
+      "sha256": "a1387e13d1f1f88ae6eab3bfe80791937d0d4ad080126e06f0e0ad8b8921a2ea"
+    },
+    {
+      "file": "session-accepted.valid.json",
+      "schema_id": "session-accepted.schema.json",
+      "expectation": "valid",
+      "sha256": "ff29bb4bde5878a3af29ea3d466c7fd0a78f8d678506f4bbb5fbfb782a5268fd"
+    },
+    {
+      "file": "session-challenge.valid.json",
+      "schema_id": "session-challenge.schema.json",
+      "expectation": "valid",
+      "sha256": "9050568839a0f8f4572f7e35f7bb356882cf14746b6cc4938c16f013efcab6bf"
+    },
+    {
+      "file": "session-hello-auth-invalid.json",
+      "schema_id": "session-hello.schema.json",
+      "expectation": "wire-invalid",
+      "failure_code": "AUTHENTICATION_INVALID",
+      "sha256": "0612b97761d06da92b29156cd0f13a53e9968a43718f394b9726c67da2c83d94"
+    },
+    {
+      "file": "session-hello-auth-required.json",
+      "schema_id": "session-hello.schema.json",
+      "expectation": "wire-invalid",
+      "failure_code": "AUTHENTICATION_REQUIRED",
+      "sha256": "5564ba3388a8ef032a60506da43e5a3232388a8b6d7653058cc71c2a93acebe1"
+    },
+    {
+      "file": "session-hello.valid.json",
+      "schema_id": "session-hello.schema.json",
+      "expectation": "valid",
+      "sha256": "9e6443126f3831380a6e4026270c1c8203f2c9e62045e48f51557571b7cbf286"
+    },
+    {
+      "file": "stale-ack.json",
+      "schema_id": "durable-ack.schema.json",
+      "expectation": "context-invalid",
+      "failure_code": "STALE_SESSION",
+      "sha256": "c2eed8a41ecd21d9171610120b237eb3e2ff73b428d171b21cf07f06458a2bb7"
+    },
+    {
+      "file": "telemetry-batch.valid.json",
+      "schema_id": "telemetry-batch.schema.json",
+      "expectation": "valid",
+      "sha256": "5283580a2cf09c921c772c8b1b66594bf7688cfc8a43f4928d7bafd5e85dcfd5"
+    },
+    {
+      "file": "unknown-field.json",
+      "schema_id": "session-hello.schema.json",
+      "expectation": "wire-invalid",
+      "failure_code": "UNKNOWN_FIELD",
+      "sha256": "90668f39088b7e0cf412a876f0f9b7f698781e167c0534ff898f9df1e6cb850a"
+    },
+    {
+      "file": "unsafe-uint64.json",
+      "schema_id": "heartbeat.schema.json",
+      "expectation": "wire-invalid",
+      "failure_code": "INTEGER_NON_CANONICAL",
+      "sha256": "bd40413a85bbe29d0e572a765ecf0428a1e05158ac5d9e035296cafd0080d29a"
+    },
+    {
+      "file": "wrong-session-epoch.json",
+      "schema_id": "heartbeat.schema.json",
+      "expectation": "context-invalid",
+      "failure_code": "STALE_SESSION",
+      "sha256": "ce2c0a8aec52cbb75ba3b52bfa13a3f420e2aed9cfb77fe0d8e032faa52b0ddf"
+    }
+  ]
+}

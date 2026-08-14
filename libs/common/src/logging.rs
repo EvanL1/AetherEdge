@@ -788,16 +788,6 @@ pub fn enable_sighup_log_reopen() {
     }
 }
 
-/// Legacy init function for backward compatibility
-pub fn init(level: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let config = LogConfig {
-        console_level: level.parse().unwrap_or(Level::INFO),
-        file_level: level.parse().unwrap_or(Level::DEBUG),
-        ..Default::default()
-    };
-    init_with_config(config)
-}
-
 /// Dynamically set log filter level at runtime
 ///
 /// # Arguments

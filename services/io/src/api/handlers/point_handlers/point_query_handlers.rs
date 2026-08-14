@@ -558,6 +558,7 @@ mod cache_tests {
         AppState {
             channel_manager,
             sqlite_pool,
+            access_authenticator: None,
             channel_reconciliation: None,
         }
     }

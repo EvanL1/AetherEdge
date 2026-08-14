@@ -10,5 +10,5 @@ mod config;
 pub use adapter::HttpDataProcessor;
 pub use config::{BearerSecret, HttpDataProcessorConfig};
 
-/// Data Processing v1 vendor JSON media type.
+/// Data Processing vendor JSON media type.
 pub const JSON_MEDIA_TYPE: &str = aether_data_processing::MEDIA_TYPE;

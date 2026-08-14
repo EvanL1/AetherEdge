@@ -2,8 +2,8 @@
 //!
 //! Contains ChannelEntry, ChannelMetadata, ChannelStats, and related helpers.
 
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 use tokio::task::JoinHandle;
 use tracing::warn;
@@ -13,8 +13,9 @@ use crate::protocols::core::logging::ChannelLogHandler;
 use crate::protocols::runtime::ChannelRuntime;
 use crate::store::ShmDataStore;
 
-use super::channel_task::{ChannelPollContext, ChannelSharedState, run_unified_channel_task};
-use super::command_guard::CommandGuard;
+use super::channel_task::{
+    ChannelPollContext, ChannelSharedState, CommandDispatchContext, run_unified_channel_task,
+};
 use super::runtime_policy::ChannelRuntimePolicy;
 
 /// Maximum number of channel slots (pre-allocated for O(1) access)
@@ -42,6 +43,22 @@ pub fn unix_timestamp_ms() -> i64 {
             0
         },
     }
+}
+
+/// Process-local monotonic timestamp in milliseconds.
+///
+/// The value is deliberately unrelated to wall time. It is used only for
+/// in-process liveness and freshness ages, which must not become permanently
+/// healthy or immediately stale when NTP or an operator adjusts the clock.
+/// Zero remains reserved for "not observed yet".
+pub(crate) fn monotonic_timestamp_ms() -> i64 {
+    static EPOCH: OnceLock<Instant> = OnceLock::new();
+    EPOCH
+        .get_or_init(Instant::now)
+        .elapsed()
+        .as_millis()
+        .saturating_add(1)
+        .min(i64::MAX as u128) as i64
 }
 
 /// Channel entry with integrated protocol runtime and storage
@@ -105,12 +122,18 @@ impl std::fmt::Debug for ChannelEntry {
 pub struct ChannelStats {
     pub channel_id: u32,
     pub is_connected: bool,
-    /// Watchdog heartbeat timestamp in millis since epoch (0 = not yet started)
-    pub watchdog_heartbeat_ms: i64,
+    /// Process-local monotonic watchdog tick in milliseconds (0 = not started).
+    ///
+    /// This is not an epoch timestamp and must only be compared with
+    /// [`monotonic_timestamp_ms`].
+    pub watchdog_progress_tick_ms: i64,
     /// Whether reconnection has permanently failed
     pub reconnect_failed: bool,
     /// Total reconnect attempts so far
     pub reconnect_total_attempts: u64,
+    /// Bounded protocol-event ingress telemetry for event-driven channels.
+    pub data_event_ingress:
+        Option<crate::protocols::core::data_event_ingress::DataEventIngressStats>,
 }
 
 impl ChannelEntry {
@@ -118,7 +141,7 @@ impl ChannelEntry {
     ///
     /// This method spawns a background task that owns the protocol client
     /// and processes both polling and commands via `tokio::select!`.
-    pub(crate) fn new(
+    pub(super) fn new(
         protocol: Box<dyn ChannelRuntime>,
         store: Arc<ShmDataStore>,
         channel_id: u32,
@@ -126,7 +149,7 @@ impl ChannelEntry {
         protocol_type: &'static str,
         runtime_policy: ChannelRuntimePolicy,
         log_handler: Arc<dyn ChannelLogHandler>,
-        command_guard: CommandGuard,
+        commands: CommandDispatchContext,
     ) -> Result<(
         Self,
         tokio::sync::mpsc::Sender<super::traits::ChannelCommand>,
@@ -163,7 +186,7 @@ impl ChannelEntry {
             shared: Arc::clone(&shared),
             log_handler,
             zero_data_threshold: runtime_policy.zero_data_threshold,
-            command_guard,
+            commands,
         };
         let task_handle = tokio::spawn(async move {
             run_unified_channel_task(
@@ -193,14 +216,22 @@ impl ChannelEntry {
 
     /// Get channel statistics
     pub fn get_stats(&self) -> ChannelStats {
-        let heartbeat = self.shared.watchdog_heartbeat_ms.load(Ordering::Relaxed);
+        let heartbeat = self
+            .shared
+            .watchdog_progress_tick_ms
+            .load(Ordering::Relaxed);
 
         ChannelStats {
             channel_id: self.channel_id,
             is_connected: self.is_connected(),
-            watchdog_heartbeat_ms: heartbeat,
+            watchdog_progress_tick_ms: heartbeat,
             reconnect_failed: self.shared.reconnect_failed.load(Ordering::Relaxed),
             reconnect_total_attempts: self.shared.reconnect_total_attempts.load(Ordering::Relaxed),
+            data_event_ingress: self
+                .shared
+                .data_event_ingress
+                .load_full()
+                .map(|observer| observer.stats()),
         }
     }
 
@@ -221,8 +252,11 @@ impl ChannelEntry {
             return false;
         }
 
-        let last_read = self.shared.last_successful_read_ms.load(Ordering::Relaxed);
-        if last_read == 0 {
+        let last_read_tick = self
+            .shared
+            .last_successful_read_tick_ms
+            .load(Ordering::Relaxed);
+        if last_read_tick == 0 {
             // No successful poll yet on this entry. Trust TCP state only while
             // we are still inside the first-poll grace window; after that, a
             // protocol that has produced zero successful reads is treated as
@@ -237,7 +271,7 @@ impl ChannelEntry {
         }
 
         // We have at least one historical successful poll — require freshness.
-        let age_ms = unix_timestamp_ms().saturating_sub(last_read);
+        let age_ms = monotonic_timestamp_ms().saturating_sub(last_read_tick);
         age_ms < self.data_freshness_timeout_ms
     }
 
@@ -326,7 +360,7 @@ impl ChannelEntry {
     /// Set the channel log level dynamically.
     ///
     /// Sends a SetLogLevel command to the unified channel task.
-    /// Valid levels: "debug" (verbose), "info" (standard), "error" (minimal)
+    /// Valid levels: "debug", "info", or "error".
     pub async fn set_log_level(&self, level: &str) -> crate::error::Result<()> {
         use super::types::ProtocolCommand;
 
@@ -383,5 +417,14 @@ mod tests {
     fn freshness_windows_scale_for_slow_polling() {
         assert_eq!(data_freshness_timeout_ms(120_000), 360_000);
         assert_eq!(first_poll_grace_ms(120_000), 240_000);
+    }
+
+    #[test]
+    fn monotonic_timestamp_reserves_zero_and_never_moves_backwards() {
+        let first = monotonic_timestamp_ms();
+        let second = monotonic_timestamp_ms();
+
+        assert!(first > 0);
+        assert!(second >= first);
     }
 }

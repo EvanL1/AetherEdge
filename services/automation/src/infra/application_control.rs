@@ -13,49 +13,35 @@ use aether_ports::{
 };
 use aether_rules::{RuleActionCommand, RuleActionCommandFacade};
 use async_trait::async_trait;
-use subtle::ConstantTimeEq;
 use thiserror::Error;
 
 use crate::instance_manager::InstanceManager;
-
-const MIN_SERVICE_TOKEN_BYTES: usize = 32;
 
 /// Fixed identity commissioned for deterministic rule-engine device actions.
 pub const COMMISSIONED_RULE_ACTOR_ID: &str = "local:aether-automation-rule-engine";
 
 /// Verifies control callers at automation's HTTP trust boundary.
 ///
-/// Browser/gateway and CLI callers present a signed access JWT. The uplink
-/// presents a separate service credential and receives a fixed server-side
-/// identity. Caller-provided actor or role headers are never consulted.
+/// Browser, gateway, CLI, and MCP callers present a signed access JWT.
+/// Caller-provided actor or role headers are never consulted.
 #[derive(Clone)]
 pub struct ControlAuthenticator {
     access_tokens: AccessTokenAuthenticator,
-    uplink_token: Option<Arc<str>>,
 }
 
 impl ControlAuthenticator {
     /// Creates an authenticator from already-resolved secrets.
-    pub fn new(jwt_secret: &str, uplink_token: Option<&str>) -> Result<Self, AuthenticationError> {
+    pub fn new(jwt_secret: &str) -> Result<Self, AuthenticationError> {
         let access_tokens =
             AccessTokenAuthenticator::new(jwt_secret).map_err(map_access_token_error)?;
-        if let Some(token) = uplink_token {
-            validate_uplink_token(token)?;
-        }
-        Ok(Self {
-            access_tokens,
-            uplink_token: uplink_token.map(Arc::from),
-        })
+        Ok(Self { access_tokens })
     }
 
     /// Loads authentication material from the process environment.
     pub fn from_env() -> Result<Self, AuthenticationError> {
         let jwt_secret = std::env::var("JWT_SECRET_KEY")
             .map_err(|_| AuthenticationError::Configuration("JWT_SECRET_KEY is required"))?;
-        let uplink_token = std::env::var("AETHER_UPLINK_CONTROL_TOKEN")
-            .ok()
-            .filter(|token| !token.trim().is_empty());
-        Self::new(&jwt_secret, uplink_token.as_deref())
+        Self::new(&jwt_secret)
     }
 
     pub(crate) fn authenticate(&self, authorization: &str) -> Result<Actor, AuthenticationError> {
@@ -66,27 +52,12 @@ impl ControlAuthenticator {
             return Err(AuthenticationError::InvalidCredentials);
         }
 
-        if scheme.eq_ignore_ascii_case("Bearer") {
-            return self
-                .access_tokens
-                .authenticate(authorization)
-                .map_err(map_access_token_error);
-        }
-        if scheme.eq_ignore_ascii_case("AetherService") {
-            return self.authenticate_uplink(credential);
-        }
-        Err(AuthenticationError::InvalidCredentials)
-    }
-
-    fn authenticate_uplink(&self, token: &str) -> Result<Actor, AuthenticationError> {
-        let expected = self
-            .uplink_token
-            .as_deref()
-            .ok_or(AuthenticationError::InvalidCredentials)?;
-        if token.as_bytes().ct_eq(expected.as_bytes()).unwrap_u8() != 1 {
+        if !scheme.eq_ignore_ascii_case("Bearer") {
             return Err(AuthenticationError::InvalidCredentials);
         }
-        Ok(Actor::new("local:aether-uplink").with_permission("device.control"))
+        self.access_tokens
+            .authenticate(authorization)
+            .map_err(map_access_token_error)
     }
 }
 
@@ -98,15 +69,6 @@ pub enum AuthenticationError {
     InvalidCredentials,
     #[error("invalid control authentication configuration: {0}")]
     Configuration(&'static str),
-}
-
-fn validate_uplink_token(token: &str) -> Result<(), AuthenticationError> {
-    if token.len() < MIN_SERVICE_TOKEN_BYTES || token.trim() != token {
-        return Err(AuthenticationError::Configuration(
-            "AETHER_UPLINK_CONTROL_TOKEN must contain at least 32 bytes without surrounding whitespace",
-        ));
-    }
-    Ok(())
 }
 
 fn map_access_token_error(error: AccessTokenAuthenticationError) -> AuthenticationError {

@@ -23,7 +23,7 @@ release should present these as a complete product.
 ## AetherEdge
 
 **Implemented:** six-service runtime, SHM live-state authority, embedded local
-operation, governed commands, `aether` CLI, `aether-edge-sdk`, Pack v1, MCP and
+operation, governed commands, `aether` CLI, `aether-edge-sdk`, Pack, MCP and
 OpenAPI foundations, signed `v0.0.1` source/runtime/CLI/SDK artifacts, and a
 local Gateway enrollment client. The enrollment slice has process-level
 evidence for key generation, durable pending state, a strict local HTTP Claim,
@@ -40,17 +40,16 @@ not a repository-wide certification claim. The
 [Protocol Adapter Reference](../reference/protocol-adapters.md) records each
 adapter's current evidence tier.
 
-**Experimental:** the Uplink-owned CloudLink MQTT v1 foundation,
-application-ACK-driven spool, AetherContracts alpha.3 consumption, and
-real-Broker development evidence. The Edge real-Broker harness now requires a
-Cloud-signed challenge and a Gateway-signed hello; legacy direct hello is
-rejected. Legacy MQTT remains the runtime default.
+**Experimental:** the Uplink-owned CloudLink MQTT foundation,
+application-ACK-driven spool, pinned AetherContracts provenance, and
+real-Broker development evidence. CloudLink has one topic tree and schema set;
+the harness requires a Cloud-signed challenge and a Gateway-signed hello.
 
 **Planned or gated:** deployment of the matching AetherCloud production Claim
 endpoint, verifiable credential issuance and activation, Cloud trust-key
 delivery and rotation, production `aether-uplink` identity composition,
 production CloudLink key lifecycle, signed ACK, complete joint conformance,
-legacy cutover, History query ownership, and remaining application-boundary
+History query ownership, and remaining application-boundary
 migration. Home Assistant and SunSpec implementations are out-of-tree
 downstream work, not kernel roadmap capabilities.
 
@@ -59,7 +58,7 @@ acknowledged the submitted public-key fingerprint. It is not
 `credential-active`, `cloudlink-connected`, or `online`, and no production
 AetherCloud pairing is claimed.
 
-**CloudLink alpha.4 production blocker:** the current `session-accepted`
+**CloudLink production blocker:** the current `session-accepted`
 message is unsigned and carries neither `challenge_id` nor `client_nonce`.
 The Edge-only test harness sequences acceptance after a verified challenge and
 requires the persisted session epoch to increase strictly, but the production
@@ -69,10 +68,9 @@ a delayed acceptance from another handshake. The public wire contract must bind
 an authenticated acceptance to the complete current handshake transcript before
 this path can be described as production authentication.
 
-The current AetherCloud dual harness is also blocked before that point: its
-worker still composes the legacy direct-session application path and does not
-inject challenge issuance or Gateway-signed session acceptance. AetherEdge
-keeps strict verification enabled and times out rather than downgrading.
+The current AetherCloud conformance harness is also blocked before that point:
+its worker does not yet inject challenge issuance or Gateway-signed session
+acceptance. AetherEdge keeps strict verification enabled and times out.
 
 ## AetherCloud
 
@@ -100,9 +98,9 @@ ACK, complete production codecs, and a production CloudLink cutover release.
 
 ## Platform documentation
 
-**Implemented in this migration:** shared product overview, unified navigation,
-deployment topologies, user journeys, end-to-end alpha integration task, compatibility
-matrix, status page, and AetherIot to AetherEdge migration guide.
+**Implemented:** shared product overview, unified navigation, deployment
+topologies, user journeys, end-to-end alpha integration task, release
+compatibility matrix, and status page.
 
 **Planned:** automated
 cross-repository version aggregation, release-channel status feeds, and a

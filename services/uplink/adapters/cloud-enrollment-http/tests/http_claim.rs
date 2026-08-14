@@ -20,7 +20,7 @@ const GATEWAY_ID: &str = "33333333-3333-4333-8333-333333333333";
 const IDEMPOTENCY_KEY: &str = "44444444-4444-4444-8444-444444444444";
 const TOKEN: &str = "opaque-enrollment-token-never-log";
 const FINGERPRINT: &str = "66687aadf862bd776c8fc18b8e9f8e20089714856ee233b3902a591d0d5f2925";
-const CLAIM_PATH: &str = "/api/v1/fleet/enrollment-claims:claim";
+const CLAIM_PATH: &str = "/api/fleet/enrollment-claims:claim";
 
 fn config(
     request_timeout: Duration,
@@ -71,7 +71,7 @@ fn claim_for_origin(cloud_origin: &str) -> CloudEnrollmentClaim {
 
 fn claimed_response(revision: u64) -> Value {
     json!({
-        "schema": "aether.cloud.gateway-enrollment-claimed.v1",
+        "schema": "aether.cloud.gateway-enrollment-claimed",
         "gatewayId": GATEWAY_ID,
         "state": "claimed",
         "revision": revision,
@@ -87,7 +87,7 @@ async fn sends_the_exact_claim_contract_and_decodes_claimed_receipt() {
         .and(header("accept", "application/json"))
         .and(header("idempotency-key", IDEMPOTENCY_KEY))
         .and(body_json(json!({
-            "schema": "aether.cloud.gateway-enrollment-claim.v1",
+            "schema": "aether.cloud.gateway-enrollment-claim",
             "tenantId": TENANT_ID,
             "projectId": PROJECT_ID,
             "gatewayId": GATEWAY_ID,
@@ -120,37 +120,37 @@ async fn response_contract_rejects_schema_identity_state_revision_and_unknown_fi
     let server = MockServer::start().await;
     let invalid_responses = [
         json!({
-            "schema": "aether.cloud.gateway-enrollment-claimed.v2",
+            "schema": "aether.cloud.gateway-enrollment-claimed.unsupported",
             "gatewayId": GATEWAY_ID,
             "state": "claimed",
             "revision": 1,
         }),
         json!({
-            "schema": "aether.cloud.gateway-enrollment-claimed.v1",
+            "schema": "aether.cloud.gateway-enrollment-claimed",
             "gatewayId": "55555555-5555-4555-8555-555555555555",
             "state": "claimed",
             "revision": 1,
         }),
         json!({
-            "schema": "aether.cloud.gateway-enrollment-claimed.v1",
+            "schema": "aether.cloud.gateway-enrollment-claimed",
             "gatewayId": GATEWAY_ID,
             "state": "credential-active",
             "revision": 1,
         }),
         json!({
-            "schema": "aether.cloud.gateway-enrollment-claimed.v1",
+            "schema": "aether.cloud.gateway-enrollment-claimed",
             "gatewayId": GATEWAY_ID,
             "state": "claimed",
             "revision": 0,
         }),
         json!({
-            "schema": "aether.cloud.gateway-enrollment-claimed.v1",
+            "schema": "aether.cloud.gateway-enrollment-claimed",
             "gatewayId": GATEWAY_ID,
             "state": "claimed",
             "revision": 9_007_199_254_740_992_u64,
         }),
         json!({
-            "schema": "aether.cloud.gateway-enrollment-claimed.v1",
+            "schema": "aether.cloud.gateway-enrollment-claimed",
             "gatewayId": GATEWAY_ID,
             "state": "claimed",
             "revision": 1,

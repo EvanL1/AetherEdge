@@ -83,7 +83,7 @@ production crash-durable gate has not passed.
   through CloudLink.
 - Do not treat a reported capability as cloud authorization.
 - Do not equate desired, reported, and applied state.
-- Do not remove the legacy path until joint authentication, durability,
+- Do not claim production readiness until joint authentication, durability,
   conformance, rollback, and support-window gates pass.
 
 The result of this task is reproducible alpha integration evidence, not a

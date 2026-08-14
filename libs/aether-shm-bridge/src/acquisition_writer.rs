@@ -6,7 +6,7 @@ use std::sync::{Arc, RwLock};
 
 use aether_acquisition_port::AcquisitionStateWriter;
 use aether_dataplane::{DataplaneError, SlotIo, SlotWriter};
-use aether_domain::AcquiredPointSample;
+use aether_domain::{AcquiredPointSample, ChannelPointAddress, PointQuality, TimestampMs};
 use aether_ports::{PortError, PortErrorKind, PortResult};
 use async_trait::async_trait;
 
@@ -189,6 +189,120 @@ impl ShmAcquisitionStateWriter {
             }
         }
         Ok(samples.len())
+    }
+
+    /// Degrades quality while preserving the last committed value, raw value,
+    /// and source timestamp for each acquisition-owned point. Requests that
+    /// would keep or improve the encoded quality are no-ops; only a fresh
+    /// acquisition sample may restore Good quality.
+    ///
+    /// Unwritten slots are left untouched because they have no last-known
+    /// sample to preserve. Address validation completes before the first
+    /// mutation, matching [`Self::commit_batch`] fail-closed behavior.
+    pub fn degrade_quality_preserving_value(
+        &self,
+        updates: &[(ChannelPointAddress, PointQuality)],
+    ) -> PortResult<usize> {
+        let _local_authority = self
+            .local_authority_gate
+            .as_ref()
+            .map(|gate| {
+                gate.read().map_err(|_| {
+                    PortError::new(
+                        PortErrorKind::Permanent,
+                        "local SHM authority gate was poisoned",
+                    )
+                })
+            })
+            .transpose()?;
+        let _cross_process_authority = self
+            .writer
+            .acquire_authority_read()
+            .map_err(dataplane_port_error)?;
+        self.validate_generation()?;
+        let header = SlotIo::header(self.writer.as_ref());
+
+        let mut seen = HashSet::with_capacity(updates.len());
+        let mut resolved = Vec::with_capacity(updates.len());
+        for &(address, quality) in updates {
+            if !address.kind().is_acquisition_owned() {
+                return Err(PortError::new(
+                    PortErrorKind::Rejected,
+                    format!(
+                        "point kind {:?} is not owned by acquisition",
+                        address.kind()
+                    ),
+                ));
+            }
+            let physical = PhysicalPointAddress::from(address);
+            if !seen.insert(physical) {
+                return Err(PortError::new(
+                    PortErrorKind::InvalidData,
+                    format!("duplicate acquired point address {physical:?}"),
+                ));
+            }
+            let slot = self.manifest.slot_for(physical).ok_or_else(|| {
+                PortError::new(
+                    PortErrorKind::NotFound,
+                    format!("unknown acquired point address {physical:?}"),
+                )
+            })?;
+            if slot >= header.slot_count as usize {
+                return Err(PortError::new(
+                    PortErrorKind::Conflict,
+                    format!(
+                        "manifest resolved {physical:?} to slot {slot}, outside live slot count {}",
+                        header.slot_count
+                    ),
+                ));
+            }
+            let previous = SlotIo::read_slot(self.writer.as_ref(), slot).ok_or_else(|| {
+                PortError::new(
+                    PortErrorKind::Conflict,
+                    format!("physical point {physical:?} changed during quality update"),
+                )
+            })?;
+            if !previous.value.is_finite() || !previous.raw.is_finite() {
+                continue;
+            }
+            let requested_quality = encode_point_quality(quality);
+            if requested_quality <= previous.quality_code {
+                continue;
+            }
+            let sample = AcquiredPointSample::new(
+                address,
+                previous.value,
+                previous.raw,
+                TimestampMs::new(previous.timestamp_ms),
+                quality,
+            )
+            .map_err(|error| PortError::new(PortErrorKind::InvalidData, error.to_string()))?;
+            resolved.push((slot, sample));
+        }
+
+        if resolved.is_empty() {
+            return Ok(0);
+        }
+
+        for &(slot, sample) in &resolved {
+            self.writer.set_direct(
+                slot,
+                sample.value(),
+                sample.raw(),
+                sample.timestamp().get(),
+                encode_point_quality(sample.quality()),
+            );
+        }
+        if let Some(observer) = &self.observer {
+            observer.before_authority_confirmation();
+        }
+        self.validate_generation()?;
+        if let Some(observer) = &self.observer {
+            for &(slot, sample) in &resolved {
+                observer.point_committed(slot, sample);
+            }
+        }
+        Ok(resolved.len())
     }
 
     /// Refreshes writer liveness without mutating point state.

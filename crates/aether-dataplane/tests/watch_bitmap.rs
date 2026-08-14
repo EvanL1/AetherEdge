@@ -204,6 +204,29 @@ fn obsolete_headerless_bitmap_is_replaced_without_decoding_its_bits() {
 }
 
 #[test]
+fn nonzero_reserved_header_bytes_fail_closed_and_are_repaired_atomically() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let path = directory.path().join("noncanonical.bitmap");
+    drop(SubscriptionBitmap::open_or_create(&path, 64).expect("create bitmap"));
+
+    let mut bytes = std::fs::read(&path).expect("read bitmap");
+    bytes[8] = 1;
+    std::fs::write(&path, bytes).expect("write non-zero reserved byte");
+
+    let error = match SubscriptionBitmap::open(&path, 64) {
+        Ok(_) => panic!("non-zero reserved bytes must fail"),
+        Err(error) => error,
+    };
+    assert!(matches!(error, DataplaneError::InvalidLayout(_)));
+    assert!(error.to_string().contains("reserved"));
+
+    drop(SubscriptionBitmap::open_or_create(&path, 64).expect("repair canonical bitmap"));
+    let repaired = std::fs::read(&path).expect("read repaired bitmap");
+    assert_eq!(&repaired[8..12], &[0; 4]);
+    assert!(SubscriptionBitmap::open(&path, 64).is_ok());
+}
+
+#[test]
 fn each_event_consumer_gets_an_independent_bitmap_path() {
     let main = Path::new("/dev/shm/aether-live-state.shm");
 

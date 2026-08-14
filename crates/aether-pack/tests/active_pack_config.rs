@@ -5,8 +5,7 @@ use aether_pack::{
     ActivePackError, PackError, PackRuntime, load_active_packs, parse_active_packs_config,
 };
 
-const MANIFEST: &str = r#"schema_version: 1
-id: energy
+const MANIFEST: &str = r#"id: energy
 name: Energy
 version: 0.5.0
 status: stable

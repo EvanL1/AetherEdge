@@ -13,7 +13,6 @@ pub struct DatabaseStatus {
     pub initialized: bool,
     pub last_sync: Option<String>,
     pub item_count: Option<usize>,
-    pub schema_version: Option<String>,
 }
 
 /// Check database status
@@ -27,7 +26,6 @@ pub async fn check_database_status(db_path: &Path) -> Result<DatabaseStatus> {
             initialized: false,
             last_sync: None,
             item_count: None,
-            schema_version: None,
         });
     }
 
@@ -49,12 +47,10 @@ pub async fn check_database_status(db_path: &Path) -> Result<DatabaseStatus> {
             initialized: false,
             last_sync: None,
             item_count: None,
-            schema_version: None,
         });
     }
 
-    // Sync timestamps moved to the dedicated per-domain metadata table. Keep
-    // the legacy key as a read-only fallback for pre-migration databases.
+    // Sync timestamps are owned by the dedicated per-domain metadata table.
     let sync_metadata_exists: bool = sqlx::query_scalar(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='sync_metadata'",
     )
@@ -66,9 +62,7 @@ pub async fn check_database_status(db_path: &Path) -> Result<DatabaseStatus> {
             .fetch_one(&pool)
             .await?
     } else {
-        sqlx::query_scalar("SELECT value FROM service_config WHERE key = '_sync_timestamp'")
-            .fetch_optional(&pool)
-            .await?
+        None
     };
 
     // Get item count
@@ -76,18 +70,11 @@ pub async fn check_database_status(db_path: &Path) -> Result<DatabaseStatus> {
         .fetch_optional(&pool)
         .await?;
 
-    // Get schema version if available
-    let schema_version: Option<String> =
-        sqlx::query_scalar("SELECT value FROM service_config WHERE key = '_schema_version'")
-            .fetch_optional(&pool)
-            .await?;
-
     Ok(DatabaseStatus {
         exists: true,
         initialized: true,
         last_sync,
         item_count: item_count.map(|c| c as usize),
-        schema_version,
     })
 }
 

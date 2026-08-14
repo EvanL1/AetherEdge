@@ -4,7 +4,7 @@
 //! to the SQLite database.
 
 use aether_config::automation::AutomationConfig;
-use aether_config::io::{IoConfig, StoredChannelConfig};
+use aether_config::io::{ChannelConfig, IoConfig, StoredChannelConfig};
 use anyhow::{Context, Result};
 use common::validation::CsvFields;
 use serde::de::DeserializeOwned;
@@ -18,6 +18,14 @@ use super::file_utils::{flatten_json, load_csv, load_csv_typed_with_errors, load
 use super::schema;
 
 const ACTION_ROUTING_SYNC_GUARD: &str = "action routing requires the governed action-routing command; configuration sync supports measurement routing only";
+
+fn canonical_instance_entries(value: &JsonValue) -> Result<&[JsonValue]> {
+    value
+        .get("instances")
+        .and_then(JsonValue::as_array)
+        .map(Vec::as_slice)
+        .context("instances.yaml must contain an 'instances' array")
+}
 
 /// Try parsing a string as a JSON number. Empty strings default to 0.
 fn str_to_json_number(s: &str) -> Option<JsonValue> {
@@ -102,7 +110,7 @@ fn normalize_protocol_mapping(
                 .or_insert_with(|| JsonValue::Number(Number::from(0)));
             normalized
         },
-        "di_do" | "gpio" | "dido" => convert_fields(mapping, &["gpio_number"]),
+        "di_do" => convert_fields(mapping, &["gpio_number"]),
         _ => convert_fields(mapping, &[]),
     }
 }
@@ -465,23 +473,20 @@ impl ConfigSyncer {
             .with_context(|| format!("Failed to read {:?}", yaml_path))?;
         let io_config: IoConfig =
             serde_yml::from_str(&yaml_content).context("Failed to parse io.yaml")?;
+        let channels = io_config.channels.clone();
         let mut yaml_config =
             serde_json::to_value(&io_config).context("Failed to convert config to JSON")?;
-        let channels = yaml_config
-            .as_object_mut()
-            .and_then(|obj| obj.remove("channels"))
-            .and_then(|value| value.as_array().cloned())
-            .unwrap_or_default();
+        if let Some(object) = yaml_config.as_object_mut() {
+            object.remove("channels");
+        }
 
         let mut channel_names = std::collections::HashMap::new();
         for (index, channel) in channels.iter().enumerate() {
-            if let Some(name) = channel.get("name").and_then(|value| value.as_str())
-                && let Some(existing_index) = channel_names.insert(name.to_string(), index)
-            {
+            if let Some(existing_index) = channel_names.insert(channel.core.name.clone(), index) {
                 return Err(anyhow::anyhow!(
                     "Duplicate channel name '{}' found at indices {} and {}. \
                          Channel names must be unique. Please rename one of the channels in io.yaml.",
-                    name,
+                    channel.core.name,
                     existing_index,
                     index
                 ));
@@ -724,8 +729,8 @@ impl ConfigSyncer {
                 JsonValue::String(s) => (s, "string"),
                 JsonValue::Bool(b) => (b.to_string(), "boolean"),
                 JsonValue::Number(n) => (n.to_string(), "number"),
-                JsonValue::Array(a) => (serde_json::to_string(&JsonValue::Array(a))?, "array"),
-                JsonValue::Object(o) => (serde_json::to_string(&JsonValue::Object(o))?, "object"),
+                JsonValue::Array(a) => (serde_json::to_string(&JsonValue::Array(a))?, "json"),
+                JsonValue::Object(o) => (serde_json::to_string(&JsonValue::Object(o))?, "json"),
                 JsonValue::Null => continue,
             };
 
@@ -753,42 +758,20 @@ impl ConfigSyncer {
     async fn insert_channels(
         &self,
         tx: &mut Transaction<'_, Sqlite>,
-        channels: &[JsonValue],
+        channels: &[std::sync::Arc<ChannelConfig>],
     ) -> Result<usize> {
         let mut count = 0;
         for channel in channels {
             // Parse channel ID (must be u16 as defined in ChannelConfig)
-            let channel_id = match channel.get("id").and_then(|v| v.as_u64()) {
-                Some(id) if id > 0 && id <= u16::MAX as u64 => id as i32,
-                Some(id) => {
+            let channel_id = match channel.core.id {
+                id if id > 0 && id <= u16::MAX as u32 => id as i32,
+                id => {
                     warn!("Invalid channel ID {}: skip", id);
-                    continue;
-                },
-                None => {
-                    warn!("Channel missing id: skip");
                     continue;
                 },
             };
 
-            let name = channel
-                .get("name")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let protocol = channel
-                .get("protocol")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let enabled = channel
-                .get("enabled")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(true);
-
-            let config = StoredChannelConfig::from_value(channel.clone())
-                .with_context(|| {
-                    format!("Channel {channel_id} has an invalid stored configuration payload")
-                })?
+            let config = StoredChannelConfig::from(channel.as_ref())
                 .encode()
                 .with_context(|| {
                     format!("Channel {channel_id} configuration payload cannot be encoded")
@@ -815,9 +798,9 @@ impl ConfigSyncer {
                      updated_at = CURRENT_TIMESTAMP",
             )
             .bind(channel_id)
-            .bind(&name)
-            .bind(&protocol)
-            .bind(enabled)
+            .bind(&channel.core.name)
+            .bind(&channel.core.protocol)
+            .bind(channel.core.enabled)
             .bind(&config)
             .bind(initial_revision)
             .execute(&mut **tx)
@@ -866,7 +849,9 @@ impl ConfigSyncer {
                     .bind(channel_id)
                     .fetch_one(&mut **tx)
                     .await
-                    .unwrap_or_else(|_| "modbus_tcp".to_string()); // Default fallback
+                    .with_context(|| {
+                        format!("channel {channel_id} has no canonical protocol row")
+                    })?;
 
             // Load point definitions and mappings for each type (T/S/C/A)
             // Telemetry points
@@ -990,94 +975,68 @@ impl ConfigSyncer {
         let yaml_content = std::fs::read_to_string(instances_path)?;
         let instances_data: JsonValue = serde_yml::from_str(&yaml_content)?;
 
-        // Support both array format (recommended) and legacy object format
-        if let Some(instances_array) = instances_data.get("instances").and_then(|v| v.as_array()) {
-            // Array format: instances: [{instance_id: 1, instance_name: "x", product_name: "y", ...}]
-            for instance_data in instances_array {
-                // Parse and validate instance_id (required, must be > 0)
-                let instance_id = match instance_data.get("instance_id").and_then(|v| v.as_u64()) {
-                    Some(id) if id > 0 => id as u32,
-                    _ => {
-                        errors.push(SyncError {
-                            item: "Instance definition".to_string(),
-                            error: format!(
-                                "Invalid or missing instance_id: {:?}",
-                                instance_data.get("instance_id")
-                            ),
-                        });
-                        continue;
-                    },
-                };
+        let instances_array = canonical_instance_entries(&instances_data)?;
 
-                let instance_name = instance_data
-                    .get("instance_name")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-
-                let product_name = instance_data
-                    .get("product_name")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-
-                // Validate required fields
-                if instance_name.is_empty() {
+        for instance_data in instances_array {
+            // Parse and validate instance_id (required, must be > 0)
+            let instance_id = match instance_data.get("instance_id").and_then(|v| v.as_u64()) {
+                Some(id) if id > 0 => id as u32,
+                _ => {
                     errors.push(SyncError {
-                        item: format!("Instance with id {}", instance_id),
-                        error: "Missing instance_name".to_string(),
+                        item: "Instance definition".to_string(),
+                        error: format!(
+                            "Invalid or missing instance_id: {:?}",
+                            instance_data.get("instance_id")
+                        ),
                     });
                     continue;
-                }
+                },
+            };
 
-                if product_name.is_empty() {
-                    errors.push(SyncError {
-                        item: format!("Instance: {}", instance_name),
-                        error: "Missing product_name".to_string(),
-                    });
-                    continue;
-                }
+            let instance_name = instance_data
+                .get("instance_name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
 
-                // Parse optional parent_id for topology hierarchy
-                let parent_id = instance_data
-                    .get("parent_id")
-                    .and_then(|v| v.as_u64())
-                    .map(|v| v as u32);
+            let product_name = instance_data
+                .get("product_name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
 
-                count += self
-                    .process_single_instance(
-                        tx,
-                        instance_id,
-                        instance_name,
-                        product_name,
-                        parent_id,
-                        config_dir,
-                        errors,
-                    )
-                    .await?;
+            // Validate required fields
+            if instance_name.is_empty() {
+                errors.push(SyncError {
+                    item: format!("Instance with id {}", instance_id),
+                    error: "Missing instance_name".to_string(),
+                });
+                continue;
             }
-        } else if let Some(instances) = instances_data.get("instances").and_then(|v| v.as_object())
-        {
-            // Legacy object format: instances: {instance_name: {product_name: "x", ...}}
-            for (instance_name, instance_data) in instances {
-                let product_name = instance_data
-                    .get("product_name")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
 
-                // Generate a new instance_id for legacy format
-                let instance_id = self.get_next_instance_id(tx).await?;
-
-                count += self
-                    .process_single_instance(
-                        tx,
-                        instance_id,
-                        instance_name,
-                        product_name,
-                        None,
-                        config_dir,
-                        errors,
-                    )
-                    .await?;
+            if product_name.is_empty() {
+                errors.push(SyncError {
+                    item: format!("Instance: {}", instance_name),
+                    error: "Missing product_name".to_string(),
+                });
+                continue;
             }
+
+            // Parse optional parent_id for topology hierarchy
+            let parent_id = instance_data
+                .get("parent_id")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as u32);
+
+            count += self
+                .process_single_instance(
+                    tx,
+                    instance_id,
+                    instance_name,
+                    product_name,
+                    parent_id,
+                    config_dir,
+                    errors,
+                )
+                .await?;
         }
 
         Ok(count)
@@ -1180,15 +1139,6 @@ impl ConfigSyncer {
         }
 
         Ok(count)
-    }
-
-    /// Get next available instance_id
-    async fn get_next_instance_id(&self, tx: &mut Transaction<'_, Sqlite>) -> Result<u32> {
-        let max_id: Option<u32> = sqlx::query_scalar("SELECT MAX(instance_id) FROM instances")
-            .fetch_optional(&mut **tx)
-            .await?;
-
-        Ok(max_id.unwrap_or(0) + 1)
     }
 
     /// Load instance properties from properties.csv
@@ -1398,27 +1348,38 @@ impl ConfigSyncer {
                 .and_then(|v| v.as_i64())
                 .unwrap_or(0);
 
-            // Store the complete flow_json (entire rule content for vue-flow/node-red)
-            let flow_json = match rule_data.get("flow_json") {
-                Some(v) => serde_json::to_string(v).map_err(|e| {
-                    anyhow::anyhow!("Rule '{}': Failed to serialize flow_json: {}", name, e)
-                })?,
-                None => serde_json::to_string(&rule_data).map_err(|e| {
-                    anyhow::anyhow!(
-                        "Rule '{}': Failed to serialize rule_data as flow_json: {}",
-                        name,
-                        e
-                    )
-                })?,
+            let flow_value = rule_data
+                .get("flow_json")
+                .ok_or_else(|| anyhow::anyhow!("Rule '{}': flow_json is required", name))?;
+
+            let cooldown_ms = rule_data
+                .get("cooldown_ms")
+                .and_then(JsonValue::as_u64)
+                .unwrap_or(0);
+            let cooldown_ms = i64::try_from(cooldown_ms)
+                .with_context(|| format!("Rule '{name}': cooldown_ms exceeds SQLite INTEGER"))?;
+            let trigger_config = match rule_data.get("trigger_config") {
+                None | Some(JsonValue::Null) if enabled => {
+                    anyhow::bail!("Rule '{name}': enabled rules require trigger_config")
+                },
+                None | Some(JsonValue::Null) => None,
+                Some(value) => {
+                    let trigger =
+                        serde_json::from_value::<aether_rules::TriggerConfig>(value.clone())
+                            .with_context(|| format!("Rule '{name}': invalid trigger_config"))?;
+                    trigger
+                        .validate()
+                        .with_context(|| format!("Rule '{name}': invalid trigger_config"))?;
+                    Some(serde_json::to_string(&trigger).with_context(|| {
+                        format!("Rule '{name}': cannot serialize trigger_config")
+                    })?)
+                },
             };
 
             // Parse flow_json → compact RuleFlow for execution engine
-            let flow_value: JsonValue = serde_json::from_str(&flow_json).map_err(|e| {
-                anyhow::anyhow!("Rule '{}': Failed to parse flow_json: {}", name, e)
-            })?;
             // Both flow columns come from the single sanctioned producer so
             // flow_json/nodes_json can never diverge.
-            let columns = aether_rules::flow_column_values(&flow_value).with_context(|| {
+            let columns = aether_rules::flow_column_values(flow_value).with_context(|| {
                 format!(
                     "Rule '{}' ({}): invalid Vue Flow structure",
                     name,
@@ -1440,6 +1401,8 @@ impl ConfigSyncer {
                          nodes_json = ?,
                          enabled = ?,
                          priority = ?,
+                         cooldown_ms = ?,
+                         trigger_config = ?,
                          updated_at = CURRENT_TIMESTAMP
                      WHERE id = ?",
                 )
@@ -1448,13 +1411,15 @@ impl ConfigSyncer {
                 .bind(&columns.nodes_json)
                 .bind(enabled)
                 .bind(priority)
+                .bind(cooldown_ms)
+                .bind(&trigger_config)
                 .bind(rule_id)
                 .execute(&mut **tx)
                 .await?;
             } else {
                 sqlx::query(
-                    "INSERT INTO rules (name, description, flow_json, nodes_json, enabled, priority)
-                     VALUES (?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO rules (name, description, flow_json, nodes_json, enabled, priority, cooldown_ms, trigger_config)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 )
                 .bind(name)
                 .bind(description)
@@ -1462,6 +1427,8 @@ impl ConfigSyncer {
                 .bind(&columns.nodes_json)
                 .bind(enabled)
                 .bind(priority)
+                .bind(cooldown_ms)
+                .bind(&trigger_config)
                 .execute(&mut **tx)
                 .await?;
             }
@@ -1529,6 +1496,86 @@ mod atomic_sync_tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
+
+    #[test]
+    fn gpio_mapping_normalization_accepts_only_the_canonical_protocol_id() {
+        let mapping = HashMap::from([
+            ("point_id".to_owned(), "1".to_owned()),
+            ("gpio_number".to_owned(), "17".to_owned()),
+        ]);
+
+        let canonical = normalize_protocol_mapping("di_do", mapping.clone());
+        assert_eq!(canonical["gpio_number"], serde_json::json!(17));
+
+        for retired in ["gpio", "dido"] {
+            let rejected = normalize_protocol_mapping(retired, mapping.clone());
+            assert_eq!(
+                rejected["gpio_number"],
+                serde_json::json!("17"),
+                "retired protocol id {retired} must not select the di_do decoder"
+            );
+        }
+    }
+
+    #[test]
+    fn instance_sync_rejects_the_retired_object_shape() {
+        let retired = serde_json::json!({
+            "instances": {
+                "meter-a": {"product_name": "ExampleDevice"}
+            }
+        });
+        let error = canonical_instance_entries(&retired)
+            .expect_err("instance definitions have one canonical array shape");
+        assert!(error.to_string().contains("'instances' array"));
+
+        let canonical = serde_json::json!({
+            "instances": [{
+                "instance_id": 1,
+                "instance_name": "meter-a",
+                "product_name": "ExampleDevice"
+            }]
+        });
+        assert_eq!(canonical_instance_entries(&canonical).unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn composite_service_config_uses_the_canonical_json_type() {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:")
+            .await
+            .expect("in-memory service config database");
+        sqlx::query(common::SERVICE_CONFIG_TABLE)
+            .execute(&pool)
+            .await
+            .expect("service config schema");
+        let syncer = ConfigSyncer::new("unused-config", "unused-data");
+        let mut transaction = pool.begin().await.expect("service config transaction");
+
+        syncer
+            .insert_service_config(
+                &mut transaction,
+                "aether-test",
+                &serde_json::json!({"routes": [{"id": 7, "enabled": true}]}),
+            )
+            .await
+            .expect("write composite service config");
+        transaction.commit().await.expect("commit service config");
+
+        let stored_type: String = sqlx::query_scalar(
+            "SELECT type FROM service_config WHERE service_name = ? AND key = ?",
+        )
+        .bind("aether-test")
+        .bind("routes")
+        .fetch_one(&pool)
+        .await
+        .expect("stored service config type");
+        assert_eq!(stored_type, "json");
+
+        let loaded = common::sqlite::ServiceConfigLoader::from_pool(pool, "aether-test", 6000)
+            .load_config()
+            .await
+            .expect("strict loader accepts sync output");
+        assert_eq!(loaded.extra_config["routes"][0]["id"], 7);
+    }
 
     fn write_site_config_with_managed_entities(workspace: &TempDir) -> (PathBuf, PathBuf) {
         let config_path = workspace.path().join("config");
@@ -2324,6 +2371,7 @@ channels:
             r#"{
                 "name": "structurally-invalid",
                 "enabled": true,
+                "trigger_config": {"type":"interval","interval_ms":1000},
                 "flow_json": {}
             }"#,
         )
@@ -2379,6 +2427,40 @@ channels:
                 .await
                 .unwrap();
         assert!(!enabled);
+    }
+
+    #[tokio::test]
+    async fn enabled_rule_without_trigger_config_fails_closed() {
+        let workspace = TempDir::new().unwrap();
+        let (config_path, database_path) = write_site_config_with_managed_entities(&workspace);
+        let rule_path = config_path.join("automation/rules/configured-rule.json");
+        let mut rule: JsonValue = serde_json::from_slice(&fs::read(&rule_path).unwrap()).unwrap();
+        rule.as_object_mut()
+            .unwrap()
+            .insert("enabled".to_owned(), JsonValue::Bool(true));
+        fs::write(&rule_path, serde_json::to_vec_pretty(&rule).unwrap()).unwrap();
+
+        let error = ConfigSyncer::new(&config_path, &database_path)
+            .sync_all()
+            .await
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("enabled rules require trigger_config"));
+    }
+
+    #[tokio::test]
+    async fn rule_without_flow_json_is_not_interpreted_as_a_flow() {
+        let workspace = TempDir::new().unwrap();
+        let (config_path, database_path) = write_site_config_with_managed_entities(&workspace);
+        let rule_path = config_path.join("automation/rules/configured-rule.json");
+        let mut rule: JsonValue = serde_json::from_slice(&fs::read(&rule_path).unwrap()).unwrap();
+        rule.as_object_mut().unwrap().remove("flow_json");
+        fs::write(&rule_path, serde_json::to_vec_pretty(&rule).unwrap()).unwrap();
+
+        let error = ConfigSyncer::new(&config_path, &database_path)
+            .sync_all()
+            .await
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("flow_json is required"));
     }
 
     #[tokio::test]

@@ -312,8 +312,8 @@ impl ChannelPatch {
 
     /// Merges the supplied top-level protocol parameter keys.
     ///
-    /// Existing keys omitted from this map remain unchanged. This preserves
-    /// the staged HTTP compatibility contract while keeping the values
+    /// Existing keys omitted from this map remain unchanged, matching the
+    /// canonical partial-update semantics while keeping values
     /// transport-neutral.
     #[must_use]
     pub fn with_parameters(mut self, parameters: ChannelParameters) -> Self {

@@ -1211,7 +1211,7 @@ async fn update_merges_parameter_keys_replaces_logging_and_restores_typed_runtim
                 .with_logging(
                     ChannelLoggingPolicy::default()
                         .with_enabled(true)
-                        .with_level("warn"),
+                        .with_level("error"),
                 ),
         ))
         .await
@@ -1228,7 +1228,7 @@ async fn update_merges_parameter_keys_replaces_logging_and_restores_typed_runtim
     assert_eq!(config["parameters"]["nested"]["retry"], 3);
     assert_eq!(config["parameters"]["port"], 502);
     assert_eq!(config["logging"]["enabled"], true);
-    assert_eq!(config["logging"]["level"], "warn");
+    assert_eq!(config["logging"]["level"], "error");
     assert!(config["logging"]["file"].is_null());
 
     let enabled = mutator
@@ -1243,7 +1243,7 @@ async fn update_merges_parameter_keys_replaces_logging_and_restores_typed_runtim
     assert_eq!(runtime_config.parameters["credential"], "never-log-secret");
     assert_eq!(runtime_config.parameters["port"], 502);
     assert!(runtime_config.logging.enabled);
-    assert_eq!(runtime_config.logging.level.as_deref(), Some("warn"));
+    assert_eq!(runtime_config.logging.level.as_deref(), Some("error"));
     assert_eq!(runtime_config.logging.file, None);
 }
 

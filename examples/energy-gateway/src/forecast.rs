@@ -13,7 +13,7 @@ use async_trait::async_trait;
 
 use crate::LoadForecastContract;
 
-const FORECAST_CONTRACT: &str = "aether.data-processing.forecast.v1";
+const FORECAST_CONTRACT: &str = "aether.data-processing.forecast";
 const FALLBACK_TTL_MS: u64 = 1_800_000;
 
 /// Persistence fallback that repeats the last actual target value.

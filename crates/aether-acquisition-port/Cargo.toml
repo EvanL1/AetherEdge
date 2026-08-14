@@ -13,8 +13,8 @@ keywords = ["iot", "edge", "acquisition", "data-plane"]
 categories = ["asynchronous", "data-structures"]
 
 [dependencies]
-aether-domain = { version = "0.0.1", path = "../aether-domain" }
-aether-ports = { version = "0.0.1", path = "../aether-ports" }
+aether-domain = { version = "0.0.2", path = "../aether-domain" }
+aether-ports = { version = "0.0.2", path = "../aether-ports" }
 async-trait = { workspace = true }
 
 [lints]

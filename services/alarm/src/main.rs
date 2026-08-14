@@ -5,7 +5,7 @@
 //! - Active alerts (`/alarmApi/alerts`)
 //! - Alert event history (`/alarmApi/alert-events`)
 //! - Background monitoring loop (reads SHM, triggers/recovers alerts)
-//! - HTTP broadcasts to api (6005) and uplink (6006)
+//! - Durable transition delivery to API (6005) and CloudLink uplink (6006)
 
 use std::sync::Arc;
 
@@ -21,6 +21,7 @@ mod live_values;
 mod models;
 mod monitor;
 mod notification;
+mod notification_outbox;
 mod routes;
 mod state;
 
@@ -32,7 +33,8 @@ use crate::state::AppState;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let cfg = AlarmConfig::default();
+    let cfg = AlarmConfig::from_env()?;
+    let addr = cfg.api_bind_address()?;
 
     // ── Logging ──────────────────────────────────────────────────────────────
     common::service_bootstrap::init_service(
@@ -61,12 +63,15 @@ async fn main() -> anyhow::Result<()> {
     // ── HTTP client (for broadcasts) ──────────────────────────────────────────
     let http_client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
+        .redirect(reqwest::redirect::Policy::none())
+        .no_proxy()
         .build()?;
 
     let notifier: Arc<dyn notification::AlarmNotifier> = Arc::new(HttpAlarmNotifier::new(
         http_client,
         cfg.api_url.clone(),
         cfg.uplink_url.clone(),
+        cfg.api_broadcast_token.clone(),
     ));
 
     // ── Governed alarm command boundary ──────────────────────────────────────
@@ -118,12 +123,14 @@ async fn main() -> anyhow::Result<()> {
 
     // ── Background tasks ──────────────────────────────────────────────────────
     let shutdown = CancellationToken::new();
+    let mut supervisor =
+        common::task_supervisor::CriticalTaskSupervisor::new(std::time::Duration::from_secs(5));
 
     let topology_source = Arc::clone(&live_values);
     let topology_pool = state.db.clone();
     let topology_config = cfg.clone();
     let topology_shutdown = shutdown.clone();
-    tokio::spawn(async move {
+    supervisor.spawn("alarm-topology-refresh", async move {
         run_alarm_topology_refresh(
             topology_source,
             topology_pool,
@@ -135,15 +142,32 @@ async fn main() -> anyhow::Result<()> {
 
     let monitor_state = Arc::clone(&state);
     let monitor_shutdown = shutdown.clone();
-    tokio::spawn(async move {
+    supervisor.spawn("alarm-monitor", async move {
         monitor::run_monitor(monitor_state, monitor_shutdown).await;
     });
 
     let count_state = Arc::clone(&state);
     let count_shutdown = shutdown.clone();
-    tokio::spawn(async move {
+    supervisor.spawn("alarm-count-broadcaster", async move {
         monitor::run_alarm_count_broadcaster(count_state, count_shutdown).await;
     });
+
+    let notification_pool = state.db.clone();
+    let notification_notifier = Arc::clone(&state.notifier);
+    let notification_config =
+        notification_outbox::NotificationDispatcherConfig::from_alarm_config(&cfg);
+    let notification_shutdown = shutdown.clone();
+    supervisor.spawn("alarm-notification-outbox", async move {
+        notification_outbox::run_notification_dispatcher(
+            notification_pool,
+            notification_notifier,
+            notification_config,
+            notification_shutdown,
+        )
+        .await;
+    });
+    let supervisor_shutdown = shutdown.clone();
+    let supervisor_task = tokio::spawn(async move { supervisor.run(supervisor_shutdown).await });
 
     // ── HTTP server ───────────────────────────────────────────────────────────
     let app = routes::create_routes(Arc::clone(&state))
@@ -152,9 +176,13 @@ async fn main() -> anyhow::Result<()> {
         ))
         .layer(axum::extract::DefaultBodyLimit::max(1024 * 1024));
 
-    let addr = common::bind_address(&cfg.api_host, cfg.api_port)?;
-
-    common::shutdown::serve_with_shutdown(addr, app, shutdown).await?;
+    let server_result = common::shutdown::serve_with_shutdown(addr, app, shutdown.clone()).await;
+    shutdown.cancel();
+    let supervisor_result = supervisor_task
+        .await
+        .map_err(|error| anyhow::anyhow!("Alarm task supervisor join failed: {error}"))?;
+    server_result?;
+    supervisor_result?;
 
     info!("alarm stopped");
     Ok(())

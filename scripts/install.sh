@@ -25,8 +25,9 @@ AETHER_COMPOSE_PROJECT="aetheredge"
 DATA_DIR=""
 LIVE_CONFIG_DIR=""
 # Allow logs to be stored on external storage if available
-# Accept both AETHER_LOG_PATH (matches docker-compose.yml) and AETHER_LOG_DIR (legacy)
-LOG_DIR="${AETHER_LOG_PATH:-${AETHER_LOG_DIR:-${LOG_DIR:-$INSTALL_DIR/logs}}}"
+# AETHER_LOG_PATH is the sole host log-directory input. AETHER_LOG_DIR remains
+# an internal per-container service setting in docker-compose.yml.
+LOG_DIR="${AETHER_LOG_PATH:-${LOG_DIR:-$INSTALL_DIR/logs}}"
 
 # Save the directory where installation was launched (for cleanup later)
 LAUNCH_DIR="${LAUNCH_DIR:-$(pwd)}"
@@ -559,7 +560,7 @@ resolve_compose_timescale_data_directory() {
 }
 
 resolve_compose_log_directory() {
-    local configured_directory="${AETHER_LOG_PATH:-${AETHER_LOG_DIR:-}}"
+    local configured_directory="${AETHER_LOG_PATH:-}"
 
     if [[ -z "$configured_directory" ]]; then
         configured_directory="$INSTALL_DIR/logs"
@@ -785,35 +786,37 @@ ensure_compose_jwt_secret() {
     echo -e "${GREEN}✓ Stored a private JWT signing secret${NC}"
 }
 
-# Keep uplink device-control authority separate from user JWT signing. The
-# credential is shared only by aether-uplink and aether-automation.
-ensure_compose_uplink_control_token() {
+# Authenticate Alarm's internal notification delivery without granting the
+# service user-JWT signing authority.
+# The credential is shared only by aether-alarm, aether-api, and aether-uplink.
+ensure_compose_alarm_broadcast_token() {
     local env_file="$INSTALL_DIR/.env"
     local current=""
     local selected=""
 
     if [[ -f "$env_file" ]]; then
-        current=$($SUDO sed -n 's/^AETHER_UPLINK_CONTROL_TOKEN=//p' "$env_file" | tail -n 1 | tr -d '\r')
+        current=$($SUDO sed -n 's/^AETHER_ALARM_BROADCAST_TOKEN=//p' "$env_file" | tail -n 1 | tr -d '\r')
     fi
-    if is_valid_jwt_secret "$current" && [[ "$current" != "${JWT_SECRET_KEY:-}" ]]; then
-        export AETHER_UPLINK_CONTROL_TOKEN="$current"
+    if is_valid_jwt_secret "$current" \
+        && [[ "$current" != "${JWT_SECRET_KEY:-}" ]]; then
+        export AETHER_ALARM_BROADCAST_TOKEN="$current"
         return
     fi
 
-    if is_valid_jwt_secret "${AETHER_UPLINK_CONTROL_TOKEN:-}" \
-        && [[ "${AETHER_UPLINK_CONTROL_TOKEN:-}" != "${JWT_SECRET_KEY:-}" ]]; then
-        selected=${AETHER_UPLINK_CONTROL_TOKEN:-}
+    if is_valid_jwt_secret "${AETHER_ALARM_BROADCAST_TOKEN:-}" \
+        && [[ "${AETHER_ALARM_BROADCAST_TOKEN:-}" != "${JWT_SECRET_KEY:-}" ]]; then
+        selected=${AETHER_ALARM_BROADCAST_TOKEN:-}
     else
         selected=$(generate_jwt_secret)
     fi
-    if ! is_valid_jwt_secret "$selected" || [[ "$selected" == "${JWT_SECRET_KEY:-}" ]]; then
-        echo -e "${RED}ERROR: failed to generate a distinct uplink control credential${NC}" >&2
-        exit 1
-    fi
+    while ! is_valid_jwt_secret "$selected" \
+        || [[ "$selected" == "${JWT_SECRET_KEY:-}" ]]; do
+        selected=$(generate_jwt_secret)
+    done
 
-    persist_compose_env_value "$env_file" AETHER_UPLINK_CONTROL_TOKEN "$selected"
-    export AETHER_UPLINK_CONTROL_TOKEN="$selected"
-    echo -e "${GREEN}✓ Stored a private uplink control credential${NC}"
+    persist_compose_env_value "$env_file" AETHER_ALARM_BROADCAST_TOKEN "$selected"
+    export AETHER_ALARM_BROADCAST_TOKEN="$selected"
+    echo -e "${GREEN}✓ Stored a private alarm broadcast credential${NC}"
 }
 
 # =============================================================================
@@ -1139,7 +1142,7 @@ snapshot_runtime_data_for_rollback() {
         aether-history.db-wal
         aether-history.db-shm
         aether-history.db-journal
-        uplink.outbox
+        cloudlink.spool
     )
 
     RUNTIME_SNAPSHOT_COMPLETE=false
@@ -1180,7 +1183,7 @@ restore_runtime_data_from_backup() {
         aether-history.db-wal
         aether-history.db-shm
         aether-history.db-journal
-        uplink.outbox
+        cloudlink.spool
     )
 
     [[ "$RUNTIME_SNAPSHOT_COMPLETE" == true ]] || return 0
@@ -1585,7 +1588,7 @@ reject_existing_docker_filesystem_footprint
 DATA_DIR=$(resolve_compose_data_directory)
 LIVE_CONFIG_DIR="$DATA_DIR/config"
 LOG_DIR_EXPLICIT=false
-if [[ -n "${AETHER_LOG_PATH:-${AETHER_LOG_DIR:-}}" ]]; then
+if [[ -n "${AETHER_LOG_PATH:-}" ]]; then
     LOG_DIR_EXPLICIT=true
 fi
 LOG_DIR=$(resolve_compose_log_directory)
@@ -1683,7 +1686,7 @@ snapshot_installed_cli_for_rollback
 
 # Secrets are part of the fresh-install snapshot and are removed on failure.
 ensure_compose_jwt_secret
-ensure_compose_uplink_control_token
+ensure_compose_alarm_broadcast_token
 ensure_compose_bootstrap_admin "$INSTALL_DIR/.env" "$DATA_DIR/aether.db"
 if [[ -f "docker/aether-timescaledb.tar.gz" ]]; then
     ensure_compose_timescaledb_password "$INSTALL_DIR/.env"
@@ -1929,6 +1932,12 @@ $SUDO chmod -R 775 "$INSTALL_DIR/config" 2>/dev/null || true
 $SUDO chmod -R 775 "$INSTALL_DIR/config.template" 2>/dev/null || true
 $SUDO chmod -R 775 "$LOG_DIR" 2>/dev/null || true
 
+# The Uplink certificate bind mount lives under DATA_DIR but must not inherit
+# the shared runtime tree's group/world-readable mode. Existing certificate
+# files from an upgrade are tightened as well; find does not follow symlinks.
+$SUDO chmod 0700 "$DATA_DIR/cert"
+$SUDO find "$DATA_DIR/cert" -type f -exec chmod 0600 {} +
+
 # Fix symlink ownership if exists
 [[ -L "$INSTALL_DIR/logs" ]] && $SUDO chown -h ${ACTUAL_UID}:${ACTUAL_GID} "$INSTALL_DIR/logs" 2>/dev/null || true
 
@@ -1937,21 +1946,11 @@ echo -e "${GREEN}✓ Permissions configured${NC}"
 # Create system-wide environment variables for Docker Compose
 echo "Creating system environment variables..."
 
-# Read device serial number from device tree if available
-DEVICE_SN=""
-if [[ -f /proc/device-tree/serial-number ]]; then
-    DEVICE_SN=$(cat /proc/device-tree/serial-number 2>/dev/null | tr -d '\0' | tr -d '\n')
-    if [[ -n "$DEVICE_SN" ]]; then
-        echo "Detected device serial number: $DEVICE_SN"
-    fi
-fi
-
 # Update the Compose environment through one-key atomic rewrites. The complete
 # pre-install file is already snapshotted, so any later failure restores it.
 ENV_FILE="$INSTALL_DIR/.env"
 persist_compose_env_value "$ENV_FILE" HOST_UID "$ACTUAL_UID"
 persist_compose_env_value "$ENV_FILE" HOST_GID "$ACTUAL_GID"
-persist_compose_env_value "$ENV_FILE" DEVICE_SN "$DEVICE_SN"
 persist_compose_env_value "$ENV_FILE" AETHER_LOG_PATH "$LOG_DIR"
 persist_compose_env_value "$ENV_FILE" AETHER_BASE_PATH "$DATA_DIR"
 if [[ -n "$TIMESCALE_DATA_DIR" ]]; then
@@ -1980,7 +1979,6 @@ if [[ -d "$(dirname "$PROFILE_ENTRY")" ]]; then
 # User: $ACTUAL_USER (UID=$ACTUAL_UID, GID=$ACTUAL_GID)
 export HOST_UID=$ACTUAL_UID
 export HOST_GID=$ACTUAL_GID
-export DEVICE_SN=$DEVICE_SN
 EOF
     $SUDO chmod 644 "$PROFILE_ENTRY"
     echo -e "${GREEN}✓ Environment variables exported to $PROFILE_ENTRY${NC}"
@@ -2100,7 +2098,7 @@ if [[ "$AUTO_MODE" != true ]]; then
     echo "    - aether-automation: 6002 (model + rules - Rust)"
     echo "    - aether-history: 6004    (history - Rust, storage via /hisApi/storage)"
     echo "    - aether-api: 6005     (gateway - Rust)"
-    echo "    - aether-uplink: 6006    (network/MQTT - Rust)"
+    echo "    - aether-uplink: 6006    (CloudLink delivery - Rust)"
     echo "    - aether-alarm: 6007     (alarm - Rust)"
     echo ""
     echo -e "${YELLOW}Important: Configuration Setup Required${NC}"
@@ -2113,9 +2111,9 @@ if [[ "$AUTO_MODE" != true ]]; then
     echo "  3. (Optional) Configure history storage backend via API after startup:"
     echo "     PUT http://127.0.0.1:6004/hisApi/storage"
     echo "     POST http://127.0.0.1:6004/hisApi/storage/reconnect"
-    echo "  4. (Optional) Upload MQTT TLS certificates via API:"
-    echo "     POST http://127.0.0.1:6006/netApi/certificate/upload"
-    echo "     (Files saved to $DATA_DIR/cert/)"
+    echo "  4. (Optional) Commission CloudLink after Gateway enrollment:"
+    echo "     Configure the AETHER_CLOUDLINK_* variables and TLS files in $DATA_DIR/cert/"
+    echo "     CloudLink remains disabled until its complete credential set is present"
     echo ""
     echo -e "${BLUE}Configuration activation:${NC}"
     echo "  aether sync          - Validate and atomically activate configuration"

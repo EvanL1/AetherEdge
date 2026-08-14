@@ -13,7 +13,7 @@ The default Cargo graph is already external-service-free. It contains the
 domain, ports, application layer, SDK, local adapters, the physical SHM data
 plane, and typed SHM port adapters. In particular:
 
-- `aether-dataplane` owns the exact-sized v5 mmap layout, seqlock slots with
+- `aether-dataplane` owns the exact-sized canonical mmap layout, seqlock slots with
   point quality, owner heartbeat and generation fencing, and the independent
   snapshot format without depending on Redis, SQLx, or service models.
 - `aether-shm-bridge` owns exact typed point manifests, dense channel-health
@@ -27,13 +27,15 @@ plane, and typed SHM port adapters. In particular:
   accepts the frame. Neither writer port is exposed to HTTP, CLI, MCP, or AI
   clients.
 - The canonical point segment is `aether-live-state.shm`. The Linux runtime
-  accepts only the v5 header/layout and the independent snapshot v1 format;
-  old v4 mmaps and older snapshot encodings are invalid rather than migration
-  inputs.
-- `FileOutbox` provides bounded legacy store-and-forward with crash recovery.
-  The experimental `CloudLinkSpool` is separate: it preserves stream
-  epoch/position, canonical business digests, replay and loss evidence, and
-  removes a record only after a matching cloud application ACK.
+  accepts one header/layout and one independent snapshot format. Noncanonical
+  mmap and snapshot encodings are invalid rather than migration inputs.
+- `FileOutbox` remains a generic adapter for downstream compositions and is not
+  selected by the production Uplink. `CloudLinkSpool` is Uplink's sole durable
+  store: it preserves stream epoch/position, canonical business digests,
+  replay and loss evidence, and removes a pending record only after a matching
+  cloud application ACK. Lossless alarm admissions reserve a protected
+  post-ACK identity receipt before acceptance; ordinary CloudLink facts remain
+  lossless while pending but do not consume that receipt ledger.
 - Local SQLite is authoritative for commissioned channel desired state. The
   IO full-reconciliation loader projects all channel rows and the four typed
   point tables in one transaction with a fixed five scans. It transfers each
@@ -60,15 +62,19 @@ plane, and typed SHM port adapters. In particular:
   `aether-api` also own isolated PointWatch bitmaps and UDS listeners. Every
   PointWatch consumer validates the hinted typed slot and re-reads the pinned
   SHM generation; the event frame never carries authoritative point data.
-- `aether-history` uses embedded SQLite history by default; PostgreSQL/TimescaleDB are
-  enabled with the `postgres-storage` feature. `aether-uplink` retains its durable
-  local outbox before MQTT.
-- `aether-cloudlink` implements the transport-neutral experimental candidate
-  codec and truthful Runtime Manifest/`PointSample` mapping. The
-  user-broker-neutral MQTT v3.1.1/QoS 1 binding is owned below
-  `services/uplink`; it is not an extension and IO cannot select it. Legacy
-  MQTT remains the runtime default while public AetherContracts alpha.3 is
-  experimental and production credential and durable-store gates remain open.
+- `aether-history` uses embedded SQLite history by default;
+  PostgreSQL/TimescaleDB are enabled with the `postgres-storage` feature.
+  `aether-uplink` persists the one canonical CloudLink stream before MQTT.
+- `aether-cloudlink` implements the transport-neutral codec and truthful
+  Runtime Manifest/`PointSample` mapping. The user-broker-neutral MQTT
+  v3.1.1/QoS 1 binding is owned below `services/uplink`; it is not an extension
+  and IO cannot select it. No generic MQTT fallback, configuration API, or
+  alternate topic tree is compiled. CloudLink is disabled by default for an
+  offline-safe host; enabling it fails closed unless claimed identity, TLS,
+  Cloud verification key, credential binding, and durable spool composition
+  are complete. The pinned AetherContracts release remains provenance, while
+  unsigned Cloud-to-Edge acknowledgement is still a production-authentication
+  blocker.
 - `aether-domain` is the sole business-semantics owner. The former
   `aether-model` compatibility crate has been removed: Pack product contracts
   live in `aether-pack`, SunSpec material is absent from the kernel, and
@@ -92,7 +98,7 @@ The remaining kernel migration is narrower but still real:
   full-configuration query, which still depend on the loopback deployment
   boundary;
 - Energy mappings, rules, evaluations, and Data Processing tasks are isolated
-  Pack assets with closed v1 indexes. The local Kernel CLI can build and
+  Pack assets with closed indexes. The local Kernel CLI can build and
   atomically install a Pack-only artifact; independently published/signed
   Aether and AetherEMS artifacts plus downstream consuming CI are still
   required before repository split.
@@ -114,7 +120,7 @@ Downstream Rust compositions may implement published ports for third-party
 systems. Those integrations stay outside this kernel repository and do not
 change the source-of-truth rules.
 
-## Experimental CloudLink boundary
+## CloudLink boundary
 
 CloudLink is an application delivery protocol, not another name for MQTT. Its
 stream identity, digest, resume cursor, replay, conflict handling, data-loss
@@ -129,14 +135,14 @@ that AetherCloud cannot reach needs a planned bridge/site connector. Broker or
 cloud outage cannot enter acquisition, automation, alarms, safety interlocks,
 history, or local control loops.
 
-CloudLink v1 carries no arbitrary RPC, physical command, point/register write,
+CloudLink carries no arbitrary RPC, physical command, point/register write,
 or SHM mutation. Point telemetry contains only edge-owned address, finite
 value, source timestamp, exposed quality, and coherent topology generation. It
-does not fabricate a Thing Model revision. AetherCloud and AetherEdge now share
-the digest-pinned public AetherContracts subset. Three public behavior artifacts
-remain pending, so distribution integrity does not imply codec conformance.
-Remaining implementation mismatches and release gates are recorded in
-`contracts/cloudlink/v1/MIGRATION.md`.
+does not fabricate a Thing Model revision. `contracts/cloudlink/` is the one
+local wire authority; the digest-pinned AetherContracts release remains
+immutable provenance rather than a selectable protocol. Local codec and spool
+evidence does not by itself prove AetherCloud production conformance or a
+Cloud-signed acknowledgement path.
 
 ## Data-processing capability
 
@@ -147,12 +153,12 @@ selection, semantic bindings, quality policy, authorization, and result
 validation. A processor receives a complete bounded processing frame; it never
 reaches back into SHM, the history database, or an industry pack.
 
-The opt-in v1 composition lives in `aether-api`, reads raw history through a
+The opt-in composition lives in `aether-api`, reads raw history through a
 read-only SQLite adapter, and returns `DerivedData` through authenticated
-`/api/v1/data-processing/*` routes. The Load-Forecasting implementation remains
+`/api/data-processing/*` routes. The Load-Forecasting implementation remains
 an isolated sidecar. CLI/MCP bindings, result caching, scheduling, and a
 standalone Aether orchestration process are not implemented. Current history
-rows do not preserve device-origin sample quality. The v5 SHM adapter does
+rows do not preserve device-origin sample quality. The SHM adapter does
 preserve it and combines it with freshness policy on live reads, but a mixed
 history/live frame therefore cannot claim complete end-to-end quality
 fidelity. The SQLite history is invocation-time consistent but not bitemporal:
@@ -168,7 +174,7 @@ and not device commands. They are never written into the IO-owned T/S segment,
 and a forecast, aggregate, estimate, or classification can influence equipment
 only through a separate automation/control use case. The domain contracts live
 in `aether-domain`, the ports and orchestration live in `aether-ports` and
-`aether-application`, and the strict v1 wire codec lives in
+`aether-application`, and the strict wire codec lives in
 `aether-data-processing`. Concrete processors remain downstream and the
 retained HTTP client is API-owned; `aether-data-processor` is only a reserved future process name. The
 default six-service runtime continues to operate when no processor is installed.

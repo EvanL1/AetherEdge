@@ -60,6 +60,6 @@ pub trait RuleActionCommandFacade: Send + Sync + 'static {
     ///
     /// A facade must preserve an attached [`CommandTopologyFence`] through the
     /// final dispatcher boundary and fail closed if that fence cannot be
-    /// enforced. Unfenced commands exist only for compatibility adapters.
+    /// enforced. Test-only in-memory adapters may remain unfenced.
     async fn write_action(&self, command: RuleActionCommand) -> PortResult<CommandReceipt>;
 }

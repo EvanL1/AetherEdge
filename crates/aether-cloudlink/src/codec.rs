@@ -17,17 +17,14 @@ use crate::session::{
 use crate::session_authentication::{UplinkAuthentication, UplinkSigningProjection};
 use crate::telemetry::{TelemetryBatch, TopologyBinding};
 use crate::validation::{
-    canonical_u64, digest, identifier, positive_u64, protocol_version, schema, traceparent, uuid,
+    canonical_u64, digest, identifier, positive_u64, schema, traceparent, uuid,
 };
-use crate::{
-    CLOUDLINK_PROTOCOL, CLOUDLINK_PROTOCOL_VERSION, CloudLinkCodecError,
-    MAX_CLOUDLINK_MESSAGE_BYTES,
-};
+use crate::{CLOUDLINK_PROTOCOL, CloudLinkCodecError, MAX_CLOUDLINK_MESSAGE_BYTES};
 
-const ENVELOPE_SCHEMA: &str = "aether.cloudlink.envelope.v1";
-const HEARTBEAT_SCHEMA: &str = "aether.cloudlink.heartbeat.v1";
-const DURABLE_ACK_SCHEMA: &str = "aether.cloudlink.durable-ack.v1";
-const REPLAY_REQUEST_SCHEMA: &str = "aether.cloudlink.replay-request.v1";
+const ENVELOPE_SCHEMA: &str = "aether.cloudlink.envelope";
+const HEARTBEAT_SCHEMA: &str = "aether.cloudlink.heartbeat";
+const DURABLE_ACK_SCHEMA: &str = "aether.cloudlink.durable-ack";
+const REPLAY_REQUEST_SCHEMA: &str = "aether.cloudlink.replay-request";
 
 /// Strict codec entry point.
 pub struct CloudLinkCodec;
@@ -44,22 +41,22 @@ impl CloudLinkCodec {
             },
         )?;
         match schema_value {
-            "aether.cloudlink.session-challenge-request.v1" => {
+            "aether.cloudlink.session-challenge-request" => {
                 let value: SessionChallengeRequest = serde_json::from_slice(bytes)?;
                 value.validate()?;
                 Ok(CandidateMessage::SessionChallengeRequest(value))
             },
-            "aether.cloudlink.session-challenge.v1" => {
+            "aether.cloudlink.session-challenge" => {
                 let value: SessionChallenge = serde_json::from_slice(bytes)?;
                 value.validate()?;
                 Ok(CandidateMessage::SessionChallenge(value))
             },
-            "aether.cloudlink.session-hello.v1" => {
+            "aether.cloudlink.session-hello" => {
                 let value: SessionHello = serde_json::from_slice(bytes)?;
                 value.validate()?;
                 Ok(CandidateMessage::SessionHello(value))
             },
-            "aether.cloudlink.session-accepted.v1" => {
+            "aether.cloudlink.session-accepted" => {
                 let value: SessionAccepted = serde_json::from_slice(bytes)?;
                 value.validate()?;
                 Ok(CandidateMessage::SessionAccepted(value))
@@ -106,7 +103,7 @@ impl CloudLinkCodec {
         TelemetryBatch::from_samples(topology, samples)
     }
 
-    /// Embeds and re-verifies the existing closed Runtime Manifest v1 checksum.
+    /// Embeds and re-verifies the existing closed Runtime Manifest checksum.
     pub fn runtime_manifest_report(
         manifest_json: &[u8],
         observed_at: TimestampMs,
@@ -203,7 +200,6 @@ impl CloudLinkCodec {
         let value = DeliveryEnvelope {
             schema: ENVELOPE_SCHEMA.to_string(),
             protocol: CLOUDLINK_PROTOCOL.to_string(),
-            protocol_version: session.protocol_version().to_string(),
             message_kind: record.message_kind().as_str().to_string(),
             gateway_id: session.gateway_id().to_string(),
             session_id: session.session_id().to_string(),
@@ -272,7 +268,6 @@ impl CandidateMessage {
 pub struct HeartbeatMessage {
     schema: String,
     protocol: String,
-    protocol_version: String,
     message_kind: String,
     gateway_id: String,
     session_id: String,
@@ -295,7 +290,6 @@ impl HeartbeatMessage {
         let mut value = Self {
             schema: HEARTBEAT_SCHEMA.to_string(),
             protocol: CLOUDLINK_PROTOCOL.to_string(),
-            protocol_version: session.protocol_version().to_string(),
             message_kind: "heartbeat".to_string(),
             gateway_id: session.gateway_id().to_string(),
             session_id: session.session_id().to_string(),
@@ -312,7 +306,7 @@ impl HeartbeatMessage {
 
     /// Creates the existing unsigned Cloud heartbeat acknowledgement wire value.
     ///
-    /// The frozen alpha profile does not define an ACK signing projection.
+    /// The pinned profile does not define an ACK signing projection.
     pub fn ack(
         session: &SessionBinding,
         observed_at: TimestampMs,
@@ -321,7 +315,6 @@ impl HeartbeatMessage {
         let value = Self {
             schema: HEARTBEAT_SCHEMA.to_string(),
             protocol: CLOUDLINK_PROTOCOL.to_string(),
-            protocol_version: session.protocol_version().to_string(),
             message_kind: "heartbeat-ack".to_string(),
             gateway_id: session.gateway_id().to_string(),
             session_id: session.session_id().to_string(),
@@ -356,7 +349,6 @@ impl HeartbeatMessage {
             });
         }
         validate_session_fields(
-            &self.protocol_version,
             &self.gateway_id,
             &self.session_id,
             &self.session_epoch,
@@ -389,7 +381,6 @@ impl HeartbeatMessage {
         self.validate()?;
         session_match(
             session,
-            &self.protocol_version,
             &self.gateway_id,
             &self.session_id,
             &self.session_epoch,
@@ -430,16 +421,14 @@ impl DeliveryDescriptor {
         &self.stream_id
     }
 
-    /// Returns the parsed stream epoch.
-    #[must_use]
-    pub fn stream_epoch(&self) -> u64 {
-        self.stream_epoch.parse().unwrap_or_default()
+    /// Returns the strictly parsed stream epoch.
+    pub fn stream_epoch(&self) -> Result<u64, CloudLinkCodecError> {
+        positive_u64(&self.stream_epoch, "delivery.stream_epoch")
     }
 
-    /// Returns the parsed position.
-    #[must_use]
-    pub fn position(&self) -> u64 {
-        self.position.parse().unwrap_or_default()
+    /// Returns the strictly parsed position.
+    pub fn position(&self) -> Result<u64, CloudLinkCodecError> {
+        positive_u64(&self.position, "delivery.position")
     }
 
     /// Returns the stable batch ID.
@@ -461,7 +450,6 @@ impl DeliveryDescriptor {
 pub struct DeliveryEnvelope {
     schema: String,
     protocol: String,
-    protocol_version: String,
     message_kind: String,
     gateway_id: String,
     session_id: String,
@@ -487,7 +475,6 @@ impl DeliveryEnvelope {
             });
         }
         validate_session_fields(
-            &self.protocol_version,
             &self.gateway_id,
             &self.session_id,
             &self.session_epoch,
@@ -539,7 +526,6 @@ impl DeliveryEnvelope {
         self.validate()?;
         session_match(
             session,
-            &self.protocol_version,
             &self.gateway_id,
             &self.session_id,
             &self.session_epoch,
@@ -571,11 +557,122 @@ impl DeliveryEnvelope {
     }
 }
 
-/// Existing Runtime Manifest v1 embedded without reinterpretation.
+/// One durable alarm transition admitted by the local Alarm service.
+///
+/// Aggregate counts and operator-requested state replays are deliberately not
+/// part of this stream: they are reconstructable state, while this value is an
+/// immutable transition identified by `event_id`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AlarmEvent {
+    #[serde(rename = "type")]
+    event_type: String,
+    id: String,
+    event_id: String,
+    timestamp: i64,
+    data: AlarmEventData,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AlarmEventData {
+    alarm_id: String,
+    event_id: String,
+    service_type: String,
+    source: String,
+    device: String,
+    channel_id: i64,
+    data_type: String,
+    point_id: i64,
+    status: u8,
+    level: i64,
+    value: f64,
+    message: String,
+}
+
+impl AlarmEvent {
+    /// Strictly decodes and validates the one CloudLink alarm payload shape.
+    pub fn from_value(value: Value) -> Result<Self, CloudLinkCodecError> {
+        let event: Self = serde_json::from_value(value)?;
+        event.validate()?;
+        Ok(event)
+    }
+
+    /// Returns the stable transition identity used as the CloudLink batch ID.
+    #[must_use]
+    pub fn event_id(&self) -> &str {
+        &self.event_id
+    }
+
+    fn validate(&self) -> Result<(), CloudLinkCodecError> {
+        if self.event_type != "alarm" {
+            return Err(CloudLinkCodecError::InvalidField {
+                field: "payload.type",
+                message: "must be the alarm transition kind",
+            });
+        }
+        identifier(&self.id, "payload.id", 128)?;
+        identifier(&self.event_id, "payload.event_id", 128)?;
+        if self.timestamp < 0 {
+            return Err(CloudLinkCodecError::InvalidField {
+                field: "payload.timestamp",
+                message: "must be a non-negative Unix timestamp",
+            });
+        }
+        identifier(&self.data.alarm_id, "payload.data.alarm_id", 128)?;
+        identifier(&self.data.event_id, "payload.data.event_id", 128)?;
+        if self.data.event_id != self.event_id {
+            return Err(CloudLinkCodecError::InvalidField {
+                field: "payload.data.event_id",
+                message: "must match payload.event_id",
+            });
+        }
+        for (field, value) in [
+            ("payload.data.service_type", self.data.service_type.as_str()),
+            ("payload.data.source", self.data.source.as_str()),
+            ("payload.data.device", self.data.device.as_str()),
+            ("payload.data.data_type", self.data.data_type.as_str()),
+        ] {
+            identifier(value, field, 128)?;
+        }
+        if self.data.channel_id < 0 || self.data.point_id < 0 {
+            return Err(CloudLinkCodecError::InvalidField {
+                field: "payload.data.point_identity",
+                message: "channel_id and point_id must be non-negative",
+            });
+        }
+        if !matches!(self.data.status, 0 | 1) {
+            return Err(CloudLinkCodecError::InvalidField {
+                field: "payload.data.status",
+                message: "must be zero or one",
+            });
+        }
+        if !(1..=3).contains(&self.data.level) {
+            return Err(CloudLinkCodecError::InvalidField {
+                field: "payload.data.level",
+                message: "must be between one and three",
+            });
+        }
+        if !self.data.value.is_finite() {
+            return Err(CloudLinkCodecError::NonFinitePointValue);
+        }
+        if self.data.message.is_empty()
+            || self.data.message.len() > 4_096
+            || self.data.message.chars().any(char::is_control)
+        {
+            return Err(CloudLinkCodecError::InvalidField {
+                field: "payload.data.message",
+                message: "must be bounded visible text",
+            });
+        }
+        Ok(())
+    }
+}
+
+/// Existing Runtime Manifest embedded without reinterpretation.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RuntimeManifestWire {
-    schema_version: u32,
     composition: String,
     aether_version: String,
     target_triple: String,
@@ -615,8 +712,7 @@ impl RuntimeManifestReport {
                 message: "must be strict SemVer 2.0.0",
             });
         }
-        if wire.schema_version != 1
-            || wire.checksum.algorithm != "sha256"
+        if wire.checksum.algorithm != "sha256"
             || wire.checksum.digest.len() != 64
             || !wire
                 .checksum
@@ -701,7 +797,6 @@ impl DataLossPayload {
 pub struct DurableAckMessage {
     schema: String,
     protocol: String,
-    protocol_version: String,
     message_kind: String,
     gateway_id: String,
     session_id: String,
@@ -725,7 +820,6 @@ impl DurableAckMessage {
             });
         }
         validate_session_fields(
-            &self.protocol_version,
             &self.gateway_id,
             &self.session_id,
             &self.session_epoch,
@@ -745,7 +839,6 @@ impl DurableAckMessage {
         self.validate()?;
         session_match(
             session,
-            &self.protocol_version,
             &self.gateway_id,
             &self.session_id,
             &self.session_epoch,
@@ -777,7 +870,6 @@ impl DurableAckMessage {
 pub struct ReplayRequest {
     schema: String,
     protocol: String,
-    protocol_version: String,
     message_kind: String,
     gateway_id: String,
     session_id: String,
@@ -798,7 +890,6 @@ impl ReplayRequest {
             });
         }
         validate_session_fields(
-            &self.protocol_version,
             &self.gateway_id,
             &self.session_id,
             &self.session_epoch,
@@ -816,7 +907,6 @@ impl ReplayRequest {
         self.validate()?;
         session_match(
             session,
-            &self.protocol_version,
             &self.gateway_id,
             &self.session_id,
             &self.session_epoch,
@@ -824,10 +914,9 @@ impl ReplayRequest {
         )
     }
 
-    /// Returns the server-authoritative first position needed.
-    #[must_use]
-    pub fn from_position(&self) -> u64 {
-        self.from_position.parse().unwrap_or_default()
+    /// Returns the strictly parsed server-authoritative first position needed.
+    pub fn from_position(&self) -> Result<u64, CloudLinkCodecError> {
+        positive_u64(&self.from_position, "from_position")
     }
 
     /// Returns the logical stream ID.
@@ -836,10 +925,9 @@ impl ReplayRequest {
         &self.stream_id
     }
 
-    /// Returns the requested stream epoch.
-    #[must_use]
-    pub fn stream_epoch(&self) -> u64 {
-        self.stream_epoch.parse().unwrap_or_default()
+    /// Returns the strictly parsed requested stream epoch.
+    pub fn stream_epoch(&self) -> Result<u64, CloudLinkCodecError> {
+        positive_u64(&self.stream_epoch, "stream_epoch")
     }
 }
 
@@ -853,6 +941,9 @@ fn validate_business_payload(
         },
         CloudLinkMessageKind::TelemetryBatch => {
             serde_json::from_value::<TelemetryBatch>(payload.clone())?.validate()
+        },
+        CloudLinkMessageKind::AlarmEvent => {
+            serde_json::from_value::<AlarmEvent>(payload.clone())?.validate()
         },
         CloudLinkMessageKind::IntegrationTopologySnapshot => {
             let bytes = serde_json_canonicalizer::to_vec(payload)
@@ -888,6 +979,7 @@ fn validate_integration_batch_binding(
             .map(str::to_string),
         CloudLinkMessageKind::RuntimeManifestReport
         | CloudLinkMessageKind::TelemetryBatch
+        | CloudLinkMessageKind::AlarmEvent
         | CloudLinkMessageKind::DataLoss => return Ok(()),
     };
     if expected.as_deref() == Some(delivery_batch_id) {
@@ -903,12 +995,10 @@ fn business_digest(
 ) -> Result<String, CloudLinkCodecError> {
     #[derive(Serialize)]
     struct DigestInput<'a> {
-        protocol_version: &'static str,
         message_kind: &'static str,
         payload: &'a Value,
     }
     let canonical = serde_json_canonicalizer::to_vec(&DigestInput {
-        protocol_version: CLOUDLINK_PROTOCOL_VERSION,
         message_kind: kind.as_str(),
         payload,
     })
@@ -920,6 +1010,7 @@ fn message_kind(value: &str) -> Result<CloudLinkMessageKind, CloudLinkCodecError
     match value {
         "runtime-manifest-report" => Ok(CloudLinkMessageKind::RuntimeManifestReport),
         "telemetry-batch" => Ok(CloudLinkMessageKind::TelemetryBatch),
+        "alarm-event" => Ok(CloudLinkMessageKind::AlarmEvent),
         "integration-topology-snapshot" => Ok(CloudLinkMessageKind::IntegrationTopologySnapshot),
         "integration-observation-batch" => Ok(CloudLinkMessageKind::IntegrationObservationBatch),
         "data-loss" => Ok(CloudLinkMessageKind::DataLoss),
@@ -930,13 +1021,11 @@ fn message_kind(value: &str) -> Result<CloudLinkMessageKind, CloudLinkCodecError
 }
 
 fn validate_session_fields(
-    version: &str,
     gateway_id: &str,
     session_id: &str,
     session_epoch: &str,
     credential_generation: &str,
 ) -> Result<(), CloudLinkCodecError> {
-    protocol_version(version)?;
     uuid(gateway_id, "gateway_id")?;
     uuid(session_id, "session_id")?;
     positive_u64(session_epoch, "session_epoch")?;
@@ -946,14 +1035,12 @@ fn validate_session_fields(
 
 fn session_match(
     session: &SessionBinding,
-    version: &str,
     gateway_id: &str,
     session_id: &str,
     session_epoch: &str,
     credential_generation: &str,
 ) -> Result<(), CloudLinkCodecError> {
-    let matches = version == session.protocol_version()
-        && gateway_id == session.gateway_id()
+    let matches = gateway_id == session.gateway_id()
         && session_id == session.session_id()
         && positive_u64(session_epoch, "session_epoch")? == session.session_epoch()
         && positive_u64(credential_generation, "credential_generation")?

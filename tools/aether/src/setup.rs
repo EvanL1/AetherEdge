@@ -16,8 +16,6 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
-const SETUP_PLAN_SCHEMA_VERSION: u32 = 2;
-
 #[derive(Clone, Copy)]
 struct SafeConfigFile {
     relative_path: &'static str,
@@ -100,9 +98,8 @@ struct SetupAction {
 #[derive(Debug, Serialize)]
 struct SetupPlan {
     plan_id: String,
-    plan_schema_version: u32,
     aether_version: &'static str,
-    core_schema_version: i64,
+    database_revision: i64,
     site_state: SiteState,
     read_only: bool,
     physical_side_effects: bool,
@@ -242,9 +239,8 @@ impl DatabaseInspection {
 
 #[derive(Serialize)]
 struct PlanHashInput<'a> {
-    plan_schema_version: u32,
     aether_version: &'static str,
-    core_schema_version: i64,
+    database_revision: i64,
     config_path: String,
     data_path: String,
     site_state: SiteState,
@@ -490,9 +486,8 @@ async fn analyze(config_path: &Path, data_path: &Path) -> Result<SetupAnalysis> 
             .context("failed to serialize setup database guard fingerprint")?,
     );
     let hash_input = PlanHashInput {
-        plan_schema_version: SETUP_PLAN_SCHEMA_VERSION,
         aether_version: env!("CARGO_PKG_VERSION"),
-        core_schema_version: i64::from(schema::SCHEMA_VERSION),
+        database_revision: i64::from(schema::SCHEMA_VERSION),
         config_path: config_path.display().to_string(),
         data_path: data_path.display().to_string(),
         site_state,
@@ -532,9 +527,8 @@ async fn analyze(config_path: &Path, data_path: &Path) -> Result<SetupAnalysis> 
     Ok(SetupAnalysis {
         plan: SetupPlan {
             plan_id,
-            plan_schema_version: SETUP_PLAN_SCHEMA_VERSION,
             aether_version: env!("CARGO_PKG_VERSION"),
-            core_schema_version: i64::from(schema::SCHEMA_VERSION),
+            database_revision: i64::from(schema::SCHEMA_VERSION),
             site_state,
             read_only: true,
             physical_side_effects: false,
@@ -1148,7 +1142,10 @@ mod tests {
         .await
         .unwrap_err();
 
-        assert!(format!("{error:#}").contains("changed during setup"));
+        assert!(
+            format!("{error:#}").contains("changed during setup"),
+            "{error:#}"
+        );
         assert!(!data_path.join("aether.db").exists());
     }
 }

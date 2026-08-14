@@ -137,8 +137,7 @@ async fn create_test_app_with_audit(
         audit,
         SafetyPolicy,
     ));
-    let authenticator =
-        Arc::new(ControlAuthenticator::new(JWT_SECRET, None).expect("valid JWT secret"));
+    let authenticator = Arc::new(ControlAuthenticator::new(JWT_SECRET).expect("valid JWT secret"));
     let state = Arc::new(RuleEngineState::new(
         Arc::new(RuleQueries::new(pool.clone(), scheduler)),
         execution_application,
@@ -321,7 +320,12 @@ async fn rules_http_exposes_revision_and_rejects_stale_explicit_cas() -> Result<
         .await?;
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(response.headers()["etag"], "\"1\"");
-    assert_eq!(response.headers()["x-aether-configuration-revision"], "1");
+    assert!(
+        response
+            .headers()
+            .get("x-aether-configuration-revision")
+            .is_none()
+    );
 
     let create = json!({
         "name": "revision-fenced",
@@ -446,9 +450,7 @@ async fn test_list_rules_pagination() -> Result<()> {
     assert_eq!(data["page"], 1);
     assert_eq!(data["page_size"], 2);
     assert!(data["has_next"].as_bool().unwrap());
-    // Note: PaginatedResponse uses 0-indexed pages internally, so page=1 results in has_previous=true
-    // This is a known semantic mismatch between 1-indexed API and 0-indexed PaginatedResponse
-    assert!(data["has_previous"].as_bool().unwrap()); // page > 0 (1 > 0 = true)
+    assert!(!data["has_previous"].as_bool().unwrap());
     assert_eq!(data["list"].as_array().unwrap().len(), 2);
 
     Ok(())
@@ -725,12 +727,24 @@ async fn test_enable_disable_rule() -> Result<()> {
     .await?;
     let rule_id = create_body["data"]["id"].as_i64().unwrap();
 
+    let (status, body) = make_request(
+        &app,
+        "PUT",
+        &format!("/api/rules/{rule_id}"),
+        Some(json!({
+            "trigger_config": {"type": "interval", "interval_ms": 1_000},
+            "expected_revision": 2
+        })),
+    )
+    .await?;
+    assert_eq!(status, StatusCode::OK, "Response: {body:?}");
+
     // Enable the rule
     let (status, body) = make_request(
         &app,
         "POST",
         &format!("/api/rules/{}/enable", rule_id),
-        Some(json!({"expected_revision": 2})),
+        Some(json!({"expected_revision": 3})),
     )
     .await?;
     assert_eq!(status, StatusCode::OK, "Response: {:?}", body);
@@ -744,7 +758,7 @@ async fn test_enable_disable_rule() -> Result<()> {
         &app,
         "POST",
         &format!("/api/rules/{}/disable", rule_id),
-        Some(json!({"expected_revision": 3})),
+        Some(json!({"expected_revision": 4})),
     )
     .await?;
     assert_eq!(status, StatusCode::OK);

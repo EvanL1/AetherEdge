@@ -12,10 +12,10 @@ use crate::api::routes::AppState;
 /// Resolve point type letter (T/S/C/A) to database table name
 pub(super) fn point_type_to_table(point_type: &str) -> Result<&'static str, AppError> {
     match point_type {
-        "T" | "t" => Ok("telemetry_points"),
-        "S" | "s" => Ok("signal_points"),
-        "C" | "c" => Ok("control_points"),
-        "A" | "a" => Ok("adjustment_points"),
+        "T" => Ok("telemetry_points"),
+        "S" => Ok("signal_points"),
+        "C" => Ok("control_points"),
+        "A" => Ok("adjustment_points"),
         _ => Err(AppError::bad_request(format!(
             "Invalid point type '{}'. Must be T, S, C, or A",
             point_type
@@ -153,7 +153,7 @@ pub(super) async fn fetch_grouped_points(
 
     for &(type_letter, table) in &TABLES {
         if let Some(filter) = type_filter
-            && !filter.eq_ignore_ascii_case(type_letter)
+            && filter != type_letter
         {
             continue;
         }
@@ -273,5 +273,18 @@ pub async fn trigger_channel_reload_if_needed(
             );
             false
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::point_type_to_table;
+
+    #[test]
+    fn point_type_path_uses_canonical_uppercase_only() {
+        assert_eq!(point_type_to_table("T").unwrap(), "telemetry_points");
+        for retired in ["t", "YC", "telemetry"] {
+            assert!(point_type_to_table(retired).is_err(), "accepted {retired}");
+        }
     }
 }

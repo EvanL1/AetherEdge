@@ -3,6 +3,7 @@
 //! Core data types for channel communication in io.
 //! These types were previously in aether-comlink but are now owned by io.
 
+use aether_domain::CommandId;
 use serde::{Deserialize, Serialize};
 
 // ============================================================================
@@ -131,6 +132,31 @@ pub enum ChannelCommand {
         timestamp: i64,
         expires_at_ms: i64,
     },
+}
+
+impl ChannelCommand {
+    /// Stable hexadecimal command identity carried end-to-end over UDS.
+    pub fn command_id(&self) -> &str {
+        match self {
+            Self::Control { command_id, .. }
+            | Self::Adjustment { command_id, .. }
+            | Self::BatchControl { command_id, .. }
+            | Self::BatchAdjustment { command_id, .. } => command_id,
+        }
+    }
+
+    /// Returns the durable end-to-end command identity.
+    #[must_use]
+    pub fn durable_command_id(&self) -> Option<CommandId> {
+        let value = self.command_id();
+        (value.len() == 32
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)))
+        .then(|| u128::from_str_radix(value, 16).ok())
+        .flatten()
+        .map(CommandId::new)
+    }
 }
 
 // ============================================================================

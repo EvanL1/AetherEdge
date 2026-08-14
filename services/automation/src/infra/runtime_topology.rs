@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use aether_domain::ChannelPointAddress;
+use aether_domain::{ChannelPointAddress, PointQuality};
 use aether_ports::{ChannelHealthObservation, PortError, PortErrorKind, PortResult};
 use aether_rules::{MeasurementRouteBinding, RuleScheduler};
 use aether_shm_bridge::{
@@ -13,7 +13,8 @@ use aether_shm_bridge::{
     ShmDeviceCommandSink, ShmReadTopologyGeneration, SlotSnapshot, SlotSource, SubscriptionBitmap,
 };
 use aether_sqlite_topology::{
-    LogicalCommandRoutes, LogicalPointRoutes, RoutedCommandTarget, SqliteLiveTopologySnapshot,
+    ChannelFreshnessTimeouts, LogicalCommandRoutes, LogicalPointRoutes, RoutedCommandTarget,
+    SqliteLiveTopologySnapshot,
 };
 use arc_swap::ArcSwap;
 use sqlx::SqlitePool;
@@ -26,6 +27,7 @@ struct CandidateParts {
     health_manifest: Arc<aether_shm_bridge::ChannelHealthManifest>,
     measurement_routes: Arc<LogicalPointRoutes>,
     action_routes: Arc<LogicalCommandRoutes>,
+    channel_freshness_timeouts: Arc<ChannelFreshnessTimeouts>,
     digest: u64,
 }
 
@@ -53,12 +55,14 @@ impl RoutingPlane {
 impl CandidateParts {
     fn from_snapshot(snapshot: SqliteLiveTopologySnapshot) -> Self {
         let digest = snapshot.digest();
+        let channel_freshness_timeouts = Arc::new(snapshot.channel_freshness_timeouts().clone());
         let (point_manifest, health_manifest, measurements, actions) = snapshot.into_parts();
         Self {
             point_manifest: Arc::new(point_manifest),
             health_manifest: Arc::new(health_manifest),
             measurement_routes: Arc::new(measurements),
             action_routes: Arc::new(actions),
+            channel_freshness_timeouts,
             digest,
         }
     }
@@ -69,6 +73,7 @@ pub struct AutomationTopologyGeneration {
     read: Arc<ShmReadTopologyGeneration>,
     measurement_routes: Arc<LogicalPointRoutes>,
     action_routes: Arc<LogicalCommandRoutes>,
+    channel_freshness_timeouts: Arc<ChannelFreshnessTimeouts>,
     digest: u64,
     sequence: u64,
     physical_validated: bool,
@@ -83,6 +88,10 @@ impl std::fmt::Debug for AutomationTopologyGeneration {
             .field("read", &self.read)
             .field("measurement_routes", &self.measurement_routes.len())
             .field("action_routes", &self.action_routes.len())
+            .field(
+                "channel_freshness_timeouts",
+                &self.channel_freshness_timeouts.len(),
+            )
             .field("digest", &self.digest)
             .field("sequence", &self.sequence)
             .field("physical_validated", &self.physical_validated)
@@ -106,6 +115,7 @@ impl AutomationTopologyGeneration {
             read,
             measurement_routes: parts.measurement_routes,
             action_routes: parts.action_routes,
+            channel_freshness_timeouts: parts.channel_freshness_timeouts,
             digest: parts.digest,
             sequence,
             physical_validated,
@@ -218,14 +228,71 @@ impl AutomationTopologyGeneration {
         action: bool,
         point_id: u32,
     ) -> PortResult<Option<(f64, u64)>> {
-        let target = if action {
+        Ok(self
+            .read_instance_sample(instance_id, action, point_id)?
+            .map(|sample| (sample.value(), sample.timestamp_ms())))
+    }
+
+    /// Reads one logical point for deterministic rule evaluation.
+    ///
+    /// Device control fails closed unless the source marked the sample Good and
+    /// its individual timestamp is still current. A healthy writer heartbeat
+    /// alone cannot make a frozen point safe for a derived command.
+    pub(crate) fn read_rule_instance_point(
+        &self,
+        instance_id: u32,
+        action: bool,
+        point_id: u32,
+    ) -> PortResult<Option<(f64, u64)>> {
+        let Some(target) = self.instance_target(instance_id, action, point_id) else {
+            return Ok(None);
+        };
+        let stale_after_ms = self
+            .channel_freshness_timeouts
+            .get(&target.channel_id().get())
+            .copied()
+            .ok_or_else(|| {
+                PortError::new(
+                    PortErrorKind::Conflict,
+                    "logical route is absent from its pinned channel freshness policy",
+                )
+            })?;
+        let Some(sample) = self.read_target_sample(target)? else {
+            return Ok(None);
+        };
+        let now_ms = aether_shm_bridge::timestamp_ms();
+        if !sample_is_usable_for_rule_control(sample, now_ms, stale_after_ms) {
+            return Ok(None);
+        }
+        Ok(Some((sample.value(), sample.timestamp_ms())))
+    }
+
+    fn read_instance_sample(
+        &self,
+        instance_id: u32,
+        action: bool,
+        point_id: u32,
+    ) -> PortResult<Option<SlotSnapshot>> {
+        let Some(target) = self.instance_target(instance_id, action, point_id) else {
+            return Ok(None);
+        };
+        self.read_target_sample(target)
+    }
+
+    fn instance_target(
+        &self,
+        instance_id: u32,
+        action: bool,
+        point_id: u32,
+    ) -> Option<PhysicalPointAddress> {
+        if action {
             self.action_route(instance_id, point_id)
         } else {
             self.measurement_route(instance_id, point_id)
-        };
-        let Some(target) = target else {
-            return Ok(None);
-        };
+        }
+    }
+
+    fn read_target_sample(&self, target: PhysicalPointAddress) -> PortResult<Option<SlotSnapshot>> {
         let Some(slot) = self.read.point_manifest().slot_for(target) else {
             return Err(PortError::new(
                 PortErrorKind::Conflict,
@@ -244,12 +311,23 @@ impl AutomationTopologyGeneration {
                 "authoritative SHM contains a non-finite point value",
             ));
         }
-        Ok(Some((sample.value(), sample.timestamp_ms())))
+        Ok(Some(sample))
     }
 
     /// Reads channel connectivity from the health plane pinned to this generation.
     pub fn channel_health(&self, channel_id: u32) -> PortResult<Option<ChannelHealthObservation>> {
         self.read.channel_health().read_channel(channel_id)
+    }
+
+    /// Validates the currently published IO point/health topology and both
+    /// writer heartbeats for readiness reporting.
+    pub fn validate_io_freshness(&self) -> PortResult<()> {
+        validate_readiness_flags(
+            self.physical_validated,
+            self.measurement_routes_revoked,
+            self.action_routes_revoked,
+        )?;
+        self.read.try_validate_freshness()
     }
 
     /// Rejects queued PointWatch hints whose typed slot was remapped.
@@ -307,6 +385,38 @@ impl AutomationTopologyGeneration {
             && self.read.health_manifest().layout_hash() == parts.health_manifest.layout_hash()
             && self.read.health_manifest().slot_count() == parts.health_manifest.slot_count()
     }
+}
+
+fn validate_readiness_flags(
+    physical_validated: bool,
+    measurement_routes_revoked: bool,
+    action_routes_revoked: bool,
+) -> PortResult<()> {
+    if !physical_validated {
+        return Err(PortError::new(
+            PortErrorKind::Unavailable,
+            "automation IO topology has not been physically validated",
+        ));
+    }
+    if measurement_routes_revoked || action_routes_revoked {
+        return Err(PortError::new(
+            PortErrorKind::Unavailable,
+            format!(
+                "automation routing generation is revoked: measurement={measurement_routes_revoked}, action={action_routes_revoked}"
+            ),
+        ));
+    }
+    Ok(())
+}
+
+const fn sample_is_usable_for_rule_control(
+    sample: SlotSnapshot,
+    now_ms: u64,
+    stale_after_ms: u64,
+) -> bool {
+    matches!(sample.quality(), PointQuality::Good)
+        && sample.timestamp_ms() <= now_ms
+        && now_ms - sample.timestamp_ms() < stale_after_ms
 }
 
 /// Service-owned coordinator for coherent automation topology replacement.
@@ -567,6 +677,7 @@ impl AutomationTopologyHandle {
             read: Arc::clone(&current.read),
             measurement_routes: Arc::new(LogicalPointRoutes::new()),
             action_routes: Arc::clone(&current.action_routes),
+            channel_freshness_timeouts: Arc::clone(&current.channel_freshness_timeouts),
             digest: current.digest,
             sequence,
             physical_validated: current.physical_validated,
@@ -589,6 +700,7 @@ impl AutomationTopologyHandle {
             read: Arc::clone(&current.read),
             measurement_routes: Arc::clone(&current.measurement_routes),
             action_routes: Arc::new(LogicalCommandRoutes::new()),
+            channel_freshness_timeouts: Arc::clone(&current.channel_freshness_timeouts),
             digest: current.digest,
             sequence,
             physical_validated: current.physical_validated,
@@ -750,10 +862,68 @@ mod tests {
     use super::*;
 
     #[test]
+    fn rule_control_accepts_only_fresh_good_samples() {
+        let now_ms = 50_000;
+        assert!(sample_is_usable_for_rule_control(
+            SlotSnapshot::new(1.0, 49_999, PointQuality::Good),
+            now_ms,
+            10_000,
+        ));
+        assert!(!sample_is_usable_for_rule_control(
+            SlotSnapshot::new(1.0, 49_999, PointQuality::Uncertain),
+            now_ms,
+            10_000,
+        ));
+        assert!(!sample_is_usable_for_rule_control(
+            SlotSnapshot::new(1.0, 49_999, PointQuality::Bad),
+            now_ms,
+            10_000,
+        ));
+        assert!(!sample_is_usable_for_rule_control(
+            SlotSnapshot::new(1.0, 49_999, PointQuality::Unavailable),
+            now_ms,
+            10_000,
+        ));
+        assert!(!sample_is_usable_for_rule_control(
+            SlotSnapshot::new(1.0, 40_000, PointQuality::Good),
+            now_ms,
+            10_000,
+        ));
+        assert!(
+            !sample_is_usable_for_rule_control(
+                SlotSnapshot::new(1.0, 50_001, PointQuality::Good),
+                now_ms,
+                10_000,
+            ),
+            "future-dated samples must fail closed instead of remaining fresh indefinitely"
+        );
+    }
+
+    #[test]
+    fn slow_polling_sample_remains_usable_for_three_poll_budget() {
+        let now_ms = 500_000;
+        let sample = SlotSnapshot::new(1.0, 400_000, PointQuality::Good);
+
+        assert!(sample_is_usable_for_rule_control(sample, now_ms, 360_000,));
+        assert!(
+            !sample_is_usable_for_rule_control(sample, now_ms, 90_000),
+            "the former fixed budget would reject a valid 120-second polling channel"
+        );
+    }
+
+    #[test]
     fn physical_publication_mapping_preserves_permanent_failures() {
         let error = PortError::new(PortErrorKind::Permanent, "SHM permission denied");
 
         assert_eq!(physical_publication_conflict(error.clone()), error);
+    }
+
+    #[test]
+    fn revoked_or_unvalidated_generation_is_not_ready() {
+        assert!(validate_readiness_flags(false, false, false).is_err());
+        assert!(validate_readiness_flags(true, true, false).is_err());
+        assert!(validate_readiness_flags(true, false, true).is_err());
+        assert!(validate_readiness_flags(true, false, false).is_ok());
     }
 
     #[test]

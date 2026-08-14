@@ -78,8 +78,8 @@ if ! command -v openssl >/dev/null 2>&1; then
     exit 1
 fi
 readonly COMPOSE_TEST_SECRET="$(openssl rand -hex 32)"
-readonly COMPOSE_TEST_UPLINK_TOKEN="$(openssl rand -hex 32)"
-if [[ "$COMPOSE_TEST_SECRET" == "$COMPOSE_TEST_UPLINK_TOKEN" ]]; then
+readonly COMPOSE_TEST_ALARM_TOKEN="$(openssl rand -hex 32)"
+if [[ "$COMPOSE_TEST_SECRET" == "$COMPOSE_TEST_ALARM_TOKEN" ]]; then
     echo "ERROR: generated Compose test credentials must be distinct" >&2
     exit 1
 fi
@@ -87,7 +87,7 @@ fi
 default_services=""
 if ! default_services=$(
     JWT_SECRET_KEY="$COMPOSE_TEST_SECRET" \
-        AETHER_UPLINK_CONTROL_TOKEN="$COMPOSE_TEST_UPLINK_TOKEN" \
+        AETHER_ALARM_BROADCAST_TOKEN="$COMPOSE_TEST_ALARM_TOKEN" \
         docker compose config --services
 ); then
     echo "ERROR: default Compose runtime is invalid" >&2

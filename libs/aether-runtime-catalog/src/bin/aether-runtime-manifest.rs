@@ -80,6 +80,18 @@ fn run(arguments: impl IntoIterator<Item = String>) -> Result<(), Box<dyn Error>
             let manifest = load_runtime_manifest_file(&path, &expected_version)?;
             println!("{}", manifest.to_pretty_json()?);
         },
+        #[cfg(feature = "schema-validation")]
+        "validate-json-schema" => {
+            let schema = PathBuf::from(required_option(&remaining, "--schema")?);
+            let instances = option_values(&remaining, "--instance")?;
+            if instances.is_empty() {
+                return Err("validate-json-schema requires at least one --instance".into());
+            }
+            reject_unknown_options(&remaining, &["--schema", "--instance"])?;
+            aether_runtime_catalog::schema_validation::validate_runtime_manifest_schema_files(
+                schema, instances,
+            )?;
+        },
         "validate" => {
             if remaining.len() != 2 {
                 return Err("validate requires CONFIG_DIRECTORY AETHER_VERSION".into());
@@ -144,6 +156,27 @@ fn option_value(arguments: &[String], name: &str) -> Result<Option<String>, Box<
             if found.replace(value.to_string()).is_some() {
                 return Err(format!("option {name} was supplied more than once").into());
             }
+            index += 1;
+        } else {
+            index += 1;
+        }
+    }
+    Ok(found)
+}
+
+#[cfg(feature = "schema-validation")]
+fn option_values(arguments: &[String], name: &str) -> Result<Vec<String>, Box<dyn Error>> {
+    let mut found = Vec::new();
+    let mut index = 0;
+    while index < arguments.len() {
+        if arguments[index] == name {
+            let value = arguments
+                .get(index + 1)
+                .ok_or_else(|| format!("missing value for {name}"))?;
+            found.push(value.clone());
+            index += 2;
+        } else if let Some(value) = arguments[index].strip_prefix(&format!("{name}=")) {
+            found.push(value.to_string());
             index += 1;
         } else {
             index += 1;

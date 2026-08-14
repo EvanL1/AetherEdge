@@ -279,7 +279,7 @@ fn configured_identity_owns_the_stable_claim_key_invariant() {
     let public_key = GatewayPublicKey::from_bytes([0_u8; 32]);
     let key_generated = ConfiguredGatewayIdentity::key_generated(target.clone(), public_key);
     let stable = key_generated.stable_idempotency_key();
-    assert_eq!(stable.as_str(), "d9c5e319-5c7f-582e-af26-317b1e94b015");
+    assert_eq!(stable.as_str(), "fcf1e18e-43be-5f68-a477-deea69fba926");
     assert_eq!(
         key_generated
             .validated_idempotency_key()

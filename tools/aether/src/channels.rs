@@ -168,6 +168,19 @@ fn attach_protocol_mapping(body: &mut Value, protocol_mapping: Option<&str>) -> 
     Ok(())
 }
 
+fn require_current_point_type(value: &str) -> Result<&str> {
+    match value {
+        "T" | "S" | "C" | "A" => Ok(value),
+        _ => anyhow::bail!("invalid point type '{value}'; expected T, S, C, or A"),
+    }
+}
+
+fn parse_point_type(value: &str) -> std::result::Result<String, String> {
+    require_current_point_type(value)
+        .map(str::to_owned)
+        .map_err(|error| error.to_string())
+}
+
 #[derive(Subcommand)]
 pub enum PointCommands {
     /// List all points for a channel
@@ -176,7 +189,7 @@ pub enum PointCommands {
         /// Channel ID
         channel_id: u32,
         /// Filter by point type: T, S, C, or A
-        #[arg(long, value_name = "TYPE")]
+        #[arg(long, value_name = "TYPE", value_parser = parse_point_type)]
         r#type: Option<String>,
     },
 
@@ -186,6 +199,7 @@ pub enum PointCommands {
         /// Channel ID
         channel_id: u32,
         /// Point type: T (telemetry), S (signal), C (control), A (adjustment)
+        #[arg(value_parser = parse_point_type)]
         point_type: String,
         /// Point ID
         point_id: u32,
@@ -222,6 +236,7 @@ pub enum PointCommands {
         /// Channel ID
         channel_id: u32,
         /// Point type: T, S, C, A
+        #[arg(value_parser = parse_point_type)]
         point_type: String,
         /// Point ID
         point_id: u32,
@@ -254,6 +269,7 @@ pub enum PointCommands {
         /// Channel ID
         channel_id: u32,
         /// Point type: T, S, C, A
+        #[arg(value_parser = parse_point_type)]
         point_type: String,
         /// Point ID
         point_id: u32,
@@ -284,7 +300,7 @@ pub enum PointCommands {
         /// Channel ID
         channel_id: u32,
         /// Point type: T | S | C | A
-        #[arg(value_parser = ["T", "S", "C", "A"])]
+        #[arg(value_parser = parse_point_type)]
         point_type: String,
         /// Point ID
         point_id: u32,
@@ -470,9 +486,7 @@ pub async fn handle_command(cmd: ChannelCommands, base_url: &str, json: bool) ->
                     } else {
                         println!(
                             "Point {}/{} added to channel {}",
-                            point_type.to_uppercase(),
-                            point_id,
-                            channel_id
+                            point_type, point_id, channel_id
                         );
                     }
                 },
@@ -507,9 +521,7 @@ pub async fn handle_command(cmd: ChannelCommands, base_url: &str, json: bool) ->
                     } else {
                         println!(
                             "Point {}/{} updated on channel {}",
-                            point_type.to_uppercase(),
-                            point_id,
-                            channel_id
+                            point_type, point_id, channel_id
                         );
                     }
                 },
@@ -524,9 +536,7 @@ pub async fn handle_command(cmd: ChannelCommands, base_url: &str, json: bool) ->
                     if !force && !json {
                         println!(
                             "Delete point {}/{} from channel {}? [y/N]",
-                            point_type.to_uppercase(),
-                            point_id,
-                            channel_id
+                            point_type, point_id, channel_id
                         );
                         let mut input = String::new();
                         std::io::stdin().read_line(&mut input)?;
@@ -549,9 +559,7 @@ pub async fn handle_command(cmd: ChannelCommands, base_url: &str, json: bool) ->
                     } else {
                         println!(
                             "Point {}/{} removed from channel {}",
-                            point_type.to_uppercase(),
-                            point_id,
-                            channel_id
+                            point_type, point_id, channel_id
                         );
                     }
                 },
@@ -968,7 +976,7 @@ impl ChannelClient {
     ) -> Result<Value> {
         let request = self
             .client
-            .put(format!("{}/api/channels/{}", self.base_url, channel_id))
+            .patch(format!("{}/api/channels/{}", self.base_url, channel_id))
             .json(&body);
         let response = self
             .governed_revisioned_request(request, confirmed, expected_revision)?
@@ -1157,6 +1165,7 @@ impl PointClient {
     ) -> Result<Value> {
         let mut url = format!("{}/api/channels/{}/points", self.base_url, channel_id);
         if let Some(t) = type_filter {
+            let t = require_current_point_type(t)?;
             url.push_str(&format!("?type={}", t));
         }
         let response = self.apply_auth(self.client.get(&url))?.send().await?;
@@ -1206,8 +1215,8 @@ impl PointClient {
         confirmed: bool,
         expected_revision: u64,
     ) -> Result<Value> {
-        let pt = point_type.to_uppercase();
-        let default_data_type = match pt.as_str() {
+        let point_type = require_current_point_type(point_type)?;
+        let default_data_type = match point_type {
             "S" | "C" => "bool",
             _ => "float32",
         };
@@ -1224,7 +1233,7 @@ impl PointClient {
         attach_protocol_mapping(&mut body, protocol_mapping)?;
         let url = format!(
             "{}/api/channels/{}/{}/points/{}",
-            self.base_url, channel_id, pt, point_id
+            self.base_url, channel_id, point_type, point_id
         );
         let request = self.client.post(&url).json(&body);
         let response = self
@@ -1258,7 +1267,7 @@ impl PointClient {
         confirmed: bool,
         expected_revision: u64,
     ) -> Result<Value> {
-        let pt = point_type.to_uppercase();
+        let point_type = require_current_point_type(point_type)?;
         let mut body = serde_json::Map::new();
         if let Some(n) = name {
             body.insert("signal_name".to_string(), serde_json::json!(n));
@@ -1279,7 +1288,7 @@ impl PointClient {
         }
         let url = format!(
             "{}/api/channels/{}/{}/points/{}",
-            self.base_url, channel_id, pt, point_id
+            self.base_url, channel_id, point_type, point_id
         );
         let request = self.client.put(&url).json(&body);
         let response = self
@@ -1307,10 +1316,10 @@ impl PointClient {
         confirmed: bool,
         expected_revision: u64,
     ) -> Result<Value> {
-        let pt = point_type.to_uppercase();
+        let point_type = require_current_point_type(point_type)?;
         let url = format!(
             "{}/api/channels/{}/{}/points/{}",
-            self.base_url, channel_id, pt, point_id
+            self.base_url, channel_id, point_type, point_id
         );
         let request = self.client.delete(&url);
         let response = self
@@ -1354,6 +1363,7 @@ impl PointClient {
         point_type: &str,
         point_id: u32,
     ) -> Result<Value> {
+        let point_type = require_current_point_type(point_type)?;
         let request = self.client.get(format!(
             "{}/api/channels/{}/{}/points/{}/mapping",
             self.base_url, channel_id, point_type, point_id
@@ -1496,6 +1506,59 @@ mod tests {
                 .err()
                 .expect("point topology mutations must require a CAS revision");
             assert!(error.to_string().contains("--expected-revision"), "{error}");
+        }
+    }
+
+    #[test]
+    fn point_commands_reject_lowercase_point_types() {
+        let cases = [
+            vec!["channels", "points", "list", "1", "--type", "t"],
+            vec![
+                "channels",
+                "points",
+                "add",
+                "1",
+                "s",
+                "0",
+                "--name",
+                "Running",
+                "--expected-revision",
+                "1",
+                "--confirmed",
+            ],
+            vec![
+                "channels",
+                "points",
+                "update",
+                "1",
+                "c",
+                "0",
+                "--name",
+                "Start",
+                "--expected-revision",
+                "1",
+                "--confirmed",
+            ],
+            vec![
+                "channels",
+                "points",
+                "remove",
+                "1",
+                "a",
+                "0",
+                "--force",
+                "--expected-revision",
+                "1",
+                "--confirmed",
+            ],
+            vec!["channels", "points", "mapping", "1", "t", "0"],
+        ];
+
+        for args in cases {
+            let error = ChannelCli::try_parse_from(args)
+                .err()
+                .expect("lowercase point type must be rejected");
+            assert!(error.to_string().contains("invalid point type"), "{error}");
         }
     }
 
@@ -1934,7 +1997,7 @@ mod tests {
     async fn update_delete_and_enabled_forward_revision_and_governance_headers() {
         for (method_name, endpoint, body) in [
             (
-                "PUT",
+                "PATCH",
                 "/api/channels/1001",
                 Some(serde_json::json!({ "name": "meter" })),
             ),
@@ -1963,7 +2026,7 @@ mod tests {
             let client =
                 ChannelClient::with_access_token(&server.uri(), "signed-access-token").unwrap();
             match endpoint {
-                "/api/channels/1001" if method_name == "PUT" => {
+                "/api/channels/1001" if method_name == "PATCH" => {
                     client
                         .update_channel(1001, body.unwrap(), true, Some(7))
                         .await
@@ -2307,6 +2370,27 @@ mod tests {
             .expect_err("invalid mapping JSON must be rejected locally");
 
         assert!(error.to_string().contains("not valid JSON"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn point_client_rejects_lowercase_types_before_network_io() {
+        let client = PointClient::new("http://127.0.0.1:1").unwrap();
+
+        for error in [
+            client.list_points(1, Some("t")).await.unwrap_err(),
+            client.point_mapping(1, "s", 0).await.unwrap_err(),
+            client
+                .add_point(1, "c", 0, "Start", "", None, None, None, None, true, 1)
+                .await
+                .unwrap_err(),
+            client
+                .update_point(1, "a", 0, Some("Setpoint"), None, None, None, None, true, 1)
+                .await
+                .unwrap_err(),
+            client.remove_point(1, "t", 0, true, 1).await.unwrap_err(),
+        ] {
+            assert!(error.to_string().contains("invalid point type"), "{error}");
+        }
     }
 
     #[tokio::test]

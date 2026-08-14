@@ -1,0 +1,28 @@
+{
+  "schema": "aether.cloudlink.integration",
+  "status": "canonical-extension",
+  "base_protocol": "aether.cloudlink",
+  "protocol_negotiation": false,
+  "activation": {
+    "required_runtime_protocol": "aether.cloudlink.integration",
+    "cloud_consumer_must_be_enabled": true,
+    "edge_enablement": "explicit"
+  },
+  "streams": {
+    "topology": "integration-topology-snapshot",
+    "observations": "integration-observation-batch",
+    "distinct": true,
+    "immutable_epoch_binding": true
+  },
+  "digest": {
+    "projection": ["message_kind", "payload"],
+    "covers_complete_integration_payload": true
+  },
+  "transport": {
+    "binding": "cloudlink-mqtt",
+    "maximum_message_bytes": 262144,
+    "topology_fragmentation": false,
+    "observation_partition_boundary": "complete-observation"
+  },
+  "physical_control": false
+}

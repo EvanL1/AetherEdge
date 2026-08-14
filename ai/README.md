@@ -18,8 +18,8 @@ the boundary in which Aether assembles governed data and an optional processor
 returns non-authoritative `DerivedData` without direct access to SHM, history
 storage, configuration, or device control.
 
-The landed v1 external surface is the authenticated
-`/api/v1/data-processing/*` HTTP API. CLI and MCP bindings are not implemented
+The landed external surface is the authenticated
+`/api/data-processing/*` HTTP API. CLI and MCP bindings are not implemented
 yet; when added, they must remain thin callers of the same application use
 cases. `data_processing.process` is non-idempotent and requires durable audit.
 
@@ -35,7 +35,7 @@ The implementation map is:
 | Boundary | Entry point |
 |---|---|
 | Application orchestration | [`aether-application::data_processing`](../crates/aether-application/src/data_processing.rs) |
-| Strict v1 codec | [`crates/aether-data-processing`](../crates/aether-data-processing/README.md) |
+| Strict codec | [`crates/aether-data-processing`](../crates/aether-data-processing/README.md) |
 | Machine-readable contracts | [`contracts/data-processing`](../contracts/data-processing/README.md) |
 | AI-facing eval scenarios | [`evals/data-processing.yaml`](evals/data-processing.yaml) |
 | API-owned HTTP adapter | [`services/api/adapters/http-data-processor`](../services/api/adapters/http-data-processor/README.md) |

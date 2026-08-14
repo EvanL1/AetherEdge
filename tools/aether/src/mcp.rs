@@ -3,7 +3,7 @@
 //! Read-only tools are always registered. `--allow-write` adds only high-risk
 //! commands that already pass through transport-neutral application
 //! capability, authorization, confirmation, and audit policy. Ungoverned
-//! management mutations remain available through their compatibility CLI/HTTP
+//! management mutations remain available through their canonical CLI/HTTP
 //! surfaces but are deliberately absent from MCP `tools/list`.
 //!
 //! Every tool calls exactly one client method and passes the result through
@@ -37,7 +37,6 @@ use crate::alarms::AlarmClient;
 use crate::channels::{ChannelClient, PointClient};
 use crate::history::HistoryClient;
 use crate::models::client::ModelClient;
-use crate::net::NetClient;
 use crate::routing::RoutingClient;
 use crate::rules::RuleClient;
 use crate::templates::TemplateClient;
@@ -89,7 +88,6 @@ pub(crate) struct AetherMcp {
     history: HistoryClient,
     models: ModelClient,
     templates: TemplateClient,
-    net: NetClient,
     doc_resources: Vec<crate::mcp_docs::DocResource>,
     tool_router: ToolRouter<AetherMcp>,
 }
@@ -98,22 +96,20 @@ pub(crate) struct BaseUrls {
     pub io: String,
     pub automation: String,
     pub alarm: String,
-    pub uplink: String,
     pub history: String,
 }
 
 impl BaseUrls {
     /// Derives every domain base from the single API gateway base URL.
-    /// The gateway proxies each capability domain under `/api/v1/{domain}`;
+    /// The gateway proxies each capability domain under `/api/{domain}`;
     /// internal service ports are never addressed directly.
     pub(crate) fn from_api_base(api_base: &str) -> Self {
         let api = api_base.trim_end_matches('/');
         Self {
-            io: format!("{api}/api/v1/io"),
-            automation: format!("{api}/api/v1/automation"),
-            alarm: format!("{api}/api/v1/alarm"),
-            uplink: format!("{api}/api/v1/uplink"),
-            history: format!("{api}/api/v1/history"),
+            io: format!("{api}/api/io"),
+            automation: format!("{api}/api/automation"),
+            alarm: format!("{api}/api/alarm"),
+            history: format!("{api}/api/history"),
         }
     }
 }
@@ -186,7 +182,6 @@ impl AetherMcp {
             history: HistoryClient::new(&urls.history)?,
             models: ModelClient::new(&urls.automation)?,
             templates: TemplateClient::new(&urls.io)?,
-            net: NetClient::new(&urls.uplink)?,
             doc_resources: crate::mcp_docs::doc_resources(active_packs)?,
             tool_router,
         })
@@ -358,23 +353,6 @@ struct TemplatesListParams {
 
 #[tool_router(router = read_only_router)]
 impl AetherMcp {
-    #[tool(description = "Show MQTT connection status (connected/disconnected, broker address)")]
-    async fn net_mqtt_status(&self) -> CallToolResult {
-        to_call_result(self.net.mqtt_status().await)
-    }
-
-    #[tool(description = "Show the current uplink configuration (MQTT broker, TLS settings)")]
-    async fn net_mqtt_config_get(&self) -> CallToolResult {
-        to_call_result(self.net.mqtt_config().await)
-    }
-
-    #[tool(
-        description = "Show installed TLS certificate info (which of ca_cert/client_cert/client_key are present)"
-    )]
-    async fn net_cert_info(&self) -> CallToolResult {
-        to_call_result(self.net.cert_info().await)
-    }
-
     #[tool(description = "List active alarms, optionally filtered by channel/level/keyword")]
     async fn alarms_list(&self, Parameters(p): Parameters<AlarmsListParams>) -> CallToolResult {
         to_call_result(
@@ -602,17 +580,6 @@ struct ChannelsReconcileParams {
     confirmed: bool,
 }
 
-#[cfg(test)]
-#[derive(Deserialize, schemars::JsonSchema)]
-struct ChannelsPointsBatchParams {
-    /// Channel ID
-    channel_id: u32,
-    /// {"create":[...],"update":[...],"delete":[...]} -- the JSON body
-    /// verbatim, not a file path (unlike the CLI's --file flag: the MCP
-    /// client has no access to the aether-mcp host's filesystem).
-    body: Value,
-}
-
 #[derive(Deserialize, schemars::JsonSchema)]
 struct RulesCreateParams {
     /// Rule name
@@ -725,31 +692,6 @@ struct RoutingActionSetEnabledParams {
     expected_revision: u64,
     /// Explicitly confirms this high-risk physical topology change.
     confirmed: bool,
-}
-
-#[cfg(test)]
-#[derive(Deserialize, schemars::JsonSchema)]
-struct NetMqttConfigSetParams {
-    /// Complete NetConfig object (partial updates are not supported by uplink)
-    config: Value,
-}
-
-#[cfg(test)]
-#[derive(Deserialize, schemars::JsonSchema)]
-struct NetCertUploadParams {
-    /// Certificate role: ca_cert | client_cert | client_key
-    cert_type: String,
-    /// Path to the certificate file ON THE MACHINE RUNNING `aether mcp`
-    /// (.pem/.crt/.key/.cer/.p12/.pfx, max 1 MB) -- not a path on the
-    /// MCP client's machine.
-    file_path: String,
-}
-
-#[cfg(test)]
-#[derive(Deserialize, schemars::JsonSchema)]
-struct NetCertDeleteParams {
-    /// Certificate role: ca_cert | client_cert | client_key
-    cert_type: String,
 }
 
 #[tool_router(router = write_router)]
@@ -1058,78 +1000,6 @@ impl AetherMcp {
     }
 }
 
-// Preserve direct wrapper coverage for management mutations that are not yet
-// explicitly mapped into the production MCP write catalog. Some already have
-// governed HTTP boundaries; none is registered merely because a wrapper
-// exists.
-#[cfg(test)]
-#[tool_router(router = legacy_write_test_router)]
-impl AetherMcp {
-    #[tool(
-        description = "Batch create/update/delete points on a channel. `body` is {\"create\":[...],\"update\":[...],\"delete\":[...]}.",
-        annotations(read_only_hint = false)
-    )]
-    async fn channels_points_batch(
-        &self,
-        Parameters(p): Parameters<ChannelsPointsBatchParams>,
-    ) -> CallToolResult {
-        to_call_result(self.points.points_batch(p.channel_id, &p.body).await)
-    }
-
-    #[tool(
-        description = "Replace uplink's configuration (full NetConfig object -- partial updates are not supported)",
-        annotations(read_only_hint = false)
-    )]
-    async fn net_mqtt_config_set(
-        &self,
-        Parameters(p): Parameters<NetMqttConfigSetParams>,
-    ) -> CallToolResult {
-        to_call_result(self.net.mqtt_config_set(&p.config).await)
-    }
-
-    #[tool(
-        description = "Reconnect the MQTT client",
-        annotations(read_only_hint = false)
-    )]
-    async fn net_mqtt_reconnect(&self) -> CallToolResult {
-        to_call_result(self.net.mqtt_reconnect().await)
-    }
-
-    #[tool(
-        description = "Disconnect the MQTT client",
-        annotations(read_only_hint = false)
-    )]
-    async fn net_mqtt_disconnect(&self) -> CallToolResult {
-        to_call_result(self.net.mqtt_disconnect().await)
-    }
-
-    #[tool(
-        description = "Upload a TLS certificate file (max 1 MB) from a path on the machine running aether mcp -- NOT a path on the MCP client's machine",
-        annotations(read_only_hint = false)
-    )]
-    async fn net_cert_upload(
-        &self,
-        Parameters(p): Parameters<NetCertUploadParams>,
-    ) -> CallToolResult {
-        to_call_result(
-            self.net
-                .cert_upload(&p.cert_type, Path::new(&p.file_path))
-                .await,
-        )
-    }
-
-    #[tool(
-        description = "Delete a TLS certificate by role",
-        annotations(read_only_hint = false)
-    )]
-    async fn net_cert_delete(
-        &self,
-        Parameters(p): Parameters<NetCertDeleteParams>,
-    ) -> CallToolResult {
-        to_call_result(self.net.cert_delete(&p.cert_type).await)
-    }
-}
-
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for AetherMcp {
     fn get_info(&self) -> ServerInfo {
@@ -1226,7 +1096,6 @@ mod tests {
             io: base.to_string(),
             automation: base.to_string(),
             alarm: base.to_string(),
-            uplink: base.to_string(),
             history: base.to_string(),
         }
     }
@@ -1258,14 +1127,13 @@ mod tests {
     #[test]
     fn base_urls_derive_every_domain_from_the_gateway_base() {
         let urls = BaseUrls::from_api_base("http://edge.example.test:6005/");
-        assert_eq!(urls.io, "http://edge.example.test:6005/api/v1/io");
+        assert_eq!(urls.io, "http://edge.example.test:6005/api/io");
         assert_eq!(
             urls.automation,
-            "http://edge.example.test:6005/api/v1/automation"
+            "http://edge.example.test:6005/api/automation"
         );
-        assert_eq!(urls.alarm, "http://edge.example.test:6005/api/v1/alarm");
-        assert_eq!(urls.uplink, "http://edge.example.test:6005/api/v1/uplink");
-        assert_eq!(urls.history, "http://edge.example.test:6005/api/v1/history");
+        assert_eq!(urls.alarm, "http://edge.example.test:6005/api/alarm");
+        assert_eq!(urls.history, "http://edge.example.test:6005/api/history");
     }
 
     /// Shorthand for the common "construct an --allow-write server against
@@ -1288,25 +1156,13 @@ mod tests {
             .and(query_param("page_size", "1"))
             .respond_with(
                 ResponseTemplate::new(200)
-                    .insert_header("x-aether-configuration-revision", "7")
+                    .insert_header("etag", "\"7\"")
                     .set_body_json(serde_json::json!({"data": {"list": []}})),
             )
             .expect(1)
             .mount(server)
             .await;
     }
-
-    /// Mutations deliberately absent from the production MCP catalog. A name
-    /// stays here until its application capability and exact MCP mapping are
-    /// both reviewed; direct wrappers exist only for unit coverage.
-    const UNEXPOSED_WRITE_TOOL_NAMES: &[&str] = &[
-        "channels_points_batch",
-        "net_mqtt_config_set",
-        "net_mqtt_reconnect",
-        "net_mqtt_disconnect",
-        "net_cert_upload",
-        "net_cert_delete",
-    ];
 
     #[test]
     fn retired_instance_measurement_write_is_absent_from_capability_surfaces() {
@@ -1537,112 +1393,6 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn read_only_router_has_no_write_tools() {
-        let server = MockServer::start().await;
-        let mcp = AetherMcp::new(&test_urls(&server.uri()), false).unwrap();
-        let names: Vec<_> = mcp
-            .tool_router
-            .list_all()
-            .iter()
-            .map(|t| t.name.to_string())
-            .collect();
-
-        assert!(names.contains(&"net_mqtt_status".to_string()), "{names:?}");
-        assert!(
-            !names.contains(&"net_mqtt_config_set".to_string()),
-            "{names:?}"
-        );
-    }
-
-    #[tokio::test]
-    async fn net_mqtt_status_calls_the_right_endpoint() {
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/mqtt/status"))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(serde_json::json!({ "connected": true })),
-            )
-            .expect(1)
-            .mount(&server)
-            .await;
-
-        let mcp = AetherMcp::new(&test_urls(&server.uri()), false).unwrap();
-        let result = mcp.net_mqtt_status().await;
-
-        assert_ne!(result.is_error, Some(true), "{result:?}");
-        let structured = result
-            .structured_content
-            .expect("expected structured content");
-        assert_eq!(structured["connected"], true);
-    }
-
-    #[tokio::test]
-    async fn net_mqtt_status_surfaces_server_error_as_visible_content() {
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/mqtt/status"))
-            .respond_with(ResponseTemplate::new(500).set_body_json(
-                serde_json::json!({ "success": false, "message": "broker unreachable" }),
-            ))
-            .mount(&server)
-            .await;
-
-        let mcp = AetherMcp::new(&test_urls(&server.uri()), false).unwrap();
-        let result = mcp.net_mqtt_status().await;
-
-        assert_eq!(result.is_error, Some(true));
-        let text = result
-            .content
-            .iter()
-            .find_map(|c| c.as_text().map(|t| t.text.clone()))
-            .expect("expected text content");
-        assert!(text.contains("broker unreachable"), "{text}");
-    }
-
-    #[tokio::test]
-    async fn net_mqtt_config_get_calls_the_config_endpoint() {
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/mqtt/config"))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(serde_json::json!({ "host": "10.0.0.1" })),
-            )
-            .expect(1)
-            .mount(&server)
-            .await;
-
-        let mcp = AetherMcp::new(&test_urls(&server.uri()), false).unwrap();
-        let result = mcp.net_mqtt_config_get().await;
-
-        let structured = result
-            .structured_content
-            .expect("expected structured content");
-        assert_eq!(structured["host"], "10.0.0.1");
-    }
-
-    #[tokio::test]
-    async fn net_cert_info_calls_the_certificate_info_endpoint() {
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/certificate/info"))
-            .respond_with(
-                ResponseTemplate::new(200)
-                    .set_body_json(serde_json::json!({ "ca_cert": "present" })),
-            )
-            .expect(1)
-            .mount(&server)
-            .await;
-
-        let mcp = AetherMcp::new(&test_urls(&server.uri()), false).unwrap();
-        let result = mcp.net_cert_info().await;
-
-        let structured = result
-            .structured_content
-            .expect("expected structured content");
-        assert_eq!(structured["ca_cert"], "present");
-    }
-
     // NOTE: `AlarmClient::list_alerts`/`list_rules`/`list_events` build their query
     // string from server-side param names (`channel_id`, `warning_level`,
     // `page_size`, `rule_id`, ...), not the CLI-facing arg names (`channel`,
@@ -1796,10 +1546,6 @@ mod tests {
         assert_eq!(structured["total"], 3);
     }
 
-    // NOTE: `ChannelClient::list_channels` requests bare `/api/channels` (no
-    // `/list` suffix). io separately registers `/api/channels/list` for a
-    // handler literally named `list_channels` -- a name collision with this
-    // client method, but not the same route: the CLI client never calls it.
     #[tokio::test]
     async fn channels_list_calls_the_bare_channels_endpoint() {
         let server = MockServer::start().await;
@@ -2134,12 +1880,22 @@ mod tests {
         for (write_tool, _) in MCP_WRITE_CAPABILITY_MAPPING {
             assert!(!names.contains(&write_tool.to_string()), "{names:?}");
         }
-        for unexposed_tool in UNEXPOSED_WRITE_TOOL_NAMES {
-            assert!(!names.contains(&(*unexposed_tool).to_string()), "{names:?}");
+        for retired_tool in [
+            "channels_points_batch",
+            "net_mqtt_status",
+            "net_mqtt_config_get",
+            "net_cert_info",
+            "net_mqtt_config_set",
+            "net_mqtt_reconnect",
+            "net_mqtt_disconnect",
+            "net_cert_upload",
+            "net_cert_delete",
+        ] {
+            assert!(!names.contains(&retired_tool.to_string()), "{names:?}");
         }
         // Route-count safety net catches a future write tool landing in the
         // wrong impl block or a name collision overwriting a read-only route.
-        assert_eq!(names.len(), 23, "{names:?}");
+        assert_eq!(names.len(), 20, "{names:?}");
     }
 
     #[tokio::test]
@@ -2156,13 +1912,10 @@ mod tests {
         for (write_tool, _) in MCP_WRITE_CAPABILITY_MAPPING {
             assert!(names.contains(&write_tool.to_string()), "{names:?}");
         }
-        for unexposed_tool in UNEXPOSED_WRITE_TOOL_NAMES {
-            assert!(!names.contains(&(*unexposed_tool).to_string()), "{names:?}");
-        }
         // Read-only tools are still present too -- --allow-write ADDS, doesn't replace.
         assert!(names.contains(&"channels_list".to_string()), "{names:?}");
-        // Route-count safety net: 23 read-only + 22 governed writes.
-        assert_eq!(names.len(), 45, "{names:?}");
+        // Route-count safety net: 20 read-only + 22 governed writes.
+        assert_eq!(names.len(), 42, "{names:?}");
     }
 
     #[tokio::test]
@@ -2203,9 +1956,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn channels_update_uses_put_on_the_channel_id() {
+    async fn channels_update_uses_patch_on_the_channel_id() {
         let server = MockServer::start().await;
-        Mock::given(method("PUT"))
+        Mock::given(method("PATCH"))
             .and(path("/api/channels/1001"))
             .and(header("authorization", "Bearer signed-access-token"))
             .and(header_exists("x-request-id"))
@@ -2448,30 +2201,6 @@ mod tests {
             "{results:?}"
         );
         assert!(server.received_requests().await.unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn channels_points_batch_posts_the_body_verbatim() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/api/channels/1001/points/batch"))
-            .and(body_json(
-                serde_json::json!({ "delete": [{ "point_id": 3 }] }),
-            ))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
-            .expect(1)
-            .mount(&server)
-            .await;
-
-        let mcp = write_mcp(&server.uri());
-        let result = mcp
-            .channels_points_batch(Parameters(ChannelsPointsBatchParams {
-                channel_id: 1001,
-                body: serde_json::json!({ "delete": [{ "point_id": 3 }] }),
-            }))
-            .await;
-
-        assert_ne!(result.is_error, Some(true), "{result:?}");
     }
 
     #[tokio::test]
@@ -3003,130 +2732,6 @@ mod tests {
                 confirmed: true,
             }))
             .await;
-        assert_ne!(result.is_error, Some(true), "{result:?}");
-    }
-
-    #[tokio::test]
-    async fn net_mqtt_config_set_posts_the_body_verbatim() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/mqtt/config"))
-            .and(body_json(
-                serde_json::json!({ "host": "new", "port": 1883 }),
-            ))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(serde_json::json!({ "success": true })),
-            )
-            .expect(1)
-            .mount(&server)
-            .await;
-
-        let mcp = write_mcp(&server.uri());
-        let result = mcp
-            .net_mqtt_config_set(Parameters(NetMqttConfigSetParams {
-                config: serde_json::json!({ "host": "new", "port": 1883 }),
-            }))
-            .await;
-
-        assert_ne!(result.is_error, Some(true), "{result:?}");
-    }
-
-    #[tokio::test]
-    async fn net_mqtt_reconnect_and_disconnect_hit_their_own_paths() {
-        let reconnect_server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/mqtt/reconnect"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
-            .expect(1)
-            .mount(&reconnect_server)
-            .await;
-        let mcp = write_mcp(&reconnect_server.uri());
-        let result = mcp.net_mqtt_reconnect().await;
-        assert_ne!(result.is_error, Some(true), "{result:?}");
-
-        let disconnect_server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/mqtt/disconnect"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
-            .expect(1)
-            .mount(&disconnect_server)
-            .await;
-        let mcp = write_mcp(&disconnect_server.uri());
-        let result = mcp.net_mqtt_disconnect().await;
-        assert_ne!(result.is_error, Some(true), "{result:?}");
-    }
-
-    #[tokio::test]
-    async fn net_cert_upload_reads_the_file_and_posts_multipart() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/certificate/upload"))
-            .and(wiremock::matchers::header_regex(
-                "content-type",
-                "^multipart/form-data; boundary=",
-            ))
-            .and(wiremock::matchers::body_string_contains(
-                "name=\"cert_type\"",
-            ))
-            .and(wiremock::matchers::body_string_contains("client_key"))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(serde_json::json!({ "success": true })),
-            )
-            .expect(1)
-            .mount(&server)
-            .await;
-
-        let dir = tempfile::tempdir().unwrap();
-        let cert_path = dir.path().join("ca.pem");
-        std::fs::write(&cert_path, b"-----BEGIN CERTIFICATE-----\n").unwrap();
-
-        let mcp = write_mcp(&server.uri());
-        let result = mcp
-            .net_cert_upload(Parameters(NetCertUploadParams {
-                cert_type: "client_key".to_string(),
-                file_path: cert_path.to_string_lossy().to_string(),
-            }))
-            .await;
-
-        assert_ne!(result.is_error, Some(true), "{result:?}");
-    }
-
-    #[tokio::test]
-    async fn net_cert_upload_reports_a_missing_file_as_a_visible_tool_error() {
-        let mcp = write_mcp("http://127.0.0.1:1");
-        let result = mcp
-            .net_cert_upload(Parameters(NetCertUploadParams {
-                cert_type: "ca_cert".to_string(),
-                file_path: "/nonexistent/ca.pem".to_string(),
-            }))
-            .await;
-
-        assert_eq!(result.is_error, Some(true));
-        let text = result
-            .content
-            .iter()
-            .find_map(|c| c.as_text().map(|t| t.text.clone()))
-            .expect("expected text content");
-        assert!(text.contains("/nonexistent/ca.pem"), "{text}");
-    }
-
-    #[tokio::test]
-    async fn net_cert_delete_uses_the_cert_type_in_the_path() {
-        let server = MockServer::start().await;
-        Mock::given(method("DELETE"))
-            .and(path("/certificate/client_key"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
-            .expect(1)
-            .mount(&server)
-            .await;
-
-        let mcp = write_mcp(&server.uri());
-        let result = mcp
-            .net_cert_delete(Parameters(NetCertDeleteParams {
-                cert_type: "client_key".to_string(),
-            }))
-            .await;
-
         assert_ne!(result.is_error, Some(true), "{result:?}");
     }
 

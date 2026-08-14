@@ -122,7 +122,7 @@ pub struct GpioChannelParamsConfig {
     pub gpio_chip: String,
 
     /// Sysfs base path (only for sysfs driver).
-    #[serde(default = "default_sysfs_path", alias = "gpio_base_path")]
+    #[serde(default = "default_sysfs_path")]
     pub sysfs_base_path: String,
 }
 
@@ -588,7 +588,7 @@ impl HasMetadata for SysfsDriver {
                     serde_json::json!("sysfs"),
                 ),
                 ParameterMetadata::optional(
-                    "gpio_base_path",
+                    "sysfs_base_path",
                     "GPIO Base Path",
                     "Base path for sysfs GPIO interface",
                     ParameterType::String,
@@ -1021,6 +1021,7 @@ impl ChannelRuntime for GpioChannel {
     async fn disconnect(&mut self) -> Result<()> {
         if let Some(task) = self.poll_task.take() {
             task.abort();
+            let _ = task.await;
         }
         self.state = ConnectionState::Disconnected;
         self.log_ctx.log_disconnected(None).await;
@@ -1107,6 +1108,23 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn channel_parameters_reject_retired_gpio_base_path_key() {
+        let canonical: GpioChannelParamsConfig = serde_json::from_value(serde_json::json!({
+            "driver": "sysfs",
+            "sysfs_base_path": "/tmp/gpio"
+        }))
+        .expect("canonical sysfs base path");
+        assert_eq!(canonical.sysfs_base_path, "/tmp/gpio");
+        assert!(
+            serde_json::from_value::<GpioChannelParamsConfig>(serde_json::json!({
+                "driver": "sysfs",
+                "gpio_base_path": "/tmp/gpio"
+            }))
+            .is_err()
+        );
+    }
 
     #[test]
     fn point_mapping_codec_is_strict_and_point_type_aware() {

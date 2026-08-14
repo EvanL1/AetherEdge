@@ -779,9 +779,9 @@ async fn list_channels(
 
 /// Runtime metrics for the history process.
 ///
-/// Returns cumulative statistics since startup: total points written,
-/// NaN-skipped points, current write-buffer depth, and last flush
-/// duration. A continuously growing buffer depth indicates the backend
+/// Returns persisted totals together with process-local write, drop, failure,
+/// timeout, buffer-depth, and last-flush-duration counters. A continuously
+/// growing buffer depth indicates the backend
 /// write throughput is not keeping up with the collection rate.
 #[utoipa::path(get, path = "/hisApi/metrics", tag = "Meta",
     responses(
@@ -794,8 +794,9 @@ async fn metrics(
     let backend = state.storage.read().await.clone();
     let stats = backend.get_stats().await;
     let buffer_size = state.buffer.lock().await.len();
+    let runtime = state.runtime_metrics.snapshot();
 
-    metrics_response(stats, backend.name(), buffer_size)
+    metrics_response(stats, backend.name(), buffer_size, runtime)
 }
 
 /// Shape the metrics body.
@@ -807,6 +808,7 @@ fn metrics_response(
     stats: anyhow::Result<HistoryStats>,
     backend_name: &str,
     buffer_size: usize,
+    runtime: crate::state::HistoryRuntimeSnapshot,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let stats = stats.map_err(|error| {
         (
@@ -823,6 +825,11 @@ fn metrics_response(
             "channel_count": stats.channels.len(),
             "backend":       backend_name,
             "buffer_size":   buffer_size,
+            "session_points_written": runtime.points_written,
+            "points_dropped": runtime.points_dropped,
+            "flush_failures": runtime.flush_failures,
+            "flush_timeouts": runtime.flush_timeouts,
+            "last_flush_duration_ms": runtime.last_flush_duration_ms,
         }
     })))
 }
@@ -901,8 +908,8 @@ async fn get_storage(State(state): State<Arc<AppState>>) -> Json<Value> {
     let backend = state.storage.read().await.clone();
     let healthy = backend.health_check().await;
 
-    // Preserve the legacy response shape for external backends. For embedded
-    // SQLite, `database` contains the local file and no network endpoint exists.
+    // The canonical response mirrors the PUT fields. For embedded SQLite,
+    // `database` contains the local file and no network endpoint exists.
     let (host, port, database, username) = if ss.backend == "sqlite" {
         ("local".to_string(), 0, ss.url.clone(), String::new())
     } else {
@@ -1135,6 +1142,16 @@ fn replace_db_in_dsn(dsn: &str, new_db: &str) -> String {
 mod metrics_tests {
     use super::*;
 
+    fn runtime() -> crate::state::HistoryRuntimeSnapshot {
+        crate::state::HistoryRuntimeSnapshot {
+            points_written: 11,
+            points_dropped: 2,
+            flush_failures: 3,
+            flush_timeouts: 4,
+            last_flush_duration_ms: 5,
+        }
+    }
+
     fn stats() -> HistoryStats {
         HistoryStats {
             earliest_timestamp: None,
@@ -1147,11 +1164,17 @@ mod metrics_tests {
 
     #[test]
     fn a_readable_backend_reports_its_totals() {
-        let response = metrics_response(Ok(stats()), "sqlite", 7).expect("healthy backend");
+        let response =
+            metrics_response(Ok(stats()), "sqlite", 7, runtime()).expect("healthy backend");
 
         assert_eq!(response.0["data"]["total_points"], 42);
         assert_eq!(response.0["data"]["channel_count"], 1);
         assert_eq!(response.0["data"]["buffer_size"], 7);
+        assert_eq!(response.0["data"]["session_points_written"], 11);
+        assert_eq!(response.0["data"]["points_dropped"], 2);
+        assert_eq!(response.0["data"]["flush_failures"], 3);
+        assert_eq!(response.0["data"]["flush_timeouts"], 4);
+        assert_eq!(response.0["data"]["last_flush_duration_ms"], 5);
     }
 
     #[test]
@@ -1160,7 +1183,8 @@ mod metrics_tests {
         // an outage indistinguishable from an empty historian.
         let failure = Err(anyhow::anyhow!("connection refused"));
 
-        let (status, body) = metrics_response(failure, "postgres", 7).expect_err("failed backend");
+        let (status, body) =
+            metrics_response(failure, "postgres", 7, runtime()).expect_err("failed backend");
 
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
         assert_eq!(body.0["success"], false);

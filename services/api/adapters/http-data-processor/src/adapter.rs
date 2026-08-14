@@ -47,7 +47,7 @@ impl HttpDataProcessor {
     async fn send_process(&self, request: &DataProcessingRequest) -> PortResult<ProcessingResult> {
         self.validate_request_route(request)?;
         let body = encode_request(request)
-            .map_err(|_| rejected("processing request does not satisfy the v1 wire contract"))?;
+            .map_err(|_| rejected("processing request does not satisfy the wire contract"))?;
         if body.len() > self.config.descriptor().max_request_bytes() {
             return Err(rejected(
                 "processing request exceeds the configured byte limit",
@@ -74,7 +74,7 @@ impl HttpDataProcessor {
         ensure_process_media_type(response.headers().get(CONTENT_TYPE))?;
         let bytes = read_limited(response, self.config.max_response_bytes()).await?;
         decode_result(&bytes)
-            .map_err(|_| invalid_data("processor response violates the v1 result contract"))
+            .map_err(|_| invalid_data("processor response violates the result contract"))
     }
 
     fn validate_request_route(&self, request: &DataProcessingRequest) -> PortResult<()> {
@@ -198,7 +198,7 @@ impl ProcessorErrorEnvelope {
         status: StatusCode,
         expected_request_id: Option<&str>,
     ) -> PortResult<Option<u64>> {
-        if self.schema != "aether.data-processing.error.v1"
+        if self.schema != "aether.data-processing.error"
             || !is_stable_code(&self.code)
             || !is_contract_message(&self.message)
             || self
@@ -214,7 +214,7 @@ impl ProcessorErrorEnvelope {
             || !self.category.retryable_is_valid(self.retryable)
         {
             return Err(invalid_data(
-                "processor error response violates the v1 error contract",
+                "processor error response violates the error contract",
             ));
         }
 
@@ -233,12 +233,12 @@ impl ProcessorErrorEnvelope {
             || (!self.retryable && details.retry_after_seconds.is_some())
         {
             return Err(invalid_data(
-                "processor error response violates the v1 error contract",
+                "processor error response violates the error contract",
             ));
         }
         match details.retry_after_seconds {
             Some(seconds) => seconds.checked_mul(1_000).map(Some).ok_or_else(|| {
-                invalid_data("processor error response violates the v1 error contract")
+                invalid_data("processor error response violates the error contract")
             }),
             None => Ok(None),
         }
@@ -342,12 +342,12 @@ async fn decode_processor_failure<T>(
     ensure_process_media_type(response.headers().get(CONTENT_TYPE))?;
     let bytes = read_limited(response, max_response_bytes).await?;
     let envelope: ProcessorErrorEnvelope = serde_json::from_slice(&bytes)
-        .map_err(|_| invalid_data("processor error response violates the v1 error contract"))?;
+        .map_err(|_| invalid_data("processor error response violates the error contract"))?;
     let value: serde_json::Value = serde_json::from_slice(&bytes)
-        .map_err(|_| invalid_data("processor error response violates the v1 error contract"))?;
+        .map_err(|_| invalid_data("processor error response violates the error contract"))?;
     if contains_json_null(&value) {
         return Err(invalid_data(
-            "processor error response violates the v1 error contract",
+            "processor error response violates the error contract",
         ));
     }
     let retry_after_ms = envelope.validate(status, expected_request_id)?;
@@ -458,19 +458,16 @@ fn ensure_process_media_type(value: Option<&HeaderValue>) -> PortResult<()> {
     }) {
         return Err(invalid_data("processor response media type is invalid"));
     }
-    let mut version_count = 0_u8;
     let mut charset_count = 0_u8;
     for parameter in parts {
         let parameter = parameter.trim();
-        if parameter.eq_ignore_ascii_case("version=1") {
-            version_count = version_count.saturating_add(1);
-        } else if parameter.eq_ignore_ascii_case("charset=utf-8") {
+        if parameter.eq_ignore_ascii_case("charset=utf-8") {
             charset_count = charset_count.saturating_add(1);
         } else {
             return Err(invalid_data("processor response media type is invalid"));
         }
     }
-    if version_count == 1 && charset_count <= 1 {
+    if charset_count <= 1 {
         Ok(())
     } else {
         Err(invalid_data("processor response media type is invalid"))
@@ -481,10 +478,22 @@ fn ensure_health_media_type(value: Option<&HeaderValue>) -> PortResult<()> {
     let Some(value) = value.and_then(|value| value.to_str().ok()) else {
         return Err(invalid_data("processor health media type is invalid"));
     };
-    let media_type = value.split(';').next().map(str::trim).unwrap_or_default();
-    if media_type.eq_ignore_ascii_case("application/json")
-        || media_type.eq_ignore_ascii_case("application/vnd.aether.data-processing+json")
+    let mut parts = value.split(';');
+    let media_type = parts.next().map(str::trim).unwrap_or_default();
+    if !media_type.eq_ignore_ascii_case("application/json")
+        && !media_type.eq_ignore_ascii_case("application/vnd.aether.data-processing+json")
     {
+        return Err(invalid_data("processor health media type is invalid"));
+    }
+    let mut charset_count = 0_u8;
+    for parameter in parts {
+        if parameter.trim().eq_ignore_ascii_case("charset=utf-8") {
+            charset_count = charset_count.saturating_add(1);
+        } else {
+            return Err(invalid_data("processor health media type is invalid"));
+        }
+    }
+    if charset_count <= 1 {
         Ok(())
     } else {
         Err(invalid_data("processor health media type is invalid"))

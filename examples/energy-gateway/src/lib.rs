@@ -328,7 +328,7 @@ fn validate_data_processing_assets(
     tasks: [&DataProcessingTaskAsset; 2],
     binding: &DataProcessingBindingAsset,
 ) -> Result<(), EnergyGatewayError> {
-    if binding.schema != "aether.data-processing-binding.v1" || binding.revision == 0 {
+    if binding.schema != "aether.data-processing-binding" || binding.revision == 0 {
         return Err(EnergyGatewayError::UnsafePack(
             "data-processing binding schema or revision is invalid".to_string(),
         ));
@@ -343,10 +343,10 @@ fn validate_data_processing_assets(
     }
 
     for task in tasks {
-        if task.schema != "aether.data-processing-task.v1"
+        if task.schema != "aether.data-processing-task"
             || task.revision == 0
             || task.kind != "forecast"
-            || task.processor_contract != "aether.data-processing.forecast.v1"
+            || task.processor_contract != "aether.data-processing.forecast"
             || task.enabled
         {
             return Err(EnergyGatewayError::UnsafePack(format!(
@@ -429,11 +429,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn unsupported_pack_schema_fails_closed() {
-        let manifest = ENERGY_PACK_MANIFEST.replacen("schema_version: 1", "schema_version: 2", 1);
+    fn removed_pack_schema_version_field_fails_closed() {
+        let manifest = format!("schema_version: 1\n{ENERGY_PACK_MANIFEST}");
 
         let result = EnergyGateway::from_assets(
-            &manifest,
+            manifest.as_str(),
             ENERGY_IO_EXAMPLES,
             ENERGY_AUTOMATION_EXAMPLE,
             ENERGY_RULE_EXAMPLE,

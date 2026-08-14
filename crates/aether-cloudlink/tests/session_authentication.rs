@@ -20,7 +20,6 @@ fn request() -> SessionChallengeRequest {
         GATEWAY_ID,
         CREDENTIAL_ID,
         3,
-        vec!["1.0".to_owned()],
         CLIENT_NONCE,
         vec![ResumeCursor::new("telemetry", 4, 18).expect("resume cursor")],
     )
@@ -29,7 +28,7 @@ fn request() -> SessionChallengeRequest {
 
 fn signed_challenge(key: &SigningKey, issued_at_ms: u64, expires_at_ms: u64) -> SessionChallenge {
     let signing_projection = json!({
-        "schema": "aether.cloudlink.session-challenge-signing.v1alpha1",
+        "schema": "aether.cloudlink.session-challenge-signing",
         "gateway_id": GATEWAY_ID,
         "challenge_id": CHALLENGE_ID,
         "cloud_nonce": CLOUD_NONCE,
@@ -40,7 +39,7 @@ fn signed_challenge(key: &SigningKey, issued_at_ms: u64, expires_at_ms: u64) -> 
         serde_json_canonicalizer::to_vec(&signing_projection).expect("canonical challenge");
     let signature = URL_SAFE_NO_PAD.encode(key.sign(&signing_bytes).to_bytes());
     let wire = json!({
-        "schema": "aether.cloudlink.session-challenge.v1",
+        "schema": "aether.cloudlink.session-challenge",
         "protocol": "aether.cloudlink",
         "message_kind": "session-challenge",
         "gateway_id": GATEWAY_ID,
@@ -80,7 +79,7 @@ fn challenge_request_matches_the_closed_contract_and_is_strictly_decoded() {
     assert_eq!(
         actual,
         json!({
-            "schema": "aether.cloudlink.session-challenge-request.v1",
+            "schema": "aether.cloudlink.session-challenge-request",
             "protocol": "aether.cloudlink",
             "message_kind": "session-challenge-request",
             "gateway_id": GATEWAY_ID,
@@ -88,7 +87,6 @@ fn challenge_request_matches_the_closed_contract_and_is_strictly_decoded() {
                 "credential_id": CREDENTIAL_ID,
                 "generation": "3",
             },
-            "offered_protocol_versions": ["1.0"],
             "client_nonce": CLIENT_NONCE,
             "resume": [{
                 "stream_id": "telemetry",
@@ -176,7 +174,7 @@ fn gateway_hello_signs_the_exact_transcript_with_the_persisted_cloud_nonce() {
         .expect("base64url signature");
     let signature = Signature::from_slice(&signature_bytes).expect("Ed25519 signature");
     let expected_projection = json!({
-        "schema": "aether.cloudlink.session-establishment-signing.v1alpha1",
+        "schema": "aether.cloudlink.session-establishment-signing",
         "gateway_id": GATEWAY_ID,
         "credential_id": CREDENTIAL_ID,
         "credential_generation": "3",
@@ -184,7 +182,6 @@ fn gateway_hello_signs_the_exact_transcript_with_the_persisted_cloud_nonce() {
         "challenge_id": CHALLENGE_ID,
         "cloud_nonce": CLOUD_NONCE,
         "client_nonce": CLIENT_NONCE,
-        "offered_protocol_versions": ["1.0"],
         "resume": [{
             "stream_id": "telemetry",
             "stream_epoch": "4",

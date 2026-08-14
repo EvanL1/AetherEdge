@@ -13,8 +13,10 @@ use aether_core::PointType;
 
 use crate::protocols::core::data::DataBatch;
 use crate::protocols::core::error::{GatewayError, Result as ProtocolResult};
+use crate::protocols::core::traits::PointFailure;
 use aether_domain::{
-    AcquiredPointSample, ChannelId, ChannelPointAddress, PointId, PointKind, TimestampMs,
+    AcquiredPointSample, ChannelId, ChannelPointAddress, PointId, PointKind, PointQuality,
+    TimestampMs,
 };
 use aether_ports::{PortError, PortErrorKind};
 use aether_routing::{MAX_C2C_CASCADE_DEPTH, RoutingCache};
@@ -241,6 +243,65 @@ impl ShmDataStore {
             return Err(map_acquisition_write_error(error));
         }
         Ok(())
+    }
+
+    /// Mark exact adapter-reported acquisition failures Bad while retaining
+    /// each slot's last value and source timestamp.
+    ///
+    /// Untyped failures cannot be mapped safely between telemetry and status,
+    /// so only adapters that provide [`PointFailure::point_type`] participate.
+    /// This updates the exact physical source slots only; route-derived quality
+    /// needs a separate atomic propagation contract before it can safely touch
+    /// targets that may have concurrent producers.
+    pub fn mark_point_failures_bad(
+        &self,
+        channel_id: u32,
+        failures: &[PointFailure],
+    ) -> ProtocolResult<usize> {
+        let mut seen = HashSet::with_capacity(failures.len());
+        let mut updates = Vec::with_capacity(failures.len());
+        for failure in failures {
+            let kind = match failure.point_type {
+                Some(PointType::Telemetry) => PointKind::Telemetry,
+                Some(PointType::Signal) => PointKind::Status,
+                Some(PointType::Control | PointType::Adjustment) | None => continue,
+            };
+            let source = ChannelPointAddress::new(
+                ChannelId::new(channel_id),
+                kind,
+                PointId::new(failure.point_id),
+            )
+            .map_err(|error| GatewayError::invalid_data(error.to_string()))?;
+            if seen.insert(source) {
+                updates.push((source, PointQuality::Bad));
+            }
+        }
+        if updates.is_empty() {
+            return Ok(0);
+        }
+
+        let result = match &self.write_path {
+            ShmWritePath::TypedFixedGeneration(writer) => {
+                writer.degrade_quality_preserving_value(&updates)
+            },
+            ShmWritePath::DynamicHandle(shm_handle) => {
+                let layout = shm_handle.generation().ok_or_else(|| {
+                    GatewayError::config("authoritative SHM layout disappeared during acquisition")
+                })?;
+                layout
+                    .acquisition_writer()
+                    .degrade_quality_preserving_value(&updates)
+            },
+        };
+        match result {
+            Ok(updated) => Ok(updated),
+            Err(error) => {
+                if error.kind() == PortErrorKind::NotFound {
+                    self.slot_miss_count.fetch_add(1, Ordering::Relaxed);
+                }
+                Err(map_acquisition_write_error(error))
+            },
+        }
     }
 
     /// Publishes channel connectivity on the dedicated SHM health plane.

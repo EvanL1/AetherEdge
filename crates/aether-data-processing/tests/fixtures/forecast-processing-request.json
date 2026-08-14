@@ -1,5 +1,5 @@
 {
-  "schema": "aether.data-processing.request.v1",
+  "schema": "aether.data-processing.request",
   "request_id": "0190aee6-2139-7a87-8448-806f1b843201",
   "submitted_at": "2026-07-11T12:00:01Z",
   "deadline": "2026-07-11T12:00:06Z",
@@ -12,14 +12,14 @@
     "id": "example.edge-asset",
     "revision": 1
   },
-  "processor_contract": "aether.data-processing.forecast.v1",
+  "processor_contract": "aether.data-processing.forecast",
   "artifact": {
     "kind": "model",
     "family": "example-signal",
     "version": "v3"
   },
   "frame": {
-    "schema": "aether.processing-frame.v1",
+    "schema": "aether.processing-frame",
     "as_of": "2026-07-11T12:00:00Z",
     "cadence_seconds": 900,
     "history": {
@@ -175,5 +175,5 @@
     "kind": "forecast",
     "horizon_steps": 2
   },
-  "input_digest": "sha256:66aade139532bcd80b8ae85f5e6b120332e8b29128df82546440f209064193dc"
+  "input_digest": "sha256:f78edd8e74f4f05f8dc79476f19140abfc85107083fd52f9c5ef6e0e05bfa685"
 }

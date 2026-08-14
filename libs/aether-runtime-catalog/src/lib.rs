@@ -14,8 +14,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-/// The only runtime-manifest schema understood by this release.
-pub const RUNTIME_MANIFEST_SCHEMA_VERSION: u32 = 1;
+#[cfg(feature = "schema-validation")]
+pub mod schema_validation;
 
 /// Name shared by runtime processes and Pack installation tooling.
 pub const RUNTIME_MANIFEST_FILE_NAME: &str = "runtime-manifest.json";
@@ -39,9 +39,6 @@ pub const SHIPPED_SERVICES: [&str; 6] = [
 /// never be advertised by the default artifact merely because an Energy Pack
 /// can use them.
 pub const DEFAULT_IO_PROTOCOL_FEATURES: [&str; 4] = ["can", "gpio", "iec61850", "modbus"];
-
-/// Compatibility alias for release tooling.
-pub const SHIPPED_IO_PROTOCOL_FEATURES: [&str; 4] = DEFAULT_IO_PROTOCOL_FEATURES;
 
 #[derive(Clone, Copy)]
 struct IoProtocolAdapter {
@@ -162,7 +159,7 @@ pub const fn default_io_features() -> &'static [&'static str] {
     &DEFAULT_IO_PROTOCOL_FEATURES
 }
 
-/// Returns every protocol-affecting feature understood by manifest v1.
+/// Returns every protocol-affecting feature understood by the runtime manifest.
 #[must_use]
 pub const fn known_io_protocol_features() -> &'static [&'static str] {
     KNOWN_IO_PROTOCOL_FEATURES
@@ -190,10 +187,9 @@ impl ManifestChecksum {
     }
 }
 
-/// A schema-, feature-, version-, and checksum-verified runtime composition.
+/// A feature-, release-, target-, and checksum-verified runtime composition.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KernelRuntimeManifest {
-    schema_version: u32,
     composition: String,
     aether_version: String,
     target_triple: String,
@@ -204,9 +200,6 @@ pub struct KernelRuntimeManifest {
     protocols: Vec<String>,
     checksum: ManifestChecksum,
 }
-
-/// Shorter compatibility name for callers that already use runtime manifests.
-pub type RuntimeManifest = KernelRuntimeManifest;
 
 impl KernelRuntimeManifest {
     /// Produces standard six-service metadata from an explicit IO feature set.
@@ -232,12 +225,6 @@ impl KernelRuntimeManifest {
                     .map(|descriptor| descriptor.name()),
             )
             .build()
-    }
-
-    /// Returns the verified schema version.
-    #[must_use]
-    pub const fn schema_version(&self) -> u32 {
-        self.schema_version
     }
 
     /// Returns the composition identity.
@@ -302,7 +289,7 @@ impl KernelRuntimeManifest {
         format!("{}:{}", self.checksum.algorithm, self.checksum.digest)
     }
 
-    /// Converts verified runtime metadata into the Pack v1 compatibility view.
+    /// Converts verified runtime metadata into the Pack compatibility view.
     pub fn pack_runtime(&self) -> Result<PackRuntime, RuntimeManifestError> {
         validate_aether_version(&self.aether_version)?;
         Ok(PackRuntime::new(self.aether_version.clone())
@@ -438,7 +425,6 @@ impl RuntimeManifestBuilder {
         let protocols = derive_protocols(&io_features, target_os);
 
         let payload = ManifestPayload {
-            schema_version: RUNTIME_MANIFEST_SCHEMA_VERSION,
             composition: &self.composition,
             aether_version: &self.aether_version,
             target_triple: &self.target_triple,
@@ -450,7 +436,6 @@ impl RuntimeManifestBuilder {
         };
         let checksum = checksum_payload(&payload)?;
         Ok(KernelRuntimeManifest {
-            schema_version: RUNTIME_MANIFEST_SCHEMA_VERSION,
             composition: self.composition,
             aether_version: self.aether_version,
             target_triple: self.target_triple,
@@ -484,20 +469,12 @@ pub enum RuntimeManifestError {
         /// Stable rejection detail.
         message: &'static str,
     },
-    /// JSON does not match the closed v1 shape.
+    /// JSON does not match the closed runtime-manifest shape.
     #[error("invalid runtime manifest: {source}")]
     InvalidManifest {
         /// Decoding failure.
         #[source]
         source: serde_json::Error,
-    },
-    /// The schema is newer or otherwise unsupported.
-    #[error("unsupported runtime manifest schema {found}; this release supports {supported}")]
-    UnsupportedSchema {
-        /// Schema found in the file.
-        found: u32,
-        /// Schema supported by the loader.
-        supported: u32,
     },
     /// Aether version is not SemVer.
     #[error("invalid Aether version {value:?}: {source}")]
@@ -652,7 +629,6 @@ pub enum RuntimeManifestError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ManifestDto {
-    schema_version: u32,
     composition: String,
     aether_version: String,
     target_triple: String,
@@ -667,7 +643,6 @@ struct ManifestDto {
 impl From<&KernelRuntimeManifest> for ManifestDto {
     fn from(manifest: &KernelRuntimeManifest) -> Self {
         Self {
-            schema_version: manifest.schema_version,
             composition: manifest.composition.clone(),
             aether_version: manifest.aether_version.clone(),
             target_triple: manifest.target_triple.clone(),
@@ -683,7 +658,6 @@ impl From<&KernelRuntimeManifest> for ManifestDto {
 
 #[derive(Serialize)]
 struct ManifestPayload<'a> {
-    schema_version: u32,
     composition: &'a str,
     aether_version: &'a str,
     target_triple: &'a str,
@@ -781,15 +755,8 @@ pub fn parse_runtime_manifest(
 ) -> Result<KernelRuntimeManifest, RuntimeManifestError> {
     let dto: ManifestDto = serde_json::from_str(source)
         .map_err(|source| RuntimeManifestError::InvalidManifest { source })?;
-    if dto.schema_version != RUNTIME_MANIFEST_SCHEMA_VERSION {
-        return Err(RuntimeManifestError::UnsupportedSchema {
-            found: dto.schema_version,
-            supported: RUNTIME_MANIFEST_SCHEMA_VERSION,
-        });
-    }
     validate_checksum_shape(&dto.checksum)?;
     let payload = ManifestPayload {
-        schema_version: dto.schema_version,
         composition: &dto.composition,
         aether_version: &dto.aether_version,
         target_triple: &dto.target_triple,
@@ -845,7 +812,6 @@ pub fn parse_runtime_manifest(
     }
 
     Ok(KernelRuntimeManifest {
-        schema_version: dto.schema_version,
         composition: dto.composition,
         aether_version: dto.aether_version,
         target_triple: dto.target_triple,

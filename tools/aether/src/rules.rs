@@ -525,8 +525,7 @@ impl RuleClient {
         }
         let value = response
             .headers()
-            .get("x-aether-configuration-revision")
-            .or_else(|| response.headers().get(reqwest::header::ETAG))
+            .get(reqwest::header::ETAG)
             .ok_or_else(|| anyhow::anyhow!("rules query did not return a revision header"))?
             .to_str()?
             .trim_matches('"')
@@ -619,6 +618,39 @@ mod tests {
             .execute_rule(7, true)
             .await
             .expect("governed execute");
+    }
+
+    #[tokio::test]
+    async fn rules_revision_uses_only_the_standard_etag_header() {
+        let etag_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/rules"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("etag", "\"7\"")
+                    .set_body_json(serde_json::json!({"success": true, "data": {"list": []}})),
+            )
+            .mount(&etag_server)
+            .await;
+        let client = RuleClient::new(&etag_server.uri()).expect("client");
+        assert_eq!(client.current_rules_revision().await.expect("ETag"), 7);
+
+        let retired_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/rules"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("x-aether-configuration-revision", "7")
+                    .set_body_json(serde_json::json!({"success": true, "data": {"list": []}})),
+            )
+            .mount(&retired_server)
+            .await;
+        let client = RuleClient::new(&retired_server.uri()).expect("client");
+        let error = client
+            .current_rules_revision()
+            .await
+            .expect_err("retired custom header must not be accepted");
+        assert!(error.to_string().contains("revision header"), "{error:#}");
     }
 
     #[test]

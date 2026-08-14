@@ -88,6 +88,7 @@ pub async fn handle_command(
     cmd: ServiceCommands,
     mode: crate::deploy_mode::DeployMode,
 ) -> Result<()> {
+    validate_service_names(&cmd)?;
     match cmd {
         ServiceCommands::Start { services } => {
             match mode {
@@ -100,7 +101,6 @@ pub async fn handle_command(
                     let filtered_services: Vec<String> = services
                         .into_iter()
                         .filter(|s| s.to_lowercase() != "all")
-                        .map(|service| compose_service_target(&service))
                         .collect();
 
                     args.extend(filtered_services);
@@ -166,7 +166,6 @@ pub async fn handle_command(
                 let filtered_services: Vec<String> = services
                     .into_iter()
                     .filter(|s| !s.eq_ignore_ascii_case("all"))
-                    .map(|service| compose_service_target(&service))
                     .collect();
 
                 let args = if filtered_services.is_empty() {
@@ -190,14 +189,13 @@ pub async fn handle_command(
             tail,
         } => match mode {
             crate::deploy_mode::DeployMode::Docker => {
-                let compose_service = compose_service_target(&service);
                 let mut args = vec!["logs"];
                 if follow {
                     args.push("-f");
                 }
                 args.push("--tail");
                 args.push(&tail);
-                args.push(&compose_service);
+                args.push(&service);
                 execute_docker_compose(&args)?;
             },
             crate::deploy_mode::DeployMode::Systemd => {
@@ -401,19 +399,34 @@ fn build_docker_compose_args(command: &str, flag: &str, services: Vec<String>) -
     let filtered_services: Vec<String> = services
         .into_iter()
         .filter(|s| !s.eq_ignore_ascii_case("all"))
-        .map(|service| compose_service_target(&service))
         .collect();
 
     args.extend(filtered_services);
     args
 }
 
-fn compose_service_target(service: &str) -> String {
-    if service.eq_ignore_ascii_case("aether-timescaledb") {
-        "timescaledb".to_owned()
-    } else {
-        service.to_owned()
+fn validate_service_names(command: &ServiceCommands) -> Result<()> {
+    let rejects_retired = |service: &str| -> Result<()> {
+        if service.eq_ignore_ascii_case("aether-timescaledb") {
+            anyhow::bail!("unknown service 'aether-timescaledb'; use 'timescaledb'");
+        }
+        Ok(())
+    };
+    match command {
+        ServiceCommands::Start { services }
+        | ServiceCommands::Stop { services }
+        | ServiceCommands::Restart { services }
+        | ServiceCommands::Status { services }
+        | ServiceCommands::Build { services }
+        | ServiceCommands::Refresh { services, .. } => {
+            for service in services {
+                rejects_retired(service)?;
+            }
+        },
+        ServiceCommands::Logs { service, .. } => rejects_retired(service)?,
+        ServiceCommands::Pull | ServiceCommands::Clean { .. } => {},
     }
+    Ok(())
 }
 
 fn extension_is_targeted(target_services: &[String], extension: &str) -> bool {
@@ -442,7 +455,7 @@ fn refresh_targets(services: &[String]) -> Vec<String> {
     services
         .iter()
         .filter(|service| !service.eq_ignore_ascii_case("all"))
-        .map(|service| compose_service_target(service))
+        .cloned()
         .collect()
 }
 
@@ -876,9 +889,17 @@ mod tests {
     }
 
     #[test]
-    fn optional_container_aliases_map_to_compose_service_names() {
-        assert_eq!(compose_service_target("aether-timescaledb"), "timescaledb");
-        assert_eq!(compose_service_target("aether-io"), "aether-io");
+    fn retired_timescaledb_service_alias_is_rejected() {
+        let command = ServiceCommands::Start {
+            services: vec!["aether-timescaledb".to_string()],
+        };
+        let error = validate_service_names(&command).expect_err("retired alias must fail");
+        assert!(error.to_string().contains("use 'timescaledb'"), "{error:#}");
+
+        validate_service_names(&ServiceCommands::Start {
+            services: vec!["timescaledb".to_string()],
+        })
+        .expect("canonical compose service");
     }
 
     #[test]

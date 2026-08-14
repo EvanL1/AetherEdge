@@ -17,8 +17,7 @@ use memmap2::{MmapMut, MmapOptions};
 
 use crate::core::authority::{AuthorityReadGuard, AuthorityWriteGuard};
 use crate::core::header::{
-    AETHER_SHM_MAGIC, HeaderSnapshot, SHM_LAYOUT_VERSION, ShmHeader, calculate_file_size,
-    validate_mapping_layout,
+    AETHER_SHM_MAGIC, HeaderSnapshot, ShmHeader, calculate_file_size, validate_mapping_layout,
 };
 use crate::core::reader::SlotReader;
 use crate::core::slot::PointSlot;
@@ -151,13 +150,13 @@ impl SlotWriter {
         let generation = new_generation();
         let header = ShmHeader {
             magic: AETHER_SHM_MAGIC,
-            version: SHM_LAYOUT_VERSION,
+            reserved: 0,
             slot_count: AtomicU32::new(physical_slot_count),
             writer_heartbeat: AtomicU64::new(0),
             layout_hash: AtomicU64::new(layout_hash),
             writer_generation: AtomicU64::new(generation),
             publication_epoch,
-            _reserved: [0; 16],
+            reserved_tail: [0; 16],
         };
         // SAFETY: mmap bases are page-aligned, satisfying the header's 64-byte
         // alignment; the map is large enough by construction. `ptr::write`
@@ -216,11 +215,10 @@ impl SlotWriter {
                 header.magic
             )));
         }
-        if header.version != SHM_LAYOUT_VERSION {
-            return Err(DataplaneError::InvalidLayout(format!(
-                "SHM version mismatch: expected {SHM_LAYOUT_VERSION}, got {}",
-                header.version
-            )));
+        if !header.reserved_bytes_are_zero() {
+            return Err(DataplaneError::InvalidLayout(
+                "SHM reserved header bytes are non-zero".to_string(),
+            ));
         }
 
         let snapshot = header.snapshot();

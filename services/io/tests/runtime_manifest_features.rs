@@ -70,8 +70,8 @@ fn manifest_protocols_match_the_io_binary_feature_set() {
     assert_eq!(protocols.contains("jt808"), cfg!(feature = "jt808"));
     assert!(!protocols.contains("aether_485"));
     assert_eq!(protocols.contains("iec61850"), cfg!(feature = "iec61850"));
-    assert!(!protocols.contains("aether.cloudlink.integration.v1alpha1"));
-    assert!(!protocols.contains("aether.cloudlink.integration-control.v1alpha1"));
+    assert!(!protocols.contains("aether.cloudlink.integration"));
+    assert!(!protocols.contains("aether.cloudlink.integration-control"));
     assert_eq!(
         protocols.contains("di_do"),
         cfg!(all(target_os = "linux", feature = "gpio"))

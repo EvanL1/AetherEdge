@@ -57,9 +57,6 @@ pub fn init_environment(service_info: &ServiceInfo) -> Result<()> {
     // Print startup banner using service_bootstrap
     common::service_bootstrap::print_startup_banner(service_info);
 
-    // Enable SIGHUP-triggered log reopen for long-running processes
-    common::logging::enable_sighup_log_reopen();
-
     info!("Automation starting");
 
     Ok(())
@@ -133,12 +130,24 @@ pub async fn load_configuration(service_info: &ServiceInfo) -> Result<Automation
     debug!("Config loaded");
 
     // Apply configuration priority: DB > ENV > Default
-    config.api.port = get_service_port(config.api.port, service_info);
+    config.api.port = get_service_port(config.api.port, service_info).map_err(|error| {
+        AutomationError::ConfigError(format!("Failed to resolve SERVICE_PORT: {error}"))
+    })?;
 
     // Perform runtime validation
     validate_configuration(&config)?;
 
     Ok(config)
+}
+
+/// Resolve the internal HTTP listener and reject any non-loopback address.
+pub fn internal_api_bind_address(api: &ApiConfig) -> Result<std::net::SocketAddr> {
+    common::loopback_bind_address(&api.host, api.port).map_err(|error| {
+        AutomationError::InvalidConfig(format!(
+            "invalid internal API bind address {}:{}: {error}",
+            api.host, api.port
+        ))
+    })
 }
 
 /// Validate configuration
@@ -412,7 +421,7 @@ pub async fn validate_routing_integrity(sqlite_pool: &SqlitePool) -> Result<()> 
     )
     .fetch_one(sqlite_pool)
     .await
-    .unwrap_or(0);
+    .map_err(routing_integrity_database_error)?;
 
     let orphan_signal: i64 = sqlx::query_scalar(
         r#"
@@ -428,7 +437,7 @@ pub async fn validate_routing_integrity(sqlite_pool: &SqlitePool) -> Result<()> 
     )
     .fetch_one(sqlite_pool)
     .await
-    .unwrap_or(0);
+    .map_err(routing_integrity_database_error)?;
 
     // Check action_routing for orphan C/A points
     let orphan_control: i64 = sqlx::query_scalar(
@@ -445,7 +454,7 @@ pub async fn validate_routing_integrity(sqlite_pool: &SqlitePool) -> Result<()> 
     )
     .fetch_one(sqlite_pool)
     .await
-    .unwrap_or(0);
+    .map_err(routing_integrity_database_error)?;
 
     let orphan_adjustment: i64 = sqlx::query_scalar(
         r#"
@@ -461,7 +470,7 @@ pub async fn validate_routing_integrity(sqlite_pool: &SqlitePool) -> Result<()> 
     )
     .fetch_one(sqlite_pool)
     .await
-    .unwrap_or(0);
+    .map_err(routing_integrity_database_error)?;
 
     let total_orphans = orphan_telemetry + orphan_signal + orphan_control + orphan_adjustment;
 
@@ -475,6 +484,10 @@ pub async fn validate_routing_integrity(sqlite_pool: &SqlitePool) -> Result<()> 
     }
 
     Ok(())
+}
+
+fn routing_integrity_database_error(error: sqlx::Error) -> AutomationError {
+    AutomationError::DatabaseError(format!("failed to validate routing integrity: {error}"))
 }
 
 /// Compose Automation's application state and concrete runtime adapters.
@@ -604,4 +617,53 @@ pub async fn compose_automation(service_info: &ServiceInfo) -> Result<Automation
         sqlite_pool,
         runtime_topology,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn internal_api_bind_accepts_ipv4_and_ipv6_loopback() {
+        for host in ["127.0.0.1", "127.77.1.4", "::1"] {
+            let api = ApiConfig {
+                host: host.to_owned(),
+                port: 6002,
+            };
+            assert!(
+                internal_api_bind_address(&api).is_ok(),
+                "{host} must be accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn internal_api_bind_rejects_unspecified_addresses() {
+        for host in ["0.0.0.0", "::"] {
+            let api = ApiConfig {
+                host: host.to_owned(),
+                port: 6002,
+            };
+            assert!(
+                internal_api_bind_address(&api).is_err(),
+                "{host} must not expose aether-automation"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn routing_integrity_query_failure_is_not_treated_as_zero_orphans() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("open empty test database");
+
+        let error = validate_routing_integrity(&pool)
+            .await
+            .expect_err("missing routing schema must fail startup validation");
+
+        assert!(matches!(error, AutomationError::DatabaseError(message) if
+            message.contains("failed to validate routing integrity")));
+    }
 }

@@ -31,7 +31,7 @@ PointWatch uses independent consumer bitmaps and 16-byte UDS wake-up frames
 containing only channel ID, point ID, slot index, and kind. Automation, alarm,
 and API validate the address/slot against their pinned manifest and re-read
 SHM; no event payload is authoritative. Bitmap capacity is explicit and
-versioned, selected from the same deployment resource cap used to compile the
+selected from the same deployment resource cap used to compile the
 manifests rather than from a fixed library constant.
 
 `ShmObserver` provides direct read-only observability without HTTP or a
@@ -40,8 +40,8 @@ unhealthy from physical identity, heartbeat age, and an optional aggregate
 slot scan; it never repairs or writes either plane.
 
 The default point path is `aether-live-state.shm`. This bridge accepts only the
-v5 mmap and snapshot v1 contracts exposed by `aether-dataplane`; it contains no
-v4 or older-snapshot decoder. It does not depend on Redis or PostgreSQL and
+canonical mmap and snapshot contracts exposed by `aether-dataplane`; it contains
+no alternate decoder. It does not depend on Redis or PostgreSQL and
 never grants a read consumer acquisition-writer authority.
 
 ```bash

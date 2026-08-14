@@ -109,7 +109,13 @@ async fn main() -> anyhow::Result<()> {
         config: Arc::new(RwLock::new(service_cfg)),
         storage_settings: Arc::new(RwLock::new(storage_cfg)),
         buffer: Arc::new(Mutex::new(Vec::new())),
+        runtime_metrics: Arc::new(state::HistoryRuntimeMetrics::default()),
     });
+
+    // Validate startup-only inputs before critical tasks exist. Otherwise an
+    // invalid bind address would return through `?` with the collector and
+    // flush supervisor still running and never given a drain signal.
+    let addr = env.api_bind_address()?;
 
     // ── Background tasks ──────────────────────────────────────────────────────
     let shutdown = CancellationToken::new();
@@ -128,15 +134,19 @@ async fn main() -> anyhow::Result<()> {
         .layer(axum::extract::DefaultBodyLimit::max(1024 * 1024))
         .layer(cors);
 
-    let addr = common::bind_address(&env.api_host, env.api_port)?;
-
-    common::shutdown::serve_with_shutdown(addr, app, shutdown).await?;
+    let server_result = common::shutdown::serve_with_shutdown(addr, app, shutdown.clone()).await;
+    shutdown.cancel();
 
     // `serve_with_shutdown` only drains in-flight HTTP connections. Returning here
     // would drop the runtime while the flush task is still writing its final batch.
-    background
+    let background_ok = background
         .join_flush(std::time::Duration::from_secs(FINAL_FLUSH_TIMEOUT_SECS))
         .await;
+
+    server_result?;
+    if !background_ok {
+        anyhow::bail!("history background tasks did not shut down cleanly");
+    }
 
     Ok(())
 }

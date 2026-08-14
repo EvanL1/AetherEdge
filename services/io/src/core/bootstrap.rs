@@ -10,12 +10,11 @@ use clap::Parser;
 use tracing::{debug, info};
 
 use crate::core::config::DEFAULT_PORT;
-use common::DEFAULT_API_HOST;
 use common::service_bootstrap::ServiceInfo;
 use errors::{AetherError, AetherResult};
 
 use crate::core::channels::RuntimeChannelConfig;
-use crate::core::config::ServiceConfig;
+use crate::core::config::BaseServiceConfig;
 
 // Re-export common bootstrap functionality
 pub use common::bootstrap_args::ServiceArgs;
@@ -107,7 +106,7 @@ pub fn initialize_logging(
 
 /// Validate configuration from SQLite database
 pub fn validate_configuration(
-    service_config: &ServiceConfig,
+    service_config: &BaseServiceConfig,
     channels: &[RuntimeChannelConfig],
 ) -> AetherResult<()> {
     debug!("Validating configuration from SQLite database");
@@ -137,8 +136,11 @@ pub fn validate_configuration(
     Ok(())
 }
 
-/// Determine bind address from multiple sources
-/// Priority: CLI > Config > ENV > Default
+/// Determine the bind address from the explicit CLI override or loaded config.
+///
+/// `SERVICE_PORT` may replace the default configured port, but the listener
+/// host always comes from the canonical loaded configuration. The caller
+/// validates the resulting address before starting any background work.
 pub fn determine_bind_address(
     cli_arg: Option<String>,
     config_host: &str,
@@ -158,20 +160,34 @@ pub fn determine_bind_address(
         return config_addr;
     }
 
-    // Try environment variables
+    // Compose and service units provide the process-specific port while the
+    // canonical configured host remains authoritative.
     let port = std::env::var("SERVICE_PORT")
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(DEFAULT_PORT);
 
-    let host = if config_host.is_empty() {
-        std::env::var("SERVICE_HOST")
-            .ok()
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| DEFAULT_API_HOST.to_string())
-    } else {
-        config_host.to_string()
-    };
+    format!("{}:{}", config_host, port)
+}
 
-    format!("{}:{}", host, port)
+#[cfg(test)]
+mod tests {
+    use super::determine_bind_address;
+
+    #[test]
+    fn explicit_cli_bind_address_is_authoritative() {
+        assert_eq!(
+            determine_bind_address(Some("[::1]:7001".to_string()), "127.0.0.1", 7002),
+            "[::1]:7001"
+        );
+    }
+
+    #[test]
+    fn configured_host_is_the_only_non_cli_host_source() {
+        assert_eq!(
+            determine_bind_address(None, "127.42.0.9", 7002),
+            "127.42.0.9:7002"
+        );
+        assert_eq!(determine_bind_address(None, "", 7002), ":7002");
+    }
 }

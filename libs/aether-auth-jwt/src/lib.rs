@@ -42,6 +42,9 @@ pub const ROLE_COMMAND_PERMISSIONS: [&str; 8] = [
     "alarm.alert.resolve",
 ];
 
+/// Shared read-only permission for live points and retained command outcomes.
+pub const DEVICE_READ: &str = "device.read";
+
 /// Gateway-local capabilities that are not device or automation commands.
 pub const DATA_PROCESSING_READ: &str = "data_processing.read";
 
@@ -59,9 +62,9 @@ pub fn permissions_for_role(role: Option<&str>) -> Vec<&'static str> {
         Some("Admin" | "Engineer") => ROLE_COMMAND_PERMISSIONS
             .iter()
             .copied()
-            .chain([DATA_PROCESSING_READ, DATA_PROCESSING_RUN])
+            .chain([DEVICE_READ, DATA_PROCESSING_READ, DATA_PROCESSING_RUN])
             .collect(),
-        Some("Viewer") => vec![DATA_PROCESSING_READ],
+        Some("Viewer") => vec![DEVICE_READ, DATA_PROCESSING_READ],
         _ => Vec::new(),
     }
 }

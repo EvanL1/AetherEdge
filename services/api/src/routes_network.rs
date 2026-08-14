@@ -144,7 +144,7 @@ pub struct LanQuery {
     lan: u8,
 }
 
-// ── GET /api/v1/network ───────────────────────────────────────────────────────
+// ── GET /api/network ──────────────────────────────────────────────────────────
 
 /// Retrieve the network interface configuration (LAN/WAN).
 ///
@@ -152,7 +152,7 @@ pub struct LanQuery {
 /// result: IP address, subnet mask, gateway, DNS servers, and DHCP mode. Filter
 /// by `lan` query parameter to inspect a specific port.
 /// **Read-only** — remote mutation is intentionally unavailable.
-#[utoipa::path(get, path = "/api/v1/network", tag = "Network",
+#[utoipa::path(get, path = "/api/network", tag = "Network",
     security(("bearer_auth" = [])),
     params(LanQuery),
     responses((status = 200, description = "Network configuration", body = crate::models::GatewayDataResponse<NetworkConfig>), (status = 400, description = "Invalid LAN number")))]
@@ -190,14 +190,14 @@ pub async fn get_network_config(
     }
 }
 
-// ── PUT /api/v1/network ───────────────────────────────────────────────────────
+// ── PUT /api/network ──────────────────────────────────────────────────────────
 
 /// Remote network mutation is deliberately unavailable.
 ///
 /// Network files are mounted read-only in the management API. Commissioning
 /// must happen through an on-device, recovery-capable workflow rather than a
 /// remote HTTP request that could sever the management connection.
-#[utoipa::path(put, path = "/api/v1/network", tag = "Network",
+#[utoipa::path(put, path = "/api/network", tag = "Network",
     security(("bearer_auth" = [])),
     responses(
         (status = 401, description = "Missing or invalid access token"),
@@ -214,14 +214,14 @@ pub async fn update_network_config(
     network_mutation_disabled_response()
 }
 
-// ── POST /api/v1/network/apply ────────────────────────────────────────────────
+// ── POST /api/network/apply ───────────────────────────────────────────────────
 
 /// Remote network apply is deliberately unavailable.
 ///
 /// The management API has neither a writable network mount nor access to the
 /// host container/runtime control socket. Returning `501` makes that boundary
 /// explicit instead of reporting an incidental filesystem or Docker error.
-#[utoipa::path(post, path = "/api/v1/network/apply", tag = "Network",
+#[utoipa::path(post, path = "/api/network/apply", tag = "Network",
     security(("bearer_auth" = [])),
     responses(
         (status = 401, description = "Missing or invalid access token"),

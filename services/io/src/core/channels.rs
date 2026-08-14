@@ -9,6 +9,8 @@ pub mod channel_entry; // Channel entry types: ChannelEntry, ChannelMetadata, Ch
 pub mod channel_manager; // Channel lifecycle manager: ChannelManager struct + query/lifecycle
 pub mod channel_task; // Unified channel task: async event loop (select! polling + commands)
 mod command_guard; // Final fail-closed validation before protocol dispatch
+pub mod command_ledger; // Durable, bounded command lifecycle ledger
+pub mod command_outcome; // Bounded post-acceptance command lifecycle observation
 mod runtime_config;
 pub(crate) mod runtime_policy;
 pub mod shm_listener; // UDS event-driven command listener with producer-side reconnect backoff
@@ -23,7 +25,7 @@ pub mod converters; // Config converters: io config → PointConfig
 pub use types::{ChannelCommand, ConnectionState};
 
 // Re-export other types from local modules
-pub use crate::core::config::FourRemote;
+pub use crate::core::config::PointType;
 pub(crate) use channel_creation::validate_channel_config_for_runtime;
 pub use channel_entry::{ChannelEntry, ChannelMetadata, ChannelStats};
 pub use channel_manager::ChannelManager;

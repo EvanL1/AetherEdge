@@ -1,6 +1,5 @@
 //! HTTP route handlers for the alarm service
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::{
@@ -19,13 +18,12 @@ use utoipa::OpenApi;
 use crate::api::dto::{
     Alert as AlertDto, AlertEvent as AlertEventDto, AlertQueryParams, AlertResolutionData,
     AlertRule as AlertRuleDto, ApiResponse, CompletionAuditData, CreateRuleData, CreateRuleRequest,
-    EventQueryParams, MonitorStatus as MonitorStatusDto, PagedData, RuleIdData, RuleQueryParams,
-    SingleItemData, UpdateRuleRequest,
+    EventQueryParams, MonitorStatus as MonitorStatusDto, NotificationOutboxStatus, PagedData,
+    RuleIdData, RuleQueryParams, UpdateRuleRequest,
 };
 use crate::db::{self};
 use crate::models::AlertRule;
 use crate::monitor;
-use crate::notification::{AlarmCountSnapshot, AlarmNotification};
 use crate::state::AppState;
 
 // ============================================================================
@@ -59,7 +57,6 @@ pub fn create_routes(state: Arc<AppState>) -> Router {
         .route("/alarmApi/alert-statistics", get(alert_statistics))
         .route("/alarmApi/monitor/status", get(monitor_status))
         .route("/alarmApi/monitor/check-rule/{id}", post(manual_check_rule))
-        .route("/alarmApi/call-data", post(call_data))
         // Admin API (shared endpoints from common lib)
         .route("/api/admin/logs/level", get(common::admin_api::get_log_level).post(common::admin_api::set_log_level))
         .route("/api/admin/logs/files", get(common::admin_api::list_log_files))
@@ -103,7 +100,6 @@ async fn openapi_document() -> Json<utoipa::openapi::OpenApi> {
         alert_statistics,
         monitor_status,
         manual_check_rule,
-        call_data,
         common::admin_api::get_log_level,
         common::admin_api::set_log_level,
         common::admin_api::list_log_files,
@@ -116,17 +112,16 @@ async fn openapi_document() -> Json<utoipa::openapi::OpenApi> {
         CreateRuleRequest,
         UpdateRuleRequest,
         MonitorStatusDto,
+        NotificationOutboxStatus,
         CreateRuleData,
         RuleIdData,
         AlertResolutionData,
         CompletionAuditData,
-        SingleItemData<AlertRuleDto>,
-        SingleItemData<AlertDto>,
         ApiResponse<CreateRuleData>,
-        ApiResponse<SingleItemData<AlertRuleDto>>,
+        ApiResponse<AlertRuleDto>,
         ApiResponse<RuleIdData>,
         ApiResponse<AlertResolutionData>,
-        ApiResponse<SingleItemData<AlertDto>>,
+        ApiResponse<AlertDto>,
         ApiResponse<MonitorStatusDto>,
         common::admin_api::SetLogLevelRequest,
         common::admin_api::LogLevelResponse,
@@ -229,7 +224,7 @@ mod openapi_tests {
         }
         assert_eq!(
             common::openapi_operation_count(&specification),
-            23,
+            22,
             "Router/OpenAPI operation drift"
         );
 
@@ -304,7 +299,7 @@ mod openapi_tests {
             &specification,
             "/alarmApi/rules/{id}",
             "get",
-            &["total", "list"],
+            &["id", "rule_name", "service_type", "point_id"],
         );
         assert_enveloped_response_data(
             &specification,
@@ -316,8 +311,25 @@ mod openapi_tests {
             &specification,
             "/alarmApi/alerts/{id}",
             "get",
-            &["total", "list"],
+            &["id", "rule_id", "status", "triggered_at"],
         );
+        for schema in ["Alert", "AlertEvent"] {
+            assert_eq!(
+                specification["components"]["schemas"][schema]["properties"]["rule_snapshot"]["type"],
+                "object",
+                "{schema}.rule_snapshot must have one object representation"
+            );
+        }
+        for path in [
+            "/alarmApi/alerts",
+            "/alarmApi/alerts/{id}",
+            "/alarmApi/alert-events",
+        ] {
+            assert!(
+                specification["paths"][path]["get"]["responses"]["500"].is_object(),
+                "GET {path} must document malformed stored snapshot failure"
+            );
+        }
         assert_enveloped_response_data(
             &specification,
             "/alarmApi/alerts/{id}/resolve",
@@ -334,7 +346,12 @@ mod openapi_tests {
             &specification,
             "/alarmApi/monitor/status",
             "get",
-            &["running", "last_check_time", "check_interval"],
+            &[
+                "running",
+                "last_check_time",
+                "check_interval",
+                "notification_outbox",
+            ],
         );
 
         assert!(
@@ -394,7 +411,7 @@ async fn health() -> Json<Value> {
 /// Returns the full rule definition (threshold, operator, target point,
 /// warning level, enabled flag). Supports keyword search, filter by
 /// `service_type` / `channel_id` / `data_type` / `enabled` / `warning_level`,
-/// and either page/page_size or skip/limit pagination.
+/// and page/page_size pagination.
 ///
 /// Channel-online sentinel rules (`service_type=io, data_type=online`)
 /// are listed alongside regular threshold rules; the consumer can tell them
@@ -529,28 +546,16 @@ async fn create_rule(
 
 /// Get one alarm rule by its primary key.
 ///
-/// Response wraps the rule in `{ total: 1, list: [rule] }` for
-/// compatibility with the legacy Python-era frontend that consumed
-/// `data.list[0]`. Use `list_rules` for multi-rule queries.
 #[utoipa::path(get, path = "/alarmApi/rules/{id}", tag = "Rules",
     params(("id" = i64, Path, description = "Rule ID")),
     responses(
-        (status = 200, description = "Rule detail", body = ApiResponse<SingleItemData<AlertRuleDto>>),
+        (status = 200, description = "Rule detail", body = ApiResponse<AlertRuleDto>),
         (status = 404, description = "Rule not found"),
     ))]
 async fn get_rule(State(state): State<Arc<AppState>>, Path(id): Path<i64>) -> impl IntoResponse {
     match db::get_rule_by_id(&state.db, id).await {
         Ok(Some(rule)) => {
-            let rule = AlertRuleDto::from(rule);
-            // Return list format for compatibility with alarm-py (data.list[0])
-            Json(ApiResponse::ok(
-                "Rule retrieved",
-                SingleItemData {
-                    total: 1,
-                    list: vec![rule],
-                },
-            ))
-            .into_response()
+            Json(ApiResponse::ok("Rule retrieved", AlertRuleDto::from(rule))).into_response()
         },
         Ok(None) => not_found("Rule not found"),
         Err(e) => {
@@ -814,7 +819,10 @@ async fn rules_by_channel(
 /// alerts (resolved or trigger events) use `/alarmApi/alert-events`.
 #[utoipa::path(get, path = "/alarmApi/alerts", tag = "Alerts",
     params(AlertQueryParams),
-    responses((status = 200, description = "Active alert list")))]
+    responses(
+        (status = 200, description = "Active alert list"),
+        (status = 500, description = "Alert storage contains an invalid rule snapshot")
+    ))]
 async fn list_alerts(
     State(state): State<Arc<AppState>>,
     Query(params): Query<AlertQueryParams>,
@@ -823,8 +831,13 @@ async fn list_alerts(
     match db::list_alerts(&state.db, &filter).await {
         Ok(paged) => {
             let message = format!("Found {} active alert(s)", paged.total);
-            let paged = PagedData::<AlertDto>::from_page(paged);
-            Json(ApiResponse::ok(message, paged)).into_response()
+            match PagedData::<AlertDto>::try_from_page(paged) {
+                Ok(paged) => Json(ApiResponse::ok(message, paged)).into_response(),
+                Err(error) => {
+                    error!(%error, "list_alerts found an invalid stored rule snapshot");
+                    server_error("Failed to decode stored alert")
+                },
+            }
         },
         Err(e) => {
             error!("list_alerts: {}", e);
@@ -835,28 +848,22 @@ async fn list_alerts(
 
 /// Get one active alert by id.
 ///
-/// Same legacy-compat `{ total: 1, list: [alert] }` envelope as
-/// `get_rule`. Returns 404 once the alert is resolved (it has moved to
-/// `alert_event`).
+/// Returns 404 once the alert is resolved (it has moved to `alert_event`).
 #[utoipa::path(get, path = "/alarmApi/alerts/{id}", tag = "Alerts",
     params(("id" = i64, Path, description = "Alert ID")),
     responses(
-        (status = 200, description = "Alert detail", body = ApiResponse<SingleItemData<AlertDto>>),
+        (status = 200, description = "Alert detail", body = ApiResponse<AlertDto>),
         (status = 404, description = "Alert not found"),
+        (status = 500, description = "Alert storage contains an invalid rule snapshot"),
     ))]
 async fn get_alert(State(state): State<Arc<AppState>>, Path(id): Path<i64>) -> impl IntoResponse {
     match db::get_alert_by_id(&state.db, id).await {
-        Ok(Some(alert)) => {
-            let alert = AlertDto::from(alert);
-            // Return list format for compatibility with alarm-py (data.list[0])
-            Json(ApiResponse::ok(
-                "Alert retrieved",
-                SingleItemData {
-                    total: 1,
-                    list: vec![alert],
-                },
-            ))
-            .into_response()
+        Ok(Some(alert)) => match AlertDto::try_from(alert) {
+            Ok(alert) => Json(ApiResponse::ok("Alert retrieved", alert)).into_response(),
+            Err(error) => {
+                error!(%error, alert_id = id, "get_alert found an invalid stored rule snapshot");
+                server_error("Failed to decode stored alert")
+            },
         },
         Ok(None) => not_found("Alert not found"),
         Err(e) => {
@@ -936,7 +943,10 @@ async fn resolve_alert(
 /// firing".
 #[utoipa::path(get, path = "/alarmApi/alert-events", tag = "Events",
     params(EventQueryParams),
-    responses((status = 200, description = "Alert event history list")))]
+    responses(
+        (status = 200, description = "Alert event history list"),
+        (status = 500, description = "Alert event storage contains an invalid rule snapshot")
+    ))]
 async fn list_events(
     State(state): State<Arc<AppState>>,
     Query(params): Query<EventQueryParams>,
@@ -945,8 +955,13 @@ async fn list_events(
     match db::list_events(&state.db, &filter).await {
         Ok(paged) => {
             let message = format!("Found {} event(s)", paged.total);
-            let paged = PagedData::<AlertEventDto>::from_page(paged);
-            Json(ApiResponse::ok(message, paged)).into_response()
+            match PagedData::<AlertEventDto>::try_from_page(paged) {
+                Ok(paged) => Json(ApiResponse::ok(message, paged)).into_response(),
+                Err(error) => {
+                    error!(%error, "list_events found an invalid stored rule snapshot");
+                    server_error("Failed to decode stored alert event")
+                },
+            }
         },
         Err(e) => {
             error!("list_events: {}", e);
@@ -1076,15 +1091,30 @@ async fn alert_statistics(State(state): State<Arc<AppState>>) -> impl IntoRespon
 ///
 /// Returns `running` (is the polling task alive), `last_check_time` (epoch
 /// seconds of the most recent successful `check_all_rules` pass),
-/// `check_interval` (configured `data_fetch_interval`).
+/// `check_interval` (configured `data_fetch_interval`) and durable notification
+/// outbox pending/failed/oldest-pending diagnostics.
 /// Use this to verify alarm is actually evaluating rules rather than
 /// silently hung — `running=true` + `last_check_time` stale by N×interval
 /// is the diagnostic signal.
 #[utoipa::path(get, path = "/alarmApi/monitor/status", tag = "Monitor",
-    responses((status = 200, description = "Monitor loop status", body = ApiResponse<MonitorStatusDto>)))]
+    responses(
+        (status = 200, description = "Monitor loop status", body = ApiResponse<MonitorStatusDto>),
+        (status = 500, description = "Notification outbox diagnostics unavailable"),
+    ))]
 async fn monitor_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let ms = MonitorStatusDto::from(&*state.monitor_status.read().await);
-    Json(ApiResponse::ok("Monitor status retrieved", ms))
+    let outbox = match crate::notification_outbox::stats(&state.db).await {
+        Ok(outbox) => outbox,
+        Err(error) => {
+            tracing::error!("monitor_status notification outbox: {error}");
+            return server_error("Failed to read notification outbox status");
+        },
+    };
+    let status = state.monitor_status.read().await;
+    Json(ApiResponse::ok(
+        "Monitor status retrieved",
+        MonitorStatusDto::from_status(&status, outbox),
+    ))
+    .into_response()
 }
 
 /// Manually trigger a single rule evaluation (debug helper).
@@ -1116,77 +1146,6 @@ async fn manual_check_rule(
             server_error("Manual rule check failed")
         },
     }
-}
-
-/// Rebroadcast all currently active alerts to the WebSocket.
-///
-/// Doesn't change any state — re-publishes the current active alert set on
-/// the broadcast channel and refreshes the alarm-count counter. Used when a
-/// frontend client reconnects or wakes up after sleep and needs to catch up
-/// without polling individual endpoints.
-#[utoipa::path(post, path = "/alarmApi/call-data", tag = "Monitor",
-    responses((status = 200, description = "Broadcast all active alerts")))]
-async fn call_data(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let alerts = match db::get_all_active_alerts(&state.db).await {
-        Ok(a) => a,
-        Err(e) => {
-            error!("call_data get alerts: {}", e);
-            return server_error("Failed to get alerts");
-        },
-    };
-
-    if alerts.is_empty() {
-        if let Ok(counts) = db::get_active_alarm_counts(&state.db).await {
-            state
-                .notifier
-                .publish_counts(AlarmCountSnapshot::from(&counts))
-                .await;
-        }
-        return Json(ApiResponse::ok(
-            "No active alerts",
-            json!({ "broadcast_count": 0, "alarm_count": 0 }),
-        ))
-        .into_response();
-    }
-
-    let mut rule_map: HashMap<i64, crate::models::AlertRule> = HashMap::new();
-    for alert in &alerts {
-        if !rule_map.contains_key(&alert.rule_id)
-            && let Ok(Some(rule)) = db::get_rule_by_id(&state.db, alert.rule_id).await
-        {
-            rule_map.insert(rule.id, rule);
-        }
-    }
-
-    let alarm_count = alerts.len();
-    for alert in &alerts {
-        if let Some(rule) = rule_map.get(&alert.rule_id) {
-            state
-                .notifier
-                .replay_alarm(AlarmNotification::triggered(
-                    alert.id,
-                    rule,
-                    alert.current_value,
-                ))
-                .await;
-        }
-    }
-
-    if let Ok(counts) = db::get_active_alarm_counts(&state.db).await {
-        state
-            .notifier
-            .publish_counts(AlarmCountSnapshot::from(&counts))
-            .await;
-    }
-
-    Json(ApiResponse::ok(
-        format!("Broadcast complete: {} alert(s)", alarm_count),
-        json!({
-            "broadcast_count": alarm_count,
-            "alarm_count": alarm_count,
-        }),
-    ))
-    .into_response()
 }
 
 // ============================================================================
@@ -1541,6 +1500,7 @@ mod tests {
                 reqwest::Client::new(),
                 "http://127.0.0.1:1".to_string(),
                 "http://127.0.0.1:1".to_string(),
+                "test-alarm-broadcast-token-0123456789abcdef".to_string(),
             ));
         let alarm_store = Arc::new(crate::alarm_rule_mutation::SqliteAlarmRuleMutator::new(
             db.clone(),
@@ -1591,6 +1551,114 @@ mod tests {
         let payload: Value = serde_json::from_slice(&body).expect("parse response JSON");
         assert_eq!(payload["success"], false);
         assert_eq!(payload["message"], "Rule not found");
+    }
+
+    #[tokio::test]
+    async fn retired_call_data_route_is_not_exposed() {
+        let response = create_routes(test_state().await)
+            .oneshot(
+                Request::post("/alarmApi/call-data")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn monitor_status_reports_durable_notification_backlog() {
+        let state = test_state().await;
+        let response = create_routes(Arc::clone(&state))
+            .oneshot(
+                Request::get("/alarmApi/monitor/status")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let payload: Value = serde_json::from_slice(
+            &to_bytes(response.into_body(), usize::MAX)
+                .await
+                .expect("monitor status body"),
+        )
+        .expect("monitor status JSON");
+        assert_eq!(payload["data"]["notification_outbox"]["pending"], 0);
+        assert_eq!(payload["data"]["notification_outbox"]["failed"], 0);
+        assert!(payload["data"]["notification_outbox"]["oldest_pending_at"].is_null());
+
+        sqlx::query("DROP TABLE alarm_notification_outbox")
+            .execute(&state.db)
+            .await
+            .expect("make outbox diagnostics unavailable");
+        let failed = create_routes(state)
+            .oneshot(
+                Request::get("/alarmApi/monitor/status")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(failed.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[tokio::test]
+    async fn malformed_stored_rule_snapshots_fail_closed() {
+        let state = test_state().await;
+        let rule_id = sqlx::query_scalar::<_, i64>(
+            "INSERT INTO alert_rule
+             (service_type, channel_id, data_type, point_id, rule_name, warning_level,
+              operator, value, enabled, created_at, updated_at)
+             VALUES ('io', 1, 'T', 2, 'bad-snapshot', 2, '>', 80, 1, 1, 1)
+             RETURNING id",
+        )
+        .fetch_one(&state.db)
+        .await
+        .expect("insert snapshot test rule");
+        let alert_id = sqlx::query_scalar::<_, i64>(
+            "INSERT INTO alert
+             (rule_id, rule_snapshot, service_type, channel_id, data_type, point_id,
+              rule_name, warning_level, operator, threshold_value, current_value,
+              status, triggered_at)
+             VALUES (?, 'not-json', 'io', 1, 'T', 2, 'bad-snapshot', 2, '>', 80, 95,
+                     'active', 1)
+             RETURNING id",
+        )
+        .bind(rule_id)
+        .fetch_one(&state.db)
+        .await
+        .expect("insert malformed active alert");
+        sqlx::query(
+            "INSERT INTO alert_event
+             (rule_id, rule_snapshot, service_type, channel_id, data_type, point_id,
+              rule_name, warning_level, operator, threshold_value, trigger_value,
+              event_type, triggered_at)
+             VALUES (?, '\"old string snapshot\"', 'io', 1, 'T', 2, 'bad-snapshot', 2,
+                     '>', 80, 95, 'trigger', 1)",
+        )
+        .bind(rule_id)
+        .execute(&state.db)
+        .await
+        .expect("insert scalar snapshot event");
+
+        for path in [
+            format!("/alarmApi/alerts/{alert_id}"),
+            "/alarmApi/alerts".to_string(),
+            "/alarmApi/alert-events".to_string(),
+        ] {
+            let response = create_routes(Arc::clone(&state))
+                .oneshot(Request::get(&path).body(Body::empty()).expect("request"))
+                .await
+                .expect("response");
+            assert_eq!(
+                response.status(),
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "path {path}"
+            );
+        }
     }
 
     #[tokio::test]
@@ -1704,7 +1772,8 @@ mod tests {
             .expect("created rule");
         let alert_id = db::insert_alert(&state.db, &rule, 95.0)
             .await
-            .expect("active alert");
+            .expect("insert active alert")
+            .expect("rule remains enabled");
 
         let response = create_routes(Arc::clone(&state))
             .oneshot(
@@ -1746,6 +1815,14 @@ mod tests {
         .await
         .expect("retained recovery");
         assert_eq!(retained, 1);
+        let recovery_destinations: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM alarm_notification_outbox
+             WHERE event_id LIKE 'alarm-recovery-%'",
+        )
+        .fetch_one(&state.db)
+        .await
+        .expect("durable recovery notifications");
+        assert_eq!(recovery_destinations, 2);
     }
 
     #[test]

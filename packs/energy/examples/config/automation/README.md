@@ -1,7 +1,7 @@
 # Energy automation commissioning example
 
 This directory contains only disabled site-configuration examples. The
-versioned rule source of truth is
+canonical rule source of truth is
 [`../../../rules/battery_soc_management.json`](../../../rules/battery_soc_management.json),
 declared exactly once by [`../../../rules/index.yaml`](../../../rules/index.yaml).
 

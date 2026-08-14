@@ -12,7 +12,8 @@ path = "src/main.rs"
 [dependencies]
 # Local libraries
 common = { path = "../../libs/common", default-features = false, features = ["sqlite", "axum"] }
-aether-application = { path = "../../crates/aether-application" }
+aether-cloudlink = { path = "../../crates/aether-cloudlink" }
+aether-cloudlink-mqtt = { path = "adapters/cloudlink-mqtt" }
 aether-domain = { path = "../../crates/aether-domain" }
 aether-ports = { path = "../../crates/aether-ports" }
 aether-store-local = { path = "../../libs/aether-store-local" }
@@ -24,11 +25,7 @@ tokio = { workspace = true }
 tokio-util = { workspace = true }
 
 # Web framework
-axum = { workspace = true, features = ["multipart"] }
-tower-http = { workspace = true, features = ["cors"] }
-
-# HTTP client (for call-alarm → alarm)
-reqwest = { workspace = true }
+axum = { workspace = true }
 
 # Serialization
 serde = { workspace = true }
@@ -39,23 +36,17 @@ sqlx = { workspace = true }
 
 # Error handling
 anyhow = { workspace = true }
-async-trait = { workspace = true }
+sha2 = { workspace = true }
+subtle = "2.6"
 
 # Logging
 tracing = { workspace = true }
 
 # Utilities
-chrono = { workspace = true }
-bytes = { workspace = true }
+base64 = "0.22"
+rand = { workspace = true }
 regex = { workspace = true }
 arc-swap = "1.7"
-
-# MQTT TLS uses rumqttc's maintained native-tls backend. The rustls backend in
-# rumqttc 0.25.1 pins a vulnerable rustls-webpki release.
-rumqttc = { version = "0.25.1", default-features = false, features = ["use-native-tls"] }
-
-# System metrics
-sysinfo = "0.32"
 
 # OpenAPI / Swagger UI
 utoipa = { workspace = true }
@@ -65,12 +56,10 @@ default = ["openapi"]
 openapi = ["common/openapi"]
 
 [dev-dependencies]
+async-trait = { workspace = true }
+tokio = { workspace = true, features = ["test-util"] }
+tower = { workspace = true }
 tempfile = { workspace = true }
-
-# Keep Linux/musl release binaries self-contained rather than relying on a
-# target device's OpenSSL installation.
-[target.'cfg(not(any(target_os = "windows", target_vendor = "apple")))'.dependencies]
-native-tls = { version = "0.2.18", features = ["vendored"] }
 
 [lints]
 workspace = true

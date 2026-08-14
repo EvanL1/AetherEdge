@@ -4,6 +4,6 @@
 instances_path: "config/automation/instances"
 auto_load_instances: false
 
-# Versioned rules are Pack assets under ../../../rules and are never copied or
+# Canonical rules are Pack assets under ../../../rules and are never copied or
 # auto-loaded from this example directory. Import and enable one only after the
 # referenced instances, points, permissions, and safety limits are commissioned.

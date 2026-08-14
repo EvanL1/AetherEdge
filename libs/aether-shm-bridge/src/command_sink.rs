@@ -1,29 +1,75 @@
 //! Generation-checked C/A command mirroring and IO notification.
 
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use aether_dataplane::{AuthorityReadGuard, DataplaneError, SlotWriter};
-use aether_domain::{PhysicalDeviceCommand, PointKind, TimestampMs};
+use aether_domain::{PhysicalDeviceCommand, TimestampMs};
 use aether_ports::{CommandReceipt, DeviceCommandSink, PortError, PortErrorKind, PortResult};
 use async_trait::async_trait;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
 use tokio::sync::{Mutex, Notify};
 
-use crate::{ChannelPointManifest, PhysicalPointAddress};
+use crate::{
+    ChannelPointManifest, CommandAckStatus, CommandHello, DeviceCommandAck, DeviceCommandFrame,
+    PhysicalPointAddress,
+};
 
-/// Existing IO-side UDS endpoint for M2C command event frames.
+/// IO-side UDS endpoint for the acknowledged durable command protocol.
 pub const DEFAULT_COMMAND_UDS_PATH: &str = "/tmp/aether-m2c.sock";
 
 const NOTIFIER_LOCK_TIMEOUT: Duration = Duration::from_millis(100);
 const UDS_CONNECT_TIMEOUT: Duration = Duration::from_millis(100);
-const UDS_WRITE_TIMEOUT: Duration = Duration::from_millis(100);
-const UDS_NOTIFY_TIMEOUT: Duration = Duration::from_millis(350);
+const UDS_HELLO_TIMEOUT: Duration = Duration::from_millis(250);
+const UDS_ACK_TIMEOUT: Duration = Duration::from_millis(350);
+const UDS_NOTIFY_TIMEOUT: Duration = Duration::from_millis(750);
 const AUTHORITY_READ_TIMEOUT: Duration = Duration::from_millis(350);
 const AUTHORITY_RETRY_DELAY: Duration = Duration::from_millis(2);
+
+/// Snapshot of the self-healing local command transport.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CommandNotifierStatus {
+    configured: bool,
+    connected: bool,
+    last_failure_at_ms: Option<u64>,
+}
+
+impl CommandNotifierStatus {
+    #[must_use]
+    pub const fn configured(self) -> bool {
+        self.configured
+    }
+
+    #[must_use]
+    pub const fn connected(self) -> bool {
+        self.connected
+    }
+
+    #[must_use]
+    pub const fn last_failure_at_ms(self) -> Option<u64> {
+        self.last_failure_at_ms
+    }
+}
+
+#[derive(Default)]
+struct CommandNotifierHealth {
+    connected: AtomicBool,
+    last_failure_at_ms: AtomicU64,
+}
+
+impl CommandNotifierHealth {
+    fn set_connected(&self, connected: bool) {
+        self.connected.store(connected, Ordering::Release);
+    }
+
+    fn connected(&self) -> bool {
+        self.connected.load(Ordering::Acquire)
+    }
+}
 
 /// Synchronous observation hook after SHM mirroring and before the generation
 /// post-check.
@@ -83,15 +129,16 @@ impl ChannelPointManifestSource {
 }
 
 /// Physical command sink that mirrors C/A state into authoritative SHM and
-/// writes the unchanged 56-byte command event to IO's UDS listener.
+/// submits it through the acknowledged IO command transport.
 ///
-/// A successful receipt means the local IO transport accepted the complete
-/// event frame. It is not a physical-device acknowledgement.
+/// A receipt means IO durably admitted the exact `CommandId` and payload; it is
+/// not a physical-device completion acknowledgement.
 pub struct ShmDeviceCommandSink {
     generations: Arc<CommandGenerationState>,
     notifier: OnceLock<Arc<Mutex<CommandNotifier>>>,
     rebuild_trigger: Arc<Notify>,
     observer: Arc<dyn CommandMirrorObserver>,
+    notifier_health: Arc<CommandNotifierHealth>,
 }
 
 impl Default for ShmDeviceCommandSink {
@@ -118,6 +165,7 @@ impl ShmDeviceCommandSink {
             notifier: OnceLock::new(),
             rebuild_trigger: Arc::new(Notify::new()),
             observer,
+            notifier_health: Arc::new(CommandNotifierHealth::default()),
         }
     }
 
@@ -189,7 +237,9 @@ impl ShmDeviceCommandSink {
                 "command UDS path must not be empty",
             ));
         }
-        let notifier = Arc::new(Mutex::new(CommandNotifier::connect(path).await));
+        let notifier = Arc::new(Mutex::new(
+            CommandNotifier::connect(path, Arc::clone(&self.notifier_health)).await,
+        ));
         self.notifier.set(notifier).map_err(|_| {
             PortError::new(
                 PortErrorKind::Conflict,
@@ -247,6 +297,69 @@ impl ShmDeviceCommandSink {
     #[must_use]
     pub fn is_notifier_configured(&self) -> bool {
         self.notifier.get().is_some()
+    }
+
+    /// Returns actual UDS connection state, not merely whether a path exists.
+    #[must_use]
+    pub fn notifier_status(&self) -> CommandNotifierStatus {
+        let last_failure_at_ms = self
+            .notifier_health
+            .last_failure_at_ms
+            .load(Ordering::Acquire);
+        CommandNotifierStatus {
+            configured: self.is_notifier_configured(),
+            connected: self.notifier_health.connected(),
+            last_failure_at_ms: (last_failure_at_ms != 0).then_some(last_failure_at_ms),
+        }
+    }
+
+    /// Performs one bounded background reconnect attempt without submitting a
+    /// device command. Composition roots use this for late IO startup so
+    /// readiness can recover before any operator risks a control action.
+    pub async fn probe_notifier(&self) -> PortResult<CommandNotifierStatus> {
+        let notifier = self.notifier.get().ok_or_else(|| {
+            PortError::new(
+                PortErrorKind::Unavailable,
+                "command UDS notifier is not configured",
+            )
+        })?;
+        let mut notifier = tokio::time::timeout(NOTIFIER_LOCK_TIMEOUT, notifier.lock())
+            .await
+            .map_err(|_| {
+                PortError::new(
+                    PortErrorKind::Timeout,
+                    "command UDS notifier probe lock timed out",
+                )
+            })?;
+        notifier.verify_idle_stream();
+        if !notifier.is_connected() {
+            // A supervisor already bounds probe frequency. Bypass command-path
+            // exponential backoff here so a newly started IO listener becomes
+            // ready within one probe interval.
+            notifier.last_connect_attempt = None;
+            notifier
+                .try_reconnect()
+                .await
+                .map_err(|error| match error {
+                    CommandNotifyError::Timeout(context) => {
+                        PortError::new(PortErrorKind::Timeout, context)
+                    },
+                    CommandNotifyError::Io(error) => PortError::new(
+                        PortErrorKind::Unavailable,
+                        format!("command UDS notifier probe failed: {error}"),
+                    ),
+                    CommandNotifyError::Expired => PortError::new(
+                        PortErrorKind::Permanent,
+                        "command notifier probe cannot expire",
+                    ),
+                    CommandNotifyError::Nack { .. } => PortError::new(
+                        PortErrorKind::Permanent,
+                        "command notifier probe received an impossible protocol response",
+                    ),
+                })?;
+        }
+        drop(notifier);
+        Ok(self.notifier_status())
     }
 
     fn current_generation(&self) -> PortResult<Arc<CommandGeneration>> {
@@ -415,38 +528,60 @@ impl DeviceCommandSink for ShmDeviceCommandSink {
             .validate_at(TimestampMs::new(system_time_ms()))
             .map_err(|error| PortError::new(PortErrorKind::Rejected, error.to_string()))?;
         self.validate_authority(&generation, "before command transport")?;
-        match tokio::time::timeout(UDS_NOTIFY_TIMEOUT, notifier.notify(command)).await {
-            Err(_) => {
-                // Cancellation may interrupt `write_all` after a partial fixed
-                // frame. Drop the stream so a later command cannot append to
-                // that prefix and corrupt IO's 56-byte frame boundary.
-                notifier.disconnect(false);
-                return Err(PortError::new(
-                    PortErrorKind::Timeout,
-                    "command UDS notification exceeded its bounded transport deadline",
-                ));
-            },
-            Ok(Err(CommandNotifyError::Expired)) => {
-                return Err(PortError::new(
-                    PortErrorKind::Rejected,
-                    "command expired immediately before UDS transport write",
-                ));
-            },
-            Ok(Err(CommandNotifyError::Timeout(context))) => {
-                return Err(PortError::new(PortErrorKind::Timeout, context));
-            },
-            Ok(Err(CommandNotifyError::Io(error))) => {
-                return Err(PortError::new(
-                    PortErrorKind::Unavailable,
-                    format!("command UDS notification failed after SHM mirror: {error}"),
-                ));
-            },
-            Ok(Ok(())) => {},
-        }
+        let accepted_at_ms =
+            match tokio::time::timeout(UDS_NOTIFY_TIMEOUT, notifier.notify(command)).await {
+                Err(_) => {
+                    // Cancellation may interrupt `write_all` after a partial fixed
+                    // frame. Drop the stream so a later command cannot append to
+                    // that prefix and corrupt IO's fixed frame boundary.
+                    notifier.disconnect(false);
+                    return Err(PortError::new(
+                        PortErrorKind::Timeout,
+                        "command UDS notification exceeded its bounded transport deadline",
+                    ));
+                },
+                Ok(Err(CommandNotifyError::Expired)) => {
+                    return Err(PortError::new(
+                        PortErrorKind::Rejected,
+                        "command expired immediately before UDS transport write",
+                    ));
+                },
+                Ok(Err(CommandNotifyError::Timeout(context))) => {
+                    return Err(PortError::new(PortErrorKind::Timeout, context));
+                },
+                Ok(Err(CommandNotifyError::Nack { status, state })) => {
+                    let kind = match status {
+                        CommandAckStatus::Conflict => PortErrorKind::Conflict,
+                        CommandAckStatus::Expired | CommandAckStatus::Invalid => {
+                            PortErrorKind::Rejected
+                        },
+                        CommandAckStatus::Backpressure | CommandAckStatus::Busy => {
+                            PortErrorKind::Unavailable
+                        },
+                        CommandAckStatus::Unavailable | CommandAckStatus::Internal => {
+                            PortErrorKind::Unavailable
+                        },
+                        CommandAckStatus::Accepted | CommandAckStatus::Duplicate => {
+                            PortErrorKind::Permanent
+                        },
+                    };
+                    return Err(PortError::new(
+                        kind,
+                        format!("IO command admission returned {status:?} in {state:?}"),
+                    ));
+                },
+                Ok(Err(CommandNotifyError::Io(error))) => {
+                    return Err(PortError::new(
+                        PortErrorKind::Unavailable,
+                        format!("command UDS notification failed after SHM mirror: {error}"),
+                    ));
+                },
+                Ok(Ok(accepted_at_ms)) => accepted_at_ms,
+            };
         self.observer.after_transport_write(command);
         self.validate_authority(&generation, "after command transport")?;
 
-        let receipt = CommandReceipt::new(command.id(), TimestampMs::new(system_time_ms()));
+        let receipt = CommandReceipt::new(command.id(), TimestampMs::new(accepted_at_ms));
         drop(authority);
         Ok(receipt)
     }
@@ -475,11 +610,10 @@ fn system_time_ms() -> u64 {
 
 struct CommandNotifier {
     stream: Option<UnixStream>,
-    path: PathBuf,
-    producer_id: u64,
-    next_sequence: u64,
+    path: std::path::PathBuf,
     last_connect_attempt: Option<Instant>,
     backoff: Duration,
+    health: Arc<CommandNotifierHealth>,
 }
 
 impl CommandNotifier {
@@ -488,43 +622,105 @@ impl CommandNotifier {
     const SEND_RETRIES: usize = 3;
     const RETRY_DELAY: Duration = Duration::from_millis(10);
 
-    async fn connect(path: &Path) -> Self {
-        let stream = tokio::time::timeout(UDS_CONNECT_TIMEOUT, UnixStream::connect(path))
-            .await
-            .ok()
-            .and_then(Result::ok);
-        let last_connect_attempt = stream.is_none().then(Instant::now);
+    async fn connect(path: &Path, health: Arc<CommandNotifierHealth>) -> Self {
+        let stream = connect_command_stream(path).await.ok();
+        let connected = stream.is_some();
+        let last_connect_attempt = (!connected).then(Instant::now);
+        health.set_connected(connected);
+        if !connected {
+            health
+                .last_failure_at_ms
+                .store(system_time_ms(), Ordering::Release);
+        }
         Self {
             stream,
             path: path.to_path_buf(),
-            producer_id: new_producer_id(),
-            next_sequence: 1,
             last_connect_attempt,
             backoff: Self::MIN_BACKOFF,
+            health,
         }
     }
 
-    async fn notify(&mut self, command: PhysicalDeviceCommand) -> Result<(), CommandNotifyError> {
+    fn is_connected(&self) -> bool {
+        self.stream.is_some()
+    }
+
+    fn verify_idle_stream(&mut self) {
+        let Some(stream) = self.stream.as_ref() else {
+            return;
+        };
+        let mut unexpected = [0_u8; 1];
+        match stream.try_read(&mut unexpected) {
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {},
+            Ok(0) | Err(_) => {
+                self.disconnect(true);
+            },
+            Ok(_) => {
+                // No server frame is valid while this mutex proves that no
+                // command/ACK exchange is in flight. Poison the desynchronised
+                // stream and reconnect through a fresh hello.
+                self.disconnect(true);
+            },
+        }
+    }
+
+    async fn notify(&mut self, command: PhysicalDeviceCommand) -> Result<u64, CommandNotifyError> {
         self.try_reconnect().await?;
         if system_time_ms() >= command.expires_at().get() {
             return Err(CommandNotifyError::Expired);
         }
-        let sequence = self.next_sequence;
-        self.next_sequence = self.next_sequence.wrapping_add(1).max(1);
-        let frame = DeviceCommandFrame::new(command, self.producer_id, sequence)?.to_bytes();
+        let frame = DeviceCommandFrame::new(command)
+            .map_err(|error| {
+                CommandNotifyError::Io(io::Error::new(io::ErrorKind::InvalidInput, error))
+            })?
+            .to_bytes();
         for attempt in 0..Self::SEND_RETRIES {
             if system_time_ms() >= command.expires_at().get() {
                 return Err(CommandNotifyError::Expired);
             }
-            self.try_reconnect().await?;
+            if self.stream.is_none() {
+                self.connect_now().await?;
+            }
             let stream = self.stream.as_mut().ok_or_else(|| {
                 CommandNotifyError::Io(io::Error::new(
                     io::ErrorKind::NotConnected,
                     format!("IO command listener {:?} is disconnected", self.path),
                 ))
             })?;
-            match tokio::time::timeout(UDS_WRITE_TIMEOUT, stream.write_all(&frame)).await {
-                Ok(Ok(())) => return Ok(()),
+            let exchange = async {
+                stream.write_all(&frame).await?;
+                let mut ack = [0_u8; DeviceCommandAck::SIZE];
+                stream.read_exact(&mut ack).await?;
+                Ok::<_, io::Error>(ack)
+            };
+            match tokio::time::timeout(UDS_ACK_TIMEOUT, exchange).await {
+                Ok(Ok(bytes)) => {
+                    let ack = match DeviceCommandAck::from_bytes(&bytes) {
+                        Ok(ack) => ack,
+                        Err(error) => {
+                            self.disconnect(true);
+                            return Err(CommandNotifyError::Io(io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                error,
+                            )));
+                        },
+                    };
+                    if ack.command_id() != command.id() {
+                        self.disconnect(true);
+                        return Err(CommandNotifyError::Io(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "IO command acknowledgement id mismatch",
+                        )));
+                    }
+                    self.health.set_connected(true);
+                    if ack.status().is_accepted() {
+                        return Ok(ack.recorded_at_ms());
+                    }
+                    return Err(CommandNotifyError::Nack {
+                        status: ack.status(),
+                        state: ack.state(),
+                    });
+                },
                 Ok(Err(_error)) if attempt + 1 < Self::SEND_RETRIES => {
                     self.disconnect(true);
                     tokio::time::sleep(Self::RETRY_DELAY).await;
@@ -540,7 +736,7 @@ impl CommandNotifier {
                 Err(_) => {
                     self.disconnect(false);
                     return Err(CommandNotifyError::Timeout(
-                        "command UDS write timed out after SHM mirror",
+                        "command UDS admission acknowledgement timed out after SHM mirror",
                     ));
                 },
             }
@@ -552,6 +748,7 @@ impl CommandNotifier {
 
     fn disconnect(&mut self, retry_immediately: bool) {
         self.stream = None;
+        self.mark_disconnected();
         self.last_connect_attempt = if retry_immediately {
             None
         } else {
@@ -559,8 +756,15 @@ impl CommandNotifier {
         };
     }
 
+    fn mark_disconnected(&self) {
+        self.health.set_connected(false);
+        self.health
+            .last_failure_at_ms
+            .store(system_time_ms(), Ordering::Release);
+    }
+
     async fn try_reconnect(&mut self) -> Result<(), CommandNotifyError> {
-        if self.stream.is_some() {
+        if self.is_connected() {
             return Ok(());
         }
         if self
@@ -569,181 +773,51 @@ impl CommandNotifier {
         {
             return Ok(());
         }
-        match tokio::time::timeout(UDS_CONNECT_TIMEOUT, UnixStream::connect(&self.path)).await {
-            Ok(Ok(stream)) => {
+        self.connect_now().await
+    }
+
+    async fn connect_now(&mut self) -> Result<(), CommandNotifyError> {
+        match connect_command_stream(&self.path).await {
+            Ok(stream) => {
                 self.stream = Some(stream);
+                self.health.set_connected(true);
                 self.last_connect_attempt = None;
                 self.backoff = Self::MIN_BACKOFF;
+                Ok(())
             },
-            Ok(Err(_)) => {
+            Err(error) => {
+                self.mark_disconnected();
                 self.last_connect_attempt = Some(Instant::now());
                 self.backoff = self.backoff.saturating_mul(2).min(Self::MAX_BACKOFF);
-            },
-            Err(_) => {
-                self.last_connect_attempt = Some(Instant::now());
-                self.backoff = self.backoff.saturating_mul(2).min(Self::MAX_BACKOFF);
-                return Err(CommandNotifyError::Timeout(
-                    "command UDS reconnect timed out after SHM mirror",
-                ));
+                Err(CommandNotifyError::Io(error))
             },
         }
-        Ok(())
     }
 }
 
 enum CommandNotifyError {
     Expired,
     Timeout(&'static str),
+    Nack {
+        status: CommandAckStatus,
+        state: crate::CommandLedgerStateCode,
+    },
     Io(io::Error),
 }
 
-#[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DeviceCommandFrame {
-    channel_id: u32,
-    point_id: u32,
-    point_type: u8,
-    padding: [u8; 7],
-    value_bits: u64,
-    timestamp_ms: u64,
-    expires_at_ms: u64,
-    producer_id: u64,
-    sequence: u64,
+async fn connect_raw_stream(path: &Path) -> io::Result<UnixStream> {
+    tokio::time::timeout(UDS_CONNECT_TIMEOUT, UnixStream::connect(path))
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "command UDS connect timed out"))?
 }
 
-impl DeviceCommandFrame {
-    /// Fixed native-endian command wire size for the local IO transport.
-    pub const SIZE: usize = 56;
-
-    fn new(
-        command: PhysicalDeviceCommand,
-        producer_id: u64,
-        sequence: u64,
-    ) -> Result<Self, CommandNotifyError> {
-        let target = command.target();
-        let point_type = match target.kind() {
-            PointKind::Command => 2,
-            PointKind::Action => 3,
-            PointKind::Telemetry | PointKind::Status => {
-                return Err(CommandNotifyError::Io(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "acquisition-owned point cannot enter the command wire",
-                )));
-            },
-        };
-        Ok(Self {
-            channel_id: target.channel_id().get(),
-            point_id: target.point_id().get(),
-            point_type,
-            padding: [0; 7],
-            value_bits: command.value().to_bits(),
-            timestamp_ms: command.issued_at().get(),
-            expires_at_ms: command.expires_at().get(),
-            producer_id,
-            sequence,
-        })
-    }
-
-    /// Decodes the existing fixed-size native-endian IO command frame.
-    #[must_use]
-    pub fn from_bytes(bytes: &[u8; Self::SIZE]) -> Self {
-        Self {
-            channel_id: u32::from_ne_bytes(bytes[0..4].try_into().unwrap_or([0; 4])),
-            point_id: u32::from_ne_bytes(bytes[4..8].try_into().unwrap_or([0; 4])),
-            point_type: bytes[8],
-            padding: bytes[9..16].try_into().unwrap_or([0; 7]),
-            value_bits: u64::from_ne_bytes(bytes[16..24].try_into().unwrap_or([0; 8])),
-            timestamp_ms: u64::from_ne_bytes(bytes[24..32].try_into().unwrap_or([0; 8])),
-            expires_at_ms: u64::from_ne_bytes(bytes[32..40].try_into().unwrap_or([0; 8])),
-            producer_id: u64::from_ne_bytes(bytes[40..48].try_into().unwrap_or([0; 8])),
-            sequence: u64::from_ne_bytes(bytes[48..56].try_into().unwrap_or([0; 8])),
-        }
-    }
-
-    /// Encodes the unchanged native-endian IO command frame.
-    #[must_use]
-    pub fn to_bytes(&self) -> [u8; Self::SIZE] {
-        let mut bytes = [0_u8; Self::SIZE];
-        bytes[0..4].copy_from_slice(&self.channel_id.to_ne_bytes());
-        bytes[4..8].copy_from_slice(&self.point_id.to_ne_bytes());
-        bytes[8] = self.point_type;
-        bytes[9..16].copy_from_slice(&self.padding);
-        bytes[16..24].copy_from_slice(&self.value_bits.to_ne_bytes());
-        bytes[24..32].copy_from_slice(&self.timestamp_ms.to_ne_bytes());
-        bytes[32..40].copy_from_slice(&self.expires_at_ms.to_ne_bytes());
-        bytes[40..48].copy_from_slice(&self.producer_id.to_ne_bytes());
-        bytes[48..56].copy_from_slice(&self.sequence.to_ne_bytes());
-        bytes
-    }
-
-    /// Returns the target physical channel.
-    #[must_use]
-    pub const fn channel_id(self) -> u32 {
-        self.channel_id
-    }
-
-    /// Returns the target physical point id.
-    #[must_use]
-    pub const fn point_id(self) -> u32 {
-        self.point_id
-    }
-
-    /// Returns the raw point-kind code used by duplicate detection.
-    #[must_use]
-    pub const fn point_kind_code(self) -> u8 {
-        self.point_type
-    }
-
-    /// Returns the typed command-owned point kind.
-    #[must_use]
-    pub const fn point_kind(self) -> Option<PointKind> {
-        match self.point_type {
-            2 => Some(PointKind::Command),
-            3 => Some(PointKind::Action),
-            _ => None,
-        }
-    }
-
-    /// Returns the command engineering value.
-    #[must_use]
-    pub fn value(self) -> f64 {
-        f64::from_bits(self.value_bits)
-    }
-
-    /// Returns the command issue timestamp.
-    #[must_use]
-    pub const fn timestamp_ms(self) -> u64 {
-        self.timestamp_ms
-    }
-
-    /// Returns the exclusive command deadline.
-    #[must_use]
-    pub const fn expires_at_ms(self) -> u64 {
-        self.expires_at_ms
-    }
-
-    /// Returns the producer incarnation id.
-    #[must_use]
-    pub const fn producer_id(self) -> u64 {
-        self.producer_id
-    }
-
-    /// Returns the monotonic sequence within the producer incarnation.
-    #[must_use]
-    pub const fn sequence(self) -> u64 {
-        self.sequence
-    }
-}
-
-fn new_producer_id() -> u64 {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    let bytes = nanos.to_ne_bytes();
-    let time_bits = u64::from_ne_bytes([
-        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
-    ]);
-    let producer = time_bits ^ (u64::from(std::process::id()) << 32);
-    producer.max(1)
+async fn connect_command_stream(path: &Path) -> io::Result<UnixStream> {
+    let mut stream = connect_raw_stream(path).await?;
+    let mut bytes = [0_u8; CommandHello::SIZE];
+    tokio::time::timeout(UDS_HELLO_TIMEOUT, stream.read_exact(&mut bytes))
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "command hello timed out"))??;
+    CommandHello::from_bytes(&bytes)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    Ok(stream)
 }

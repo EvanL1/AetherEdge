@@ -137,14 +137,19 @@ fn normalize_for_gateway(service: ServiceName, document: &mut Value) -> Result<(
 }
 
 fn gateway_path(service: ServiceName, path: &str) -> Option<String> {
-    if path == "/api/admin" || path.starts_with("/api/admin/") {
+    if path == "/api/admin"
+        || path.starts_with("/api/admin/")
+        || path == "/api/internal"
+        || path.starts_with("/api/internal/")
+    {
         return None;
     }
 
     match service {
         ServiceName::Io | ServiceName::Automation => Some(path.to_string()),
         ServiceName::History => strip_service_prefix(path, "/hisApi"),
-        ServiceName::Uplink => strip_service_prefix(path, "/netApi"),
+        ServiceName::Uplink if path == "/health" => Some(path.to_string()),
+        ServiceName::Uplink => None,
         ServiceName::Alarm => strip_service_prefix(path, "/alarmApi"),
     }
 }
@@ -162,11 +167,11 @@ fn strip_service_prefix(path: &str, prefix: &str) -> Option<String> {
 
 fn gateway_prefix(service: ServiceName) -> &'static str {
     match service {
-        ServiceName::Io => "/api/v1/io",
-        ServiceName::Automation => "/api/v1/automation",
-        ServiceName::History => "/api/v1/history",
-        ServiceName::Uplink => "/api/v1/uplink",
-        ServiceName::Alarm => "/api/v1/alarm",
+        ServiceName::Io => "/api/io",
+        ServiceName::Automation => "/api/automation",
+        ServiceName::History => "/api/history",
+        ServiceName::Uplink => "/api/uplink",
+        ServiceName::Alarm => "/api/alarm",
     }
 }
 
@@ -191,7 +196,7 @@ mod tests {
         assert!(document["paths"]["/storage"].is_object());
         assert!(document["paths"]["/ping"].is_null());
         assert!(document["paths"]["/api/admin/logs/files"].is_null());
-        assert_eq!(document["servers"][0]["url"], "/api/v1/history");
+        assert_eq!(document["servers"][0]["url"], "/api/history");
     }
 
     #[test]
@@ -209,6 +214,26 @@ mod tests {
         assert!(document["paths"]["/health"].is_object());
         assert!(document["paths"]["/api/channels"].is_object());
         assert!(document["paths"]["/api/admin/logs/files"].is_null());
-        assert_eq!(document["servers"][0]["url"], "/api/v1/io");
+        assert_eq!(document["servers"][0]["url"], "/api/io");
+    }
+
+    #[test]
+    fn uplink_document_exposes_only_read_only_health() {
+        let mut document = json!({
+            "paths": {
+                "/health": { "get": {} },
+                "/ping": { "get": {} },
+                "/api/internal/alarm-events": { "post": {} },
+                "/api/admin/logs/files": { "get": {} }
+            }
+        });
+
+        normalize_for_gateway(ServiceName::Uplink, &mut document).expect("valid document");
+
+        assert!(document["paths"]["/health"].is_object());
+        assert!(document["paths"]["/ping"].is_null());
+        assert!(document["paths"]["/api/internal/alarm-events"].is_null());
+        assert!(document["paths"]["/api/admin/logs/files"].is_null());
+        assert_eq!(document["servers"][0]["url"], "/api/uplink");
     }
 }

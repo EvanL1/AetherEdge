@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use aether_automation::infra::action_routing::SqliteActionRoutingMutator;
+use aether_automation::infra::rule_live_state::ShmRuleLiveState;
 use aether_automation::infra::runtime_topology::AutomationTopologyHandle;
 use aether_automation::{InstanceManager, ProductLoader};
 use aether_domain::{
@@ -13,6 +14,7 @@ use aether_ports::{
     ActionRouteKey, AutomationActionRoutingMutator, LogicalRoutingRevision, PortErrorKind,
     RevisionedActionRoutingMutation,
 };
+use aether_rules::RuleLiveState;
 use aether_shm_bridge::{
     PointWatchEvent, ShmChannelHealthWriterHandle, ShmDeviceCommandSink, ShmRuntimeConfig,
     ShmWriterHandle, commit_topology_publication,
@@ -60,6 +62,95 @@ fn sample(channel_id: u32, value: f64, timestamp_ms: u64) -> AcquiredPointSample
         PointQuality::Good,
     )
     .expect("finite sample")
+}
+
+#[tokio::test]
+async fn rule_sample_freshness_tracks_the_persisted_channel_poll_interval() {
+    let pool = create_topology_pool().await;
+    sqlx::query(
+        r#"UPDATE channels SET config = '{"parameters":{"poll_interval_ms":120000}}', revision = revision + 1 WHERE channel_id = 10"#,
+    )
+    .execute(&pool)
+    .await
+    .expect("slow polling policy");
+    let snapshot = aether_sqlite_topology::load_sqlite_live_topology(&pool)
+        .await
+        .expect("slow polling topology");
+    assert_eq!(snapshot.channel_freshness_timeout_ms(10), Some(360_000));
+
+    let directory = tempfile::tempdir().expect("temporary SHM directory");
+    let point_path = directory.path().join("live.shm");
+    let health_path = directory.path().join("health.shm");
+    let point_writer = ShmWriterHandle::create(
+        ShmRuntimeConfig::new(&point_path, 256),
+        Arc::new(snapshot.point_manifest().clone()),
+        None,
+        None,
+        100,
+    )
+    .expect("publish point plane");
+    let health_writer = ShmChannelHealthWriterHandle::create(
+        &health_path,
+        Arc::new(snapshot.health_manifest().clone()),
+        100,
+    )
+    .expect("publish health plane");
+    commit_topology_publication(&point_path, &health_path, 100).expect("commit topology");
+
+    let now_ms = aether_shm_bridge::timestamp_ms();
+    let sample_timestamp_ms = now_ms.saturating_sub(100_000);
+    point_writer
+        .generation()
+        .expect("point generation")
+        .acquisition_writer()
+        .commit_batch(&[sample(10, 10.0, sample_timestamp_ms)])
+        .expect("write slow polling sample");
+    point_writer
+        .generation()
+        .expect("point generation")
+        .acquisition_writer()
+        .update_heartbeat(now_ms);
+    health_writer
+        .set_online(10, true, now_ms)
+        .expect("write channel health");
+    health_writer
+        .update_heartbeat(now_ms)
+        .expect("write health heartbeat");
+
+    let topology = Arc::new(
+        AutomationTopologyHandle::new_lazy(
+            point_path,
+            health_path,
+            snapshot,
+            Arc::new(ShmDeviceCommandSink::new()),
+        )
+        .expect("compose automation topology"),
+    );
+    assert!(topology.refresh(&pool).await.expect("open topology"));
+    let live_state = ShmRuleLiveState::from_topology(Arc::clone(&topology));
+    assert_eq!(
+        live_state.get_instance(100, 0, 5),
+        Some((10.0, sample_timestamp_ms)),
+        "a 100-second-old sample remains valid for a 120-second polling channel"
+    );
+
+    sqlx::query(
+        r#"UPDATE channels SET config = '{"parameters":{"poll_interval_ms":10000}}', revision = revision + 1 WHERE channel_id = 10"#,
+    )
+    .execute(&pool)
+    .await
+    .expect("fast polling policy");
+    assert!(
+        topology
+            .refresh(&pool)
+            .await
+            .expect("publish freshness-only topology change")
+    );
+    assert_eq!(
+        live_state.get_instance(100, 0, 5),
+        None,
+        "the same sample expires under the 90-second minimum for a fast channel"
+    );
 }
 
 #[tokio::test]

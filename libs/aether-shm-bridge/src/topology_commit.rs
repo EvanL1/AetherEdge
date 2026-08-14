@@ -14,8 +14,7 @@ use crate::{
     ChannelHealthManifest, ChannelPointManifest, ShmChannelHealthWriterHandle, ShmWriterHandle,
 };
 
-const COMMIT_MAGIC: [u8; 8] = *b"AETHTP01";
-const COMMIT_VERSION: u32 = 1;
+const COMMIT_MAGIC: [u8; 8] = *b"AETHTPCM";
 const COMMIT_BYTES: usize = 80;
 const CHECKSUM_OFFSET: usize = 72;
 
@@ -114,7 +113,6 @@ impl TopologyPublicationCommit {
     fn encode(self) -> [u8; COMMIT_BYTES] {
         let mut bytes = [0_u8; COMMIT_BYTES];
         bytes[0..8].copy_from_slice(&COMMIT_MAGIC);
-        bytes[8..12].copy_from_slice(&COMMIT_VERSION.to_le_bytes());
         bytes[16..24].copy_from_slice(&self.publication_epoch.to_le_bytes());
         bytes[24..32].copy_from_slice(&self.point_layout_hash.to_le_bytes());
         bytes[32..40].copy_from_slice(&self.point_slot_count.to_le_bytes());
@@ -137,11 +135,10 @@ impl TopologyPublicationCommit {
         if bytes[0..8] != COMMIT_MAGIC {
             return Err(transition_error("SHM topology commit magic is invalid"));
         }
-        let version = read_u32(bytes, 8)?;
-        if version != COMMIT_VERSION {
-            return Err(transition_error(format!(
-                "SHM topology commit version {version} is unsupported"
-            )));
+        if bytes[8..16].iter().any(|byte| *byte != 0) {
+            return Err(transition_error(
+                "SHM topology commit reserved bytes are non-zero",
+            ));
         }
         let stored_checksum = read_u32(bytes, CHECKSUM_OFFSET)?;
         let observed_checksum = checksum(&bytes[..CHECKSUM_OFFSET]);
@@ -364,7 +361,7 @@ fn observed_plane_epoch(path: &Path) -> PortResult<Option<u64>> {
     Ok(Some(epoch))
 }
 
-/// Reads and validates the versioned witness without interpreting desired
+/// Reads and validates the canonical witness without interpreting desired
 /// topology. Callers validate it against locked canonical SHM headers.
 pub fn read_topology_publication_commit(
     point_path: &Path,
@@ -400,6 +397,13 @@ pub fn validate_topology_publication(
 
 pub(crate) fn acquire_topology_authority(point_path: &Path) -> PortResult<AuthorityReadGuard> {
     AuthorityReadGuard::acquire(&topology_commit_path_from_shm(point_path))
+        .map_err(map_dataplane_error)
+}
+
+pub(crate) fn try_acquire_topology_authority(
+    point_path: &Path,
+) -> PortResult<Option<AuthorityReadGuard>> {
+    AuthorityReadGuard::try_acquire(&topology_commit_path_from_shm(point_path))
         .map_err(map_dataplane_error)
 }
 
@@ -445,6 +449,26 @@ pub(crate) fn acquire_authority_pair(
     let first = AuthorityReadGuard::acquire(first_path).map_err(map_dataplane_error)?;
     let second = AuthorityReadGuard::acquire(second_path).map_err(map_dataplane_error)?;
     Ok((first, second))
+}
+
+pub(crate) fn try_acquire_authority_pair(
+    point_path: &Path,
+    health_path: &Path,
+) -> PortResult<Option<(AuthorityReadGuard, AuthorityReadGuard)>> {
+    let (first_path, second_path) = if point_path <= health_path {
+        (point_path, health_path)
+    } else {
+        (health_path, point_path)
+    };
+    let Some(first) = AuthorityReadGuard::try_acquire(first_path).map_err(map_dataplane_error)?
+    else {
+        return Ok(None);
+    };
+    let Some(second) = AuthorityReadGuard::try_acquire(second_path).map_err(map_dataplane_error)?
+    else {
+        return Ok(None);
+    };
+    Ok(Some((first, second)))
 }
 
 fn validate_header_epoch(
@@ -521,5 +545,44 @@ impl Drop for CommitStagingCleanup {
         if let Some(path) = self.0.take() {
             let _ = std::fs::remove_file(path);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn commit_fixture() -> TopologyPublicationCommit {
+        TopologyPublicationCommit {
+            publication_epoch: 9,
+            point_layout_hash: 10,
+            point_slot_count: 11,
+            point_writer_generation: 12,
+            health_layout_hash: 13,
+            health_slot_count: 14,
+            health_writer_generation: 16,
+        }
+    }
+
+    #[test]
+    fn commit_header_has_one_magic_and_zero_reserved_bytes() {
+        let bytes = commit_fixture().encode();
+
+        assert_eq!(&bytes[..8], b"AETHTPCM");
+        assert_eq!(&bytes[8..16], &[0; 8]);
+        assert_eq!(
+            TopologyPublicationCommit::decode(&bytes).unwrap(),
+            commit_fixture()
+        );
+    }
+
+    #[test]
+    fn commit_rejects_nonzero_reserved_bytes_before_payload_use() {
+        let mut bytes = commit_fixture().encode();
+        bytes[8] = 1;
+
+        let error = TopologyPublicationCommit::decode(&bytes).unwrap_err();
+
+        assert!(error.to_string().contains("reserved"));
     }
 }

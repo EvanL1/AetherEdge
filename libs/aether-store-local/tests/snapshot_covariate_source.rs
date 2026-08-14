@@ -8,7 +8,7 @@ use tempfile::TempDir;
 
 const MULTI_RUN_SNAPSHOT: &str = r#"
 {
-  "schema": "aether.covariate-snapshot.v1",
+  "schema": "aether.covariate-snapshot",
   "bindings": [
     {
       "id": "site-a",
@@ -67,7 +67,7 @@ const MULTI_RUN_SNAPSHOT: &str = r#"
 
 const CALENDAR_SNAPSHOT: &str = r#"
 {
-  "schema": "aether.covariate-snapshot.v1",
+  "schema": "aether.covariate-snapshot",
   "bindings": [
     {
       "id": "site-a",
@@ -288,8 +288,8 @@ async fn snapshot_source_never_falls_back_from_the_latest_run_on_contract_mismat
 #[tokio::test]
 async fn snapshot_source_rejects_unknown_fields_and_oversized_files_at_resolution_time() {
     let with_unknown_field = MULTI_RUN_SNAPSHOT.replacen(
-        "\"schema\": \"aether.covariate-snapshot.v1\"",
-        "\"schema\": \"aether.covariate-snapshot.v1\", \"unexpected\": true",
+        "\"schema\": \"aether.covariate-snapshot\"",
+        "\"schema\": \"aether.covariate-snapshot\", \"unexpected\": true",
         1,
     );
     let directory = TempDir::new().expect("temporary directory is available");
@@ -400,15 +400,20 @@ async fn snapshot_source_observes_each_atomic_update_and_fails_closed_on_a_bad_o
     );
 
     let staged_bad = directory.path().join("bad.json");
-    fs::write(&staged_bad, r#"{"schema":"not-supported","bindings":[]}"#)
-        .expect("bad update can be staged");
+    let retired_snapshot = r#"{"schema":"aether.covariate-snapshot.invalid","bindings":[]}"#;
+    fs::write(&staged_bad, retired_snapshot).expect("retired snapshot can be staged");
     fs::rename(staged_bad, &path).expect("bad update can be atomically published");
 
     let bad_update = source
         .resolve(request())
         .await
-        .expect_err("a bad update must not reuse the prior in-memory snapshot");
+        .expect_err("the retired schema must fail closed without reusing prior data");
     assert_eq!(bad_update.kind(), PortErrorKind::InvalidData);
+    assert_eq!(
+        fs::read_to_string(&path).expect("retired snapshot remains readable"),
+        retired_snapshot,
+        "rejection must not migrate or rewrite the retired snapshot",
+    );
 }
 
 #[tokio::test]

@@ -131,52 +131,39 @@ pub fn load_development_env() {
     // No-op in release builds - production environments should set environment variables externally
 }
 
-/// Get service configuration path from environment or default
-pub fn get_config_path(service: &ServiceInfo) -> String {
-    // Try service-specific environment variable first
-    let env_var = format!("{}_DB_PATH", service.name.to_uppercase());
-
-    if let Ok(path) = std::env::var(&env_var) {
-        return path;
-    }
-
-    // Try DATABASE_DIR for all services
-    if let Ok(dir) = std::env::var("DATABASE_DIR") {
-        return format!("{}/{}.db", dir, service.name);
-    }
-
-    // Default path
-    format!("data/{}.db", service.name)
-}
-
 /// Helper to get service port from configuration or environment
-pub fn get_service_port(config_port: u16, service: &ServiceInfo) -> u16 {
+pub fn get_service_port(config_port: u16, service: &ServiceInfo) -> anyhow::Result<u16> {
+    let environment_port = match std::env::var("SERVICE_PORT") {
+        Ok(port) => Some(parse_service_port(&port)?),
+        Err(std::env::VarError::NotPresent) => None,
+        Err(error) => {
+            return Err(anyhow::anyhow!(
+                "SERVICE_PORT is not valid Unicode: {error}"
+            ));
+        },
+    };
+
     // Check if config port is default
     let is_default = config_port == 0 || config_port == service.default_port;
 
-    if is_default {
-        // Try SERVICE_PORT first (unified across all services)
-        if let Ok(port) = std::env::var("SERVICE_PORT")
-            && let Ok(p) = port.parse::<u16>()
-        {
-            return p;
-        }
-
-        // Fallback to service-specific environment variable
-        let env_var = format!("{}_PORT", service.name.to_uppercase());
-        if let Ok(port) = std::env::var(&env_var)
-            && let Ok(p) = port.parse::<u16>()
-        {
-            return p;
-        }
+    if is_default && let Some(port) = environment_port {
+        return Ok(port);
     }
 
     // Return config port or default
     if config_port > 0 {
-        config_port
+        Ok(config_port)
     } else {
-        service.default_port
+        Ok(service.default_port)
     }
+}
+
+fn parse_service_port(value: &str) -> anyhow::Result<u16> {
+    value
+        .parse::<u16>()
+        .ok()
+        .filter(|port| *port != 0)
+        .ok_or_else(|| anyhow::anyhow!("SERVICE_PORT must be an integer in 1..=65535"))
 }
 
 #[cfg(test)]
@@ -193,9 +180,10 @@ mod tests {
     }
 
     #[test]
-    fn test_get_config_path_default() {
-        let service = ServiceInfo::new("testservice", "Test", 8080);
-        let path = get_config_path(&service);
-        assert_eq!(path, "data/testservice.db");
+    fn service_port_parser_fails_closed() {
+        assert_eq!(parse_service_port("6002").unwrap(), 6002);
+        for invalid in ["", "0", "65536", "6.2", " 6002 ", "automation"] {
+            assert!(parse_service_port(invalid).is_err(), "accepted {invalid:?}");
+        }
     }
 }

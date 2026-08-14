@@ -135,6 +135,17 @@ pub const READ_POINT_CAPABILITY: CapabilityDescriptor = CapabilityDescriptor::ne
     true,
 );
 
+/// Query one retained durable device-command lifecycle outcome.
+pub const READ_COMMAND_OUTCOME_CAPABILITY: CapabilityDescriptor = CapabilityDescriptor::new(
+    "device.command_outcome.read",
+    OperationKind::Query,
+    RiskLevel::Low,
+    "device.read",
+    ConfirmationPolicy::Never,
+    AuditPolicy::NotRequired,
+    true,
+);
+
 /// Write one command/action point.
 pub const WRITE_POINT_CAPABILITY: CapabilityDescriptor = CapabilityDescriptor::new(
     "device.write_point",
@@ -298,8 +309,9 @@ pub const PROCESS_DATA_CAPABILITY: CapabilityDescriptor = CapabilityDescriptor::
     false,
 );
 
-const CAPABILITY_CATALOG: [CapabilityDescriptor; 13] = [
+const CAPABILITY_CATALOG: [CapabilityDescriptor; 14] = [
     READ_POINT_CAPABILITY,
+    READ_COMMAND_OUTCOME_CAPABILITY,
     WRITE_POINT_CAPABILITY,
     EXECUTE_RULE_CAPABILITY,
     MANAGE_RULE_CAPABILITY,

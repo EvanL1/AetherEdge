@@ -1,17 +1,17 @@
 # Aether Data Processing JSON Schemas
 
-This directory publishes the Draft 2020-12 transport schemas for version 1 of
-the Aether Data Processing contract family.
+This directory publishes the single Draft 2020-12 transport schema family for
+Aether Data Processing.
 
 | Schema | Boundary |
 |---|---|
-| `process-task-request.v1.schema.json` | Application caller to `DataProcessingApplication` |
-| `processing-frame.v1.schema.json` | Complete input frame assembled by Aether |
-| `data-processing-request.v1.schema.json` | Aether to a selected `DataProcessor` |
-| `forecast-output.v1.schema.json` | Typed interval-end forecast output |
-| `processing-result.v1.schema.json` | Untrusted processor response |
-| `derived-data.v1.schema.json` | Aether-validated and stamped output |
-| `error.v1.schema.json` | Typed non-2xx processor or transport failure |
+| `process-task-request.schema.json` | Application caller to `DataProcessingApplication` |
+| `processing-frame.schema.json` | Complete input frame assembled by Aether |
+| `data-processing-request.schema.json` | Aether to a selected `DataProcessor` |
+| `forecast-output.schema.json` | Typed interval-end forecast output |
+| `processing-result.schema.json` | Untrusted processor response |
+| `derived-data.schema.json` | Aether-validated and stamped output |
+| `error.schema.json` | Typed non-2xx processor or transport failure |
 
 The normative prose is
 [`docs/reference/data-processing-contracts.md`](../../docs/reference/data-processing-contracts.md).
@@ -33,9 +33,9 @@ constant features still require explicit `calendar` or `constant` provenance;
 aggregate `input_watermark` tracks actual observations rather than being
 advanced by those deterministic sources.
 
-Version 1 timestamps use the RFC 3339 UTC `Z` form with no finer than
+Timestamps use the RFC 3339 UTC `Z` form with no finer than
 millisecond resolution because the authoritative Rust value is `TimestampMs`.
-A provenance entry may include `issued_at` for a versioned external forecast;
+A provenance entry may include `issued_at` for an externally issued forecast;
 Rust enforces `issued_at <= watermark <= frame.as_of`.
 
 Forecast grids use interval-end semantics. For cadence `c`, history ends at
@@ -73,7 +73,7 @@ assembles the complete frame, and then creates the processor-facing request.
 Using a schema directly must never bypass that application boundary.
 
 `input_digest` is content identity for correlation and audit, not operation
-identity. `data_processing.process` is non-idempotent and version 1 provides no
+identity. `data_processing.process` is non-idempotent and provides no
 request replay, de-duplication, cache, or request-ID reuse conflict guarantee.
 
 `binding` is mandatory on application, processor, result, and derived-data
@@ -115,35 +115,35 @@ uvx --from check-jsonschema check-jsonschema \
 SCHEMA_BASE="file://$(pwd)/contracts/data-processing/"
 
 uvx --from check-jsonschema check-jsonschema \
-  --schemafile contracts/data-processing/process-task-request.v1.schema.json \
+  --schemafile contracts/data-processing/process-task-request.schema.json \
   packs/energy/data-processing/fixtures/load-process-task-request.json
 
 uvx --from check-jsonschema check-jsonschema --base-uri "$SCHEMA_BASE" \
-  --schemafile contracts/data-processing/data-processing-request.v1.schema.json \
+  --schemafile contracts/data-processing/data-processing-request.schema.json \
   packs/energy/data-processing/fixtures/load-processing-request.json
 
 uvx --from check-jsonschema check-jsonschema --base-uri "$SCHEMA_BASE" \
-  --schemafile contracts/data-processing/processing-result.v1.schema.json \
+  --schemafile contracts/data-processing/processing-result.schema.json \
   packs/energy/data-processing/fixtures/load-processing-result.json
 
 uvx --from check-jsonschema check-jsonschema --base-uri "$SCHEMA_BASE" \
-  --schemafile contracts/data-processing/derived-data.v1.schema.json \
+  --schemafile contracts/data-processing/derived-data.schema.json \
   packs/energy/data-processing/fixtures/load-derived-data.json
 
 jq '.frame' packs/energy/data-processing/fixtures/load-processing-request.json | \
   uvx --from check-jsonschema check-jsonschema --base-uri "$SCHEMA_BASE" \
-    --schemafile contracts/data-processing/processing-frame.v1.schema.json -
+    --schemafile contracts/data-processing/processing-frame.schema.json -
 
 jq '.output' packs/energy/data-processing/fixtures/load-processing-result.json | \
   uvx --from check-jsonschema check-jsonschema --base-uri "$SCHEMA_BASE" \
-    --schemafile contracts/data-processing/forecast-output.v1.schema.json -
+    --schemafile contracts/data-processing/forecast-output.schema.json -
 ```
 
 The request, result, derived-data, and application-request fixtures map
 directly to their schemas. `ProcessingFrame` and `ForecastOutput` are nested
 wire values, so the commands validate projections from the processor request
 and result fixtures. There is currently no standalone error-envelope fixture;
-`error.v1.schema.json` is still checked against the Draft 2020-12 metaschema.
+`error.schema.json` is still checked against the Draft 2020-12 metaschema.
 
 Schema validation is the first wire check. It does not replace request byte
 limits, media-type checks, deadlines, authorization, egress policy, typed Rust

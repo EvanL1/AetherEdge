@@ -276,8 +276,7 @@ mod tests {
     use std::fs;
     use std::path::Path;
 
-    const TEST_PACK_MANIFEST: &str = r#"schema_version: 1
-id: test-pack
+    const TEST_PACK_MANIFEST: &str = r#"id: test-pack
 name: Test Pack
 version: 0.0.1
 status: test

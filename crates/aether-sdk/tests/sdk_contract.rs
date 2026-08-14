@@ -5,7 +5,9 @@ use aether_sdk::domain::{
     CommandId, ControlCommand, InstanceId, PointAddress, PointId, PointKind, PointQuality,
     PointSample, TimestampMs,
 };
-use aether_sdk::ports::{CommandDispatcher, CommandReceipt, LiveStateWriter, PortResult};
+use aether_sdk::ports::{
+    CommandDispatcher, CommandReceipt, CommandTopologyFence, LiveStateWriter, PortResult,
+};
 use aether_sdk::{AetherBuilder, BuildError};
 use aether_store_local::{MemoryAuditSink, MemoryLiveState};
 use async_trait::async_trait;
@@ -16,6 +18,14 @@ struct NoopDispatcher;
 impl CommandDispatcher for NoopDispatcher {
     async fn dispatch(&self, command: ControlCommand) -> PortResult<CommandReceipt> {
         Ok(CommandReceipt::new(command.id(), command.issued_at()))
+    }
+
+    async fn dispatch_fenced(
+        &self,
+        command: ControlCommand,
+        _fence: CommandTopologyFence,
+    ) -> PortResult<CommandReceipt> {
+        self.dispatch(command).await
     }
 }
 
