@@ -450,7 +450,18 @@ impl RuleExecutor {
                     match next_node {
                         Some(next) => current_id = next,
                         None => {
-                            result.error = Some("No matching switch rule".to_string());
+                            result.error = Some(
+                                match result
+                                    .node_details
+                                    .get(current_id)
+                                    .and_then(|detail| detail.matched_port.as_deref())
+                                {
+                                    Some(port) => {
+                                        format!("Matched switch output has no wire: {port}")
+                                    },
+                                    None => "No matching switch rule".to_string(),
+                                },
+                            );
                             return Ok(result);
                         },
                     }
@@ -460,6 +471,18 @@ impl RuleExecutor {
                     rule: assignments,
                     wires,
                 } => {
+                    // Validate every target before dispatching any action in this node.
+                    if let Some(assignment) = assignments.iter().find(|assignment| {
+                        !variables
+                            .iter()
+                            .any(|variable| variable.name == assignment.variables)
+                    }) {
+                        result.error = Some(format!(
+                            "ChangeValue target variable not found: {}",
+                            assignment.variables
+                        ));
+                        return Ok(result);
+                    }
                     // Read target variables. Skip the cycle on missing data —
                     // a 0.0 fallback would write meaningless action values.
                     let outcome = match self
@@ -903,16 +926,13 @@ impl RuleExecutor {
                 // Format the matched condition expression
                 let condition_str = format_conditions(&rule.rule);
 
-                // Find the wire target for this rule's output
-                if let Some(targets) = wires.get(&rule.name)
-                    && let Some(target) = targets.first()
-                {
-                    return (
-                        Some(target.as_str()),
-                        Some(rule.name.clone()),
-                        Some(condition_str),
-                    );
-                }
+                // The first matching branch owns routing, even without a wire.
+                let target = wires.get(&rule.name).and_then(|targets| targets.first());
+                return (
+                    target.map(String::as_str),
+                    Some(rule.name.clone()),
+                    Some(condition_str),
+                );
             }
         }
         (None, None, None)
@@ -1024,9 +1044,15 @@ impl RuleExecutor {
             None => 0.0,
         };
 
+        // Scale rounding tolerance with finite magnitude; non-finite values
+        // retain IEEE equality (NaN unequal, same-sign infinities equal).
+        let equal = left == right
+            || (left.is_finite()
+                && right.is_finite()
+                && (left - right).abs() <= f64::EPSILON * left.abs().max(right.abs()).max(1.0));
         match operator {
-            "==" | "eq" => (left - right).abs() < f64::EPSILON,
-            "!=" | "ne" => (left - right).abs() >= f64::EPSILON,
+            "==" | "eq" => equal,
+            "!=" | "ne" => !equal,
             ">" | "gt" => left > right,
             "<" | "lt" => left < right,
             ">=" | "gte" => left >= right,

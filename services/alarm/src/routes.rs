@@ -1704,7 +1704,8 @@ mod tests {
             .expect("created rule");
         let alert_id = db::insert_alert(&state.db, &rule, 95.0)
             .await
-            .expect("active alert");
+            .expect("insert active alert")
+            .expect("enabled rule");
 
         let response = create_routes(Arc::clone(&state))
             .oneshot(

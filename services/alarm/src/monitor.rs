@@ -276,7 +276,7 @@ async fn check_single_rule(state: Arc<AppState>, rule: crate::models::AlertRule)
         } else {
             // New alarm triggered
             match db::insert_alert(&state.db, &rule, current_value).await {
-                Ok(alert_id) => {
+                Ok(Some(alert_id)) => {
                     warn!(
                         "ALARM TRIGGERED: rule='{}' value={} {} {}",
                         rule.rule_name, current_value, rule.operator, rule.value
@@ -286,6 +286,12 @@ async fn check_single_rule(state: Arc<AppState>, rule: crate::models::AlertRule)
                         .publish_alarm(AlarmNotification::triggered(alert_id, &rule, current_value))
                         .await;
                     send_alarm_count_broadcast(&state).await;
+                },
+                Ok(None) => {
+                    debug!(
+                        "Rule '{}' disabled or deleted before alarm insertion",
+                        rule.rule_name
+                    );
                 },
                 Err(e) => {
                     error!(
@@ -426,6 +432,10 @@ pub async fn manual_check_rule(
         },
     }))
 }
+
+#[cfg(test)]
+#[path = "alarm_lifecycle_tests.rs"]
+mod alarm_lifecycle_tests;
 
 #[cfg(test)]
 mod interval_tests {

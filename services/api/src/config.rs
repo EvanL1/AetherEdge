@@ -69,15 +69,15 @@ impl Default for GatewayConfig {
                 .is_some_and(|value| explicit_opt_in(&value)),
             data_processing_config_path: env::var("AETHER_DATA_PROCESSING_CONFIG")
                 .unwrap_or_else(|_| "/app/data/config/data-processing/runtime.yaml".to_string()),
-            io_service_url: env::var("AETHER_IO_SERVICE_URL")
+            io_service_url: env::var("AETHER_IO_URL")
                 .unwrap_or_else(|_| "http://127.0.0.1:6001".to_string()),
-            automation_service_url: env::var("AETHER_AUTOMATION_SERVICE_URL")
+            automation_service_url: env::var("AETHER_AUTOMATION_URL")
                 .unwrap_or_else(|_| "http://127.0.0.1:6002".to_string()),
-            history_service_url: env::var("AETHER_HISTORY_SERVICE_URL")
+            history_service_url: env::var("AETHER_HISTORY_URL")
                 .unwrap_or_else(|_| "http://127.0.0.1:6004".to_string()),
-            uplink_service_url: env::var("AETHER_UPLINK_SERVICE_URL")
+            uplink_service_url: env::var("AETHER_UPLINK_URL")
                 .unwrap_or_else(|_| "http://127.0.0.1:6006".to_string()),
-            alarm_service_url: env::var("AETHER_ALARM_SERVICE_URL")
+            alarm_service_url: env::var("AETHER_ALARM_URL")
                 .unwrap_or_else(|_| "http://127.0.0.1:6007".to_string()),
             service_request_timeout_secs: common::env_or("AETHER_SERVICE_REQUEST_TIMEOUT_SECS", 60),
         }
@@ -94,6 +94,17 @@ fn explicit_opt_in(value: &str) -> bool {
 impl GatewayConfig {
     /// Loads configuration and rejects a missing or weak JWT signing secret.
     pub fn from_env() -> anyhow::Result<Self> {
+        for (retired, current) in [
+            ("AETHER_IO_SERVICE_URL", "AETHER_IO_URL"),
+            ("AETHER_AUTOMATION_SERVICE_URL", "AETHER_AUTOMATION_URL"),
+            ("AETHER_HISTORY_SERVICE_URL", "AETHER_HISTORY_URL"),
+            ("AETHER_UPLINK_SERVICE_URL", "AETHER_UPLINK_URL"),
+            ("AETHER_ALARM_SERVICE_URL", "AETHER_ALARM_URL"),
+        ] {
+            if env::var_os(retired).is_some() {
+                anyhow::bail!("{retired} is retired; use {current}");
+            }
+        }
         let jwt_secret = env::var("JWT_SECRET_KEY")
             .map_err(|_| anyhow::anyhow!("JWT_SECRET_KEY is required"))?;
         validate_jwt_secret(&jwt_secret).map_err(anyhow::Error::msg)?;
@@ -103,23 +114,14 @@ impl GatewayConfig {
             ..Self::default()
         };
         for (name, value) in [
-            ("AETHER_IO_SERVICE_URL", config.io_service_url.as_str()),
+            ("AETHER_IO_URL", config.io_service_url.as_str()),
             (
-                "AETHER_AUTOMATION_SERVICE_URL",
+                "AETHER_AUTOMATION_URL",
                 config.automation_service_url.as_str(),
             ),
-            (
-                "AETHER_HISTORY_SERVICE_URL",
-                config.history_service_url.as_str(),
-            ),
-            (
-                "AETHER_UPLINK_SERVICE_URL",
-                config.uplink_service_url.as_str(),
-            ),
-            (
-                "AETHER_ALARM_SERVICE_URL",
-                config.alarm_service_url.as_str(),
-            ),
+            ("AETHER_HISTORY_URL", config.history_service_url.as_str()),
+            ("AETHER_UPLINK_URL", config.uplink_service_url.as_str()),
+            ("AETHER_ALARM_URL", config.alarm_service_url.as_str()),
         ] {
             validate_internal_service_url(value)
                 .map_err(|message| anyhow::anyhow!("{name}: {message}"))?;
@@ -164,6 +166,85 @@ fn validate_jwt_secret(secret: &str) -> Result<(), &'static str> {
 #[cfg(test)]
 mod tests {
     use super::{explicit_opt_in, validate_internal_service_url, validate_jwt_secret};
+
+    const CHILD_CASE: &str = "AETHER_GATEWAY_TEST_CASE";
+
+    const UPSTREAMS: [(&str, &str); 5] = [
+        ("AETHER_IO_URL", "AETHER_IO_SERVICE_URL"),
+        ("AETHER_AUTOMATION_URL", "AETHER_AUTOMATION_SERVICE_URL"),
+        ("AETHER_HISTORY_URL", "AETHER_HISTORY_SERVICE_URL"),
+        ("AETHER_UPLINK_URL", "AETHER_UPLINK_SERVICE_URL"),
+        ("AETHER_ALARM_URL", "AETHER_ALARM_SERVICE_URL"),
+    ];
+
+    fn environment_child(case: &str) -> std::process::Command {
+        let mut child = std::process::Command::new(std::env::current_exe().expect("test binary"));
+        child.args([
+            "--exact",
+            "config::tests::gateway_environment_child",
+            "--ignored",
+            "--nocapture",
+        ]);
+        child.env(CHILD_CASE, case);
+        child.env("JWT_SECRET_KEY", "0123456789abcdef0123456789abcdef");
+        for (current, retired) in UPSTREAMS {
+            child.env_remove(current).env_remove(retired);
+        }
+        child
+    }
+
+    #[test]
+    fn gateway_uses_documented_service_urls() {
+        let mut child = environment_child("documented");
+        for (index, (current, _)) in UPSTREAMS.iter().enumerate() {
+            child.env(current, format!("http://127.0.0.1:{}", 16001 + index));
+        }
+        let output = child.output().expect("run isolated environment test");
+        assert!(
+            output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn gateway_rejects_retired_service_urls_even_with_current_names() {
+        for (current, retired) in UPSTREAMS {
+            for also_current in [false, true] {
+                let mut child = environment_child(retired);
+                child.env(retired, "http://127.0.0.1:17001");
+                if also_current {
+                    child.env(current, "http://127.0.0.1:18001");
+                }
+                let output = child.output().expect("run isolated environment test");
+                assert!(
+                    output.status.success(),
+                    "{retired}: {}{}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "isolated environment fixture invoked by parent tests"]
+    fn gateway_environment_child() {
+        let case = std::env::var(CHILD_CASE).expect("test case");
+        let result = super::GatewayConfig::from_env();
+        if case == "documented" {
+            let config = result.expect("valid documented variables");
+            assert_eq!(config.io_service_url, "http://127.0.0.1:16001");
+            assert_eq!(config.automation_service_url, "http://127.0.0.1:16002");
+            assert_eq!(config.history_service_url, "http://127.0.0.1:16003");
+            assert_eq!(config.uplink_service_url, "http://127.0.0.1:16004");
+            assert_eq!(config.alarm_service_url, "http://127.0.0.1:16005");
+        } else {
+            let error = result.err().expect("retired variable must fail startup");
+            assert!(error.to_string().contains(&case), "{error}");
+        }
+    }
 
     #[test]
     fn jwt_secret_must_be_at_least_256_bits() {

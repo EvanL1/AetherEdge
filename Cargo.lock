@@ -478,6 +478,7 @@ dependencies = [
  "common",
  "dashmap 6.2.1",
  "errors",
+ "fs2",
  "futures",
  "hex",
  "http-body-util",

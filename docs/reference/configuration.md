@@ -1,7 +1,7 @@
 ---
 title: Configuration Reference
 description: YAML configuration schema, protocol channel authority, the sync pipeline, and environment variables
-updated: 2026-08-02
+updated: 2026-10-02
 ---
 
 # Configuration Reference
@@ -166,11 +166,15 @@ gates):
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `AETHER_BASE_PATH` | `./data` | Base path for site configuration and databases; logs use `AETHER_LOG_PATH` |
+| `AETHER_LOG_PATH` | `./logs` in Compose | Host log directory mounted into containers; also used by CLI log commands |
+| `AETHER_TIMESCALE_DATA_PATH` | `./data/timescaledb/data` | Host database directory for the opt-in Compose `postgres-storage` profile |
+| `TIMESCALEDB_USER` | `postgres` | Database user for the opt-in Compose `postgres-storage` profile |
+| `TIMESCALEDB_PASSWORD` | unset (required for that profile) | Password for the optional TimescaleDB container |
+| `AETHER_API_HOST` | `0.0.0.0` | Compose input forwarded as the gateway's `API_HOST`; set `127.0.0.1` to restrict it to local clients |
 | `HOST_UID` | `1000` | User id for container processes; must match the host user to avoid file-permission issues |
 | `HOST_GID` | `1000` | Group id for container processes; pairs with `HOST_UID` |
 | `DIALOUT_GID` | `20` | Dialout group id for serial-port access (Linux only) |
 | `AETHER_API_URL` | `http://localhost:6005` | API gateway base URL for the `aether` CLI data plane and MCP; the only remote application boundary |
-| `AETHER_IO_URL` | `http://127.0.0.1:6001` | Loopback io base URL used by the automation service's io calls; not read by the CLI |
 | `AETHER_SHM_PATH` | platform-selected tmpfs path | Canonical authoritative point-state segment shared by io and read-only consumers |
 | `AETHER_CHANNEL_HEALTH_SHM_PATH` | sibling `*-health` path | Separate authoritative channel-connectivity segment; normally derived from `AETHER_SHM_PATH` |
 | `SHM_WRITER_STALE_AFTER_MS` | `30000` | Maximum writer-heartbeat age accepted by read-side SHM adapters |
@@ -179,6 +183,7 @@ gates):
 | `JWT_SECRET_KEY` | unset (required) | Shared 32-byte-or-longer access-JWT signing/verification secret for aether-api plus governed io, automation, and alarm operations; installers generate it and keep it outside configuration assets |
 | `AETHER_ACCESS_TOKEN` | unset | Signed access JWT the `aether` CLI data plane and MCP attach to every gateway request. A Viewer token covers queries; governed writes — channel commissioning/lifecycle, device commands, action-routing changes, automation/alarm policy, and MCP's 22 write tools — require an Admin or Engineer token |
 | `AETHER_UPLINK_CONTROL_TOKEN` | unset | Separate 32-byte-or-longer service credential used only for uplink-to-automation device commands; installers generate it and never print it |
+| `DEVICE_SN` | unset | Installer-provisioned uplink device identity when configured as `auto`; a hardware serial takes priority, then the host name is the fallback |
 | `AETHER_CONFIG_PATH` | unset | Shared configuration directory used by automation and `aether mcp`; CLI path resolution may set it through deployment context or `--config-path` |
 | `AETHER_DATA_PATH` | unset | Overrides the install-context data directory for the `aether` CLI |
 | `AETHER_INSTALL_CONTEXT_PATH` | `/etc/aether/install.yaml` | Overrides the installed layout descriptor; CLI flags and the two path variables take precedence |
@@ -203,27 +208,29 @@ other than the defaults must set them per process.
 | `API_PORT` | api | `6005` | The one remote application boundary |
 | `API_PORT` | uplink | `6006` | Loopback listen port |
 | `SERVICE_PORT` | alarm | `6007` | Loopback listen port |
-| `API_HOST` / `SERVICE_HOST` | all | `127.0.0.1` | Bind address; only the gateway should ever leave loopback |
+| `API_HOST` | api | `0.0.0.0` | Gateway bind address; Compose forwards `AETHER_API_HOST` |
+| `API_HOST` / `SERVICE_HOST` | internal services | `127.0.0.1` | Loopback bind address; exact variable depends on service |
 
-### Gateway upstream addresses
+### Internal service addresses
 
-`aether-api` resolves each internal service through its own variable. These are
-distinct from `AETHER_IO_URL` and friends above, which other services and the
-CLI use for their own outbound calls — setting those does not move the gateway.
-A wrong or unset value here fails silently: the gateway falls back to the
-default port and answers with another instance's data.
+`aether-api` and internal service clients use the same `AETHER_*_URL` names.
+The gateway accepts only HTTP origins with an explicit loopback port; malformed
+or non-loopback values fail startup. Compose forwards these values from `.env`
+to the gateway. The CLI and MCP use only `AETHER_API_URL`.
 
 | Variable | Default |
 |----------|---------|
-| `AETHER_IO_SERVICE_URL` | `http://127.0.0.1:6001` |
-| `AETHER_AUTOMATION_SERVICE_URL` | `http://127.0.0.1:6002` |
-| `AETHER_HISTORY_SERVICE_URL` | `http://127.0.0.1:6004` |
-| `AETHER_UPLINK_SERVICE_URL` | `http://127.0.0.1:6006` |
-| `AETHER_ALARM_SERVICE_URL` | `http://127.0.0.1:6007` |
+| `AETHER_IO_URL` | `http://127.0.0.1:6001` in the gateway; `http://localhost:6001` in internal clients |
+| `AETHER_AUTOMATION_URL` | `http://127.0.0.1:6002` in the gateway; `http://localhost:6002` in internal clients |
+| `AETHER_HISTORY_URL` | `http://127.0.0.1:6004` |
+| `AETHER_UPLINK_URL` | `http://127.0.0.1:6006` in the gateway; `http://localhost:6006` in alarm |
+| `AETHER_ALARM_URL` | `http://127.0.0.1:6007` |
 | `AETHER_SERVICE_REQUEST_TIMEOUT_SECS` | `60` |
 
-The alarm service makes its own outbound call rather than going through the
-gateway, and reads `AETHER_UPLINK_URL` (default `http://localhost:6006`) for it.
+Remove the retired `AETHER_IO_SERVICE_URL`, `AETHER_AUTOMATION_SERVICE_URL`,
+`AETHER_HISTORY_SERVICE_URL`, `AETHER_UPLINK_SERVICE_URL`, and
+`AETHER_ALARM_SERVICE_URL` variables. The gateway rejects their presence,
+including empty values or configurations that also set the current name.
 
 ### Storage and IPC paths
 
@@ -246,6 +253,10 @@ gateway, and reads `AETHER_UPLINK_URL` (default `http://localhost:6006`) for it.
 
 Running two instances on one host means giving the second one its own value for
 every path above as well as its own ports — the defaults are machine-global.
+IO holds an exclusive `.writer.lock` sidecar for each point and health SHM path
+throughout its lifetime. A second IO using either path fails before changing
+the topology. Locks are released by the OS on exit, including crashes; keep the
+sidecars in place while IO is running.
 
 ### Timing and session lifetimes
 

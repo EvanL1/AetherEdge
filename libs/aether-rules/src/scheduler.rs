@@ -31,6 +31,53 @@ use tracing::{debug, error, info, warn};
 /// Default scheduler tick interval (100ms)
 pub const DEFAULT_TICK_MS: u64 = 100;
 
+// A stalled action must not hold up later rules or scheduler ticks.
+const RULE_EXECUTION_TIMEOUT: Duration = Duration::from_secs(30);
+
+struct ExecutionAttempt {
+    result: Result<RuleExecutionResult>,
+    timed_out: bool,
+}
+
+impl ExecutionAttempt {
+    fn hold_automatic_retry(&self) -> bool {
+        self.timed_out
+            || self.result.as_ref().is_ok_and(|result| {
+                !result.success
+                    && result
+                        .actions_executed
+                        .iter()
+                        .any(|action| action.success && action.point_type == "A")
+            })
+    }
+}
+
+async fn execute_with_timeout(executor: &RuleExecutor, rule: &Rule) -> ExecutionAttempt {
+    let (result, timed_out) = match tokio::time::timeout(RULE_EXECUTION_TIMEOUT, executor.execute(rule)).await {
+        Ok(result) => (result, false),
+        Err(_) => (Ok(RuleExecutionResult {
+            rule_id: rule.id,
+            success: false,
+            actions_executed: Vec::new(),
+            error: Some("Rule execution timed out after 30 seconds; device command outcome may be unknown".to_string()),
+            execution_path: Vec::new(),
+            matched_condition: None,
+            variable_values: Arc::new(HashMap::new()),
+            point_values: Arc::new(HashMap::new()),
+            node_details: HashMap::new(),
+        }), true),
+    };
+    let mut attempt = ExecutionAttempt { result, timed_out };
+    if attempt.hold_automatic_retry()
+        && let Ok(result) = &mut attempt.result
+    {
+        result.error.get_or_insert_default().push_str(
+            "; automatic retries held for this input; reconcile device state before explicit execution or changing the rule",
+        );
+    }
+    attempt
+}
+
 /// Reference to a single point inside an instance.
 ///
 /// Used by `TriggerConfig::OnChange` to identify which points a rule
@@ -202,9 +249,130 @@ struct ScheduledRule {
     last_execution: Option<Instant>,
     /// Track last cooldown trigger time
     last_cooldown_start: Option<Instant>,
+    /// An incomplete execution may already have changed a physical device.
+    /// Keep its input separate from the last successful OnChange baseline.
+    retry_hold: Option<Arc<HashMap<String, Option<f64>>>>,
     /// OnChange-specific state (last seen values + last trigger time).
     /// Default for Interval rules; populated only for OnChange rules.
     onchange_state: OnChangeState,
+}
+
+// Capture the execution definition and retry hold at selection time. A newer
+// uncertain outcome replaces the hold Arc, fencing off older completions.
+struct ExecutionSelection {
+    rule: Arc<Rule>,
+    trigger: TriggerConfig,
+    retry_hold: Option<Arc<HashMap<String, Option<f64>>>>,
+}
+
+fn same_execution_definition(
+    left: &Rule,
+    left_trigger: &TriggerConfig,
+    right: &Rule,
+    right_trigger: &TriggerConfig,
+) -> bool {
+    left.id == right.id
+        && left.enabled == right.enabled
+        && matches!((serde_json::to_value(left_trigger), serde_json::to_value(right_trigger)),
+            (Ok(left), Ok(right)) if left == right)
+        && matches!((serde_json::to_value(&left.flow), serde_json::to_value(&right.flow)),
+            (Ok(left), Ok(right)) if left == right)
+}
+
+fn trigger_subscriptions(trigger: &TriggerConfig) -> HashSet<PointRef> {
+    match trigger {
+        TriggerConfig::OnChange { point_refs, .. } => point_refs.iter().copied().collect(),
+        TriggerConfig::Interval { .. } => HashSet::new(),
+    }
+}
+
+impl ScheduledRule {
+    fn select_execution(&self) -> ExecutionSelection {
+        ExecutionSelection {
+            rule: Arc::clone(&self.rule),
+            trigger: self.trigger.clone(),
+            retry_hold: self.retry_hold.clone(),
+        }
+    }
+
+    fn accepts_completion(&self, selection: &ExecutionSelection) -> bool {
+        same_execution_definition(
+            &self.rule,
+            &self.trigger,
+            &selection.rule,
+            &selection.trigger,
+        ) && match (&self.retry_hold, &selection.retry_hold) {
+            (None, None) => true,
+            (Some(current), Some(selected)) => Arc::ptr_eq(current, selected),
+            _ => false,
+        }
+    }
+
+    fn automatic_retry_held(&self, snapshot: &HashMap<String, Option<f64>>) -> bool {
+        let Some(held) = &self.retry_hold else {
+            return false;
+        };
+        match &self.trigger {
+            TriggerConfig::Interval { .. } => true,
+            TriggerConfig::OnChange { point_refs, .. } => !point_refs.iter().any(|point| {
+                let key = point.cache_key();
+                snapshot
+                    .get(&key)
+                    .copied()
+                    .flatten()
+                    .filter(|value| value.is_finite())
+                    .is_some_and(|value| {
+                        held.get(&key)
+                            .copied()
+                            .flatten()
+                            .is_none_or(|prior| prior.total_cmp(&value).is_ne())
+                    })
+            }),
+        }
+    }
+
+    fn set_retry_hold(&mut self, hold: bool, snapshot: &HashMap<String, Option<f64>>) {
+        self.retry_hold = hold.then(|| {
+            Arc::new(match &self.trigger {
+                TriggerConfig::Interval { .. } => HashMap::new(),
+                TriggerConfig::OnChange { point_refs, .. } => point_refs
+                    .iter()
+                    .map(|point| {
+                        let key = point.cache_key();
+                        let value = snapshot
+                            .get(&key)
+                            .copied()
+                            .flatten()
+                            .filter(|value| value.is_finite());
+                        (key, value)
+                    })
+                    .collect(),
+            })
+        });
+    }
+
+    fn advance_onchange(
+        &mut self,
+        point_values: &HashMap<String, f64>,
+        snapshot: &HashMap<String, Option<f64>>,
+        now: Instant,
+    ) {
+        if let TriggerConfig::OnChange { point_refs, .. } = &self.trigger {
+            for point in point_refs {
+                let key = point.cache_key();
+                let value = point_values
+                    .get(&key)
+                    .copied()
+                    .or_else(|| snapshot.get(&key).copied().flatten());
+                if let Some(value) = value
+                    && value.is_finite()
+                {
+                    self.onchange_state.last_value.insert(key, value);
+                }
+            }
+            self.onchange_state.last_trigger = Some(now);
+        }
+    }
 }
 
 /// Resolve a rule's trigger from its stored `trigger_config`.
@@ -245,6 +413,11 @@ fn preserve_schedule_state(previous: &[ScheduledRule], loaded: &mut [ScheduledRu
         entry.last_execution = prior.last_execution;
         entry.last_cooldown_start = prior.last_cooldown_start;
         entry.onchange_state = prior.onchange_state.clone();
+        // Metadata edits and unrelated reloads do not authorize retrying a
+        // potentially accepted command. Only an execution-definition change does.
+        if same_execution_definition(&entry.rule, &entry.trigger, &prior.rule, &prior.trigger) {
+            entry.retry_hold.clone_from(&prior.retry_hold);
+        }
     }
 }
 
@@ -419,6 +592,7 @@ impl RuleScheduler {
                     trigger,
                     last_execution: None,
                     last_cooldown_start: None,
+                    retry_hold: None,
                     onchange_state: OnChangeState::default(),
                 }
             })
@@ -542,13 +716,12 @@ impl RuleScheduler {
         };
 
         // ── Phase 1: read-lock filter (sync, fast) ──────────────────────────
-        let rules_to_execute: Vec<(usize, Arc<Rule>, bool)> = {
+        let rules_to_execute: Vec<(ExecutionSelection, bool)> = {
             let rules = self.rules.read().await;
             rules
                 .iter()
-                .enumerate()
-                .filter_map(|(idx, scheduled)| {
-                    if !scheduled.rule.enabled {
+                .filter_map(|scheduled| {
+                    if !scheduled.rule.enabled || scheduled.automatic_retry_held(&snapshot) {
                         return None;
                     }
 
@@ -591,7 +764,7 @@ impl RuleScheduler {
                     };
 
                     if should_execute && cooldown_ok {
-                        Some((idx, Arc::clone(&scheduled.rule), is_onchange))
+                        Some((scheduled.select_execution(), is_onchange))
                     } else {
                         None
                     }
@@ -608,30 +781,37 @@ impl RuleScheduler {
         use futures::stream::{self, StreamExt};
 
         struct ExecutionOutcome {
-            idx: usize,
             rule_id: i64,
             rule_name: String,
             is_onchange: bool,
-            result: Result<RuleExecutionResult>,
+            attempt: ExecutionAttempt,
+            selection: ExecutionSelection,
+            retry_input: Option<HashMap<String, Option<f64>>>,
         }
 
         // Execute rules concurrently (max self.max_concurrency parallel)
         let executor = Arc::clone(&self.executor);
         let execution_futures = rules_to_execute
             .into_iter()
-            .map(|(idx, rule, is_onchange)| {
+            .map(|(selection, is_onchange)| {
                 let executor = Arc::clone(&executor);
+                let snapshot = &snapshot;
                 async move {
+                    let rule = &selection.rule;
                     debug!("Executing rule: {}", rule.id);
                     let rule_id = rule.id;
                     let rule_name = rule.name.clone();
-                    let result = executor.execute(&rule).await;
+                    let attempt = execute_with_timeout(&executor, rule).await;
+                    let retry_input = self
+                        .retry_input(&attempt, &selection.trigger, snapshot)
+                        .await;
                     ExecutionOutcome {
-                        idx,
                         rule_id,
                         rule_name,
                         is_onchange,
-                        result,
+                        attempt,
+                        selection,
+                        retry_input,
                     }
                 }
             });
@@ -643,19 +823,22 @@ impl RuleScheduler {
 
         // Process results sequentially (logging and local history writes)
         struct TimestampUpdate {
-            idx: usize,
             rule_id: i64,
             start_cooldown: bool,
+            hold_retry: bool,
             is_onchange: bool,
             /// Per-point values surfaced by the executor (SHM-first read).
             /// Used to advance OnChange last_value against what executor
             /// actually saw from SHM.
             executor_point_values: Arc<HashMap<String, f64>>,
+            selection: ExecutionSelection,
+            retry_input: Option<HashMap<String, Option<f64>>>,
         }
         let mut updates: Vec<TimestampUpdate> = Vec::with_capacity(execution_results.len());
 
         for outcome in execution_results {
-            match outcome.result {
+            let hold_retry = outcome.attempt.hold_automatic_retry();
+            match outcome.attempt.result {
                 Ok(result) => {
                     // Log rule execution to independent rule log file
                     let logger = self
@@ -681,22 +864,26 @@ impl RuleScheduler {
 
                     let executor_point_values = Arc::clone(&result.point_values);
                     updates.push(TimestampUpdate {
-                        idx: outcome.idx,
                         rule_id: outcome.rule_id,
                         start_cooldown,
-                        is_onchange: outcome.is_onchange,
+                        hold_retry,
+                        is_onchange: outcome.is_onchange && result.success,
                         executor_point_values,
+                        selection: outcome.selection,
+                        retry_input: outcome.retry_input,
                     });
                 },
                 Err(e) => {
                     error!("Rule {} err: {}", outcome.rule_id, e);
                     // Still update last_execution to prevent retry spam
                     updates.push(TimestampUpdate {
-                        idx: outcome.idx,
                         rule_id: outcome.rule_id,
                         start_cooldown: false,
-                        is_onchange: outcome.is_onchange,
+                        hold_retry,
+                        is_onchange: false,
                         executor_point_values: Arc::new(HashMap::new()),
+                        selection: outcome.selection,
+                        retry_input: outcome.retry_input,
                     });
                 },
             }
@@ -706,40 +893,26 @@ impl RuleScheduler {
         if !updates.is_empty() {
             let mut rules = self.rules.write().await;
             for update in updates {
-                if let Some(scheduled) = rules.get_mut(update.idx) {
-                    // Verify rule ID matches (safety check against concurrent modifications)
-                    if scheduled.rule.id != update.rule_id {
+                if let Some(scheduled) = rules
+                    .iter_mut()
+                    .find(|scheduled| scheduled.rule.id == update.rule_id)
+                {
+                    if !self
+                        .accept_or_hold_completion(scheduled, &update.selection, update.hold_retry)
+                        .await
+                    {
                         continue;
                     }
                     scheduled.last_execution = Some(now);
+                    scheduled.set_retry_hold(
+                        update.hold_retry,
+                        update.retry_input.as_ref().unwrap_or(&snapshot),
+                    );
                     if update.start_cooldown {
                         scheduled.last_cooldown_start = Some(now);
                     }
-                    // For OnChange rules, advance per-point last_value to the
-                    // values we just sampled in Phase 0. This is what gives
-                    // the deadband its memory: future ticks compare against
-                    // the value at the moment of this trigger, not the
-                    // ever-changing latest sample.
-                    if update.is_onchange
-                        && let TriggerConfig::OnChange { point_refs, .. } = &scheduled.trigger
-                    {
-                        for pref in point_refs {
-                            let key = pref.cache_key();
-                            // Prefer the executor's actual SHM read. Fall back
-                            // to the phase-0 SHM snapshot only when the executor
-                            // did not use this point in the current flow.
-                            let v_opt = update
-                                .executor_point_values
-                                .get(&key)
-                                .copied()
-                                .or_else(|| snapshot.get(&key).and_then(|opt| *opt));
-                            if let Some(v) = v_opt
-                                && v.is_finite()
-                            {
-                                scheduled.onchange_state.last_value.insert(key, v);
-                            }
-                        }
-                        scheduled.onchange_state.last_trigger = Some(now);
+                    if update.is_onchange {
+                        scheduled.advance_onchange(&update.executor_point_values, &snapshot, now);
                     }
                 }
             }
@@ -771,8 +944,119 @@ impl RuleScheduler {
         // Load the rule from database
         let rule = repository::get_rule_for_execution(&self.pool, rule_id).await?;
 
-        // Execute it
-        self.executor.execute(&rule).await
+        let (trigger, _) = resolve_trigger(rule.trigger_config.as_deref(), rule.cooldown_ms);
+        let selection = self
+            .rules
+            .read()
+            .await
+            .iter()
+            .find(|scheduled| {
+                same_execution_definition(&scheduled.rule, &scheduled.trigger, &rule, &trigger)
+            })
+            .map(ScheduledRule::select_execution);
+        let subscriptions = trigger_subscriptions(&trigger);
+        let snapshot = self.fetch_point_snapshot(&subscriptions).await;
+        let attempt = execute_with_timeout(&self.executor, &rule).await;
+        let retry_input = self.retry_input(&attempt, &trigger, &snapshot).await;
+        let hold_retry = attempt.hold_automatic_retry();
+        if hold_retry && let Ok(result) = &attempt.result {
+            self.logger_manager
+                .get_logger(rule.id, &rule.name)
+                .log_execution(result, &result.variable_values);
+            self.write_rule_exec(rule.id, &rule.name, result).await;
+        }
+        {
+            let mut rules = self.rules.write().await;
+            if let Some(selection) = &selection
+                && let Some(scheduled) = rules
+                    .iter_mut()
+                    .find(|scheduled| scheduled.rule.id == rule_id)
+                && self
+                    .accept_or_hold_completion(scheduled, selection, hold_retry)
+                    .await
+            {
+                if hold_retry {
+                    scheduled.set_retry_hold(true, retry_input.as_ref().unwrap_or(&snapshot));
+                } else if scheduled.retry_hold.is_some()
+                    && let Ok(result) = &attempt.result
+                    && result.success
+                {
+                    // Explicit successful execution reconciles a held rule and
+                    // consumes this input so the next automatic tick cannot duplicate it.
+                    let now = Instant::now();
+                    scheduled.set_retry_hold(false, &snapshot);
+                    scheduled.last_execution = Some(now);
+                    if !result.actions_executed.is_empty() {
+                        scheduled.last_cooldown_start = Some(now);
+                    }
+                    scheduled.advance_onchange(&result.point_values, &snapshot, now);
+                }
+            }
+        }
+        if attempt.timed_out {
+            return Err(crate::RuleError::SchedulerError(format!(
+                "Rule {rule_id} execution timed out after 30 seconds; device command outcome may be unknown; reconcile before retrying"
+            )));
+        }
+        attempt.result
+    }
+
+    async fn accept_or_hold_completion(
+        &self,
+        scheduled: &mut ScheduledRule,
+        selection: &ExecutionSelection,
+        hold_retry: bool,
+    ) -> bool {
+        if scheduled.accepts_completion(selection) {
+            return true;
+        }
+        if hold_retry
+            && same_execution_definition(
+                &scheduled.rule,
+                &scheduled.trigger,
+                &selection.rule,
+                &selection.trigger,
+            )
+        {
+            // Another completion changed the hold. An uncertain outcome still
+            // needs protection: hold current inputs without consuming a change
+            // or restoring the older execution's input/timestamps.
+            let snapshot = self
+                .fetch_point_snapshot(&trigger_subscriptions(&scheduled.trigger))
+                .await;
+            scheduled.set_retry_hold(true, &snapshot);
+        }
+        false
+    }
+
+    async fn retry_input(
+        &self,
+        attempt: &ExecutionAttempt,
+        trigger: &TriggerConfig,
+        snapshot: &HashMap<String, Option<f64>>,
+    ) -> Option<HashMap<String, Option<f64>>> {
+        if !attempt.hold_automatic_retry() {
+            return None;
+        }
+        let mut input = if attempt.timed_out {
+            // Timeout cancelled the result before its read values were returned.
+            self.fetch_point_snapshot(&trigger_subscriptions(trigger))
+                .await
+        } else {
+            snapshot.clone()
+        };
+        if !attempt.timed_out
+            && let Ok(result) = &attempt.result
+        {
+            input.extend(
+                result
+                    .point_values
+                    .iter()
+                    .filter(|(_, value)| value.is_finite())
+                    .map(|(key, value)| (key.clone(), Some(*value))),
+            );
+        }
+        Some(input)
     }
 
     /// Batch-fetch current values for all subscribed points.
@@ -847,13 +1131,15 @@ impl RuleScheduler {
         }
         let snapshot = self.fetch_point_snapshot(&subscriptions).await;
 
-        let to_execute: Vec<(usize, Arc<crate::types::Rule>)> = {
+        let to_execute: Vec<ExecutionSelection> = {
             let rules = self.rules.read().await;
             rules
                 .iter()
-                .enumerate()
-                .filter_map(|(idx, scheduled)| {
-                    if !scheduled.rule.enabled || !rule_id_set.contains(&scheduled.rule.id) {
+                .filter_map(|scheduled| {
+                    if !scheduled.rule.enabled
+                        || !rule_id_set.contains(&scheduled.rule.id)
+                        || scheduled.automatic_retry_held(&snapshot)
+                    {
                         return None;
                     }
                     let TriggerConfig::OnChange {
@@ -877,7 +1163,7 @@ impl RuleScheduler {
                             now.duration_since(start).as_millis() as u64
                                 >= scheduled.rule.cooldown_ms
                         });
-                    (changed && cooldown_ok).then(|| (idx, Arc::clone(&scheduled.rule)))
+                    (changed && cooldown_ok).then(|| scheduled.select_execution())
                 })
                 .collect()
         };
@@ -889,52 +1175,61 @@ impl RuleScheduler {
         // Execute the matching rules
         use futures::stream::{self, StreamExt};
         let executor = Arc::clone(&self.executor);
-        let results: Vec<(usize, i64, String, Result<RuleExecutionResult>)> =
-            stream::iter(to_execute.into_iter().map(|(idx, rule)| {
-                let executor = Arc::clone(&executor);
-                async move {
-                    let id = rule.id;
-                    let name = rule.name.clone();
-                    let result = executor.execute(&rule).await;
-                    (idx, id, name, result)
-                }
-            }))
-            .buffer_unordered(self.max_concurrency)
-            .collect()
-            .await;
+        let results: Vec<_> = stream::iter(to_execute.into_iter().map(|selection| {
+            let executor = Arc::clone(&executor);
+            let snapshot = &snapshot;
+            async move {
+                let attempt = execute_with_timeout(&executor, &selection.rule).await;
+                let retry_input = self
+                    .retry_input(&attempt, &selection.trigger, snapshot)
+                    .await;
+                (selection, attempt, retry_input)
+            }
+        }))
+        .buffer_unordered(self.max_concurrency)
+        .collect()
+        .await;
 
         struct WatchUpdate {
-            idx: usize,
             rule_id: i64,
             start_cooldown: bool,
+            hold_retry: bool,
             advance_onchange: bool,
             point_values: Arc<HashMap<String, f64>>,
+            selection: ExecutionSelection,
+            retry_input: Option<HashMap<String, Option<f64>>>,
         }
         let mut updates = Vec::with_capacity(results.len());
-        for (idx, rule_id, rule_name, result) in results {
-            match result {
+        for (selection, attempt, retry_input) in results {
+            let rule_id = selection.rule.id;
+            let rule_name = &selection.rule.name;
+            let hold_retry = attempt.hold_automatic_retry();
+            match attempt.result {
                 Ok(exec_result) => {
-                    let logger = self.logger_manager.get_logger(rule_id, &rule_name);
+                    let logger = self.logger_manager.get_logger(rule_id, rule_name);
                     logger.log_execution(&exec_result, &exec_result.variable_values);
-                    self.write_rule_exec(rule_id, &rule_name, &exec_result)
-                        .await;
+                    self.write_rule_exec(rule_id, rule_name, &exec_result).await;
                     updates.push(WatchUpdate {
-                        idx,
                         rule_id,
                         start_cooldown: exec_result.success
                             && !exec_result.actions_executed.is_empty(),
-                        advance_onchange: true,
+                        hold_retry,
+                        advance_onchange: exec_result.success,
                         point_values: Arc::clone(&exec_result.point_values),
+                        selection,
+                        retry_input,
                     });
                 },
                 Err(error) => {
                     error!("Watch-triggered rule {} err: {}", rule_id, error);
                     updates.push(WatchUpdate {
-                        idx,
                         rule_id,
                         start_cooldown: false,
+                        hold_retry,
                         advance_onchange: false,
                         point_values: Arc::new(HashMap::new()),
+                        selection,
+                        retry_input,
                     });
                 },
             }
@@ -943,33 +1238,28 @@ impl RuleScheduler {
         if !updates.is_empty() {
             let mut rules = self.rules.write().await;
             for update in updates {
-                let Some(scheduled) = rules.get_mut(update.idx) else {
+                let Some(scheduled) = rules
+                    .iter_mut()
+                    .find(|scheduled| scheduled.rule.id == update.rule_id)
+                else {
                     continue;
                 };
-                if scheduled.rule.id != update.rule_id {
+                if !self
+                    .accept_or_hold_completion(scheduled, &update.selection, update.hold_retry)
+                    .await
+                {
                     continue;
                 }
                 scheduled.last_execution = Some(now);
+                scheduled.set_retry_hold(
+                    update.hold_retry,
+                    update.retry_input.as_ref().unwrap_or(&snapshot),
+                );
                 if update.start_cooldown {
                     scheduled.last_cooldown_start = Some(now);
                 }
-                if update.advance_onchange
-                    && let TriggerConfig::OnChange { point_refs, .. } = &scheduled.trigger
-                {
-                    for pref in point_refs {
-                        let key = pref.cache_key();
-                        let value = update
-                            .point_values
-                            .get(&key)
-                            .copied()
-                            .or_else(|| snapshot.get(&key).and_then(|value| *value));
-                        if let Some(value) = value
-                            && value.is_finite()
-                        {
-                            scheduled.onchange_state.last_value.insert(key, value);
-                        }
-                    }
-                    scheduled.onchange_state.last_trigger = Some(now);
+                if update.advance_onchange {
+                    scheduled.advance_onchange(&update.point_values, &snapshot, now);
                 }
             }
         }
@@ -1133,7 +1423,7 @@ mod tests {
         }
     }
 
-    fn create_action_rule(id: i64, cooldown_ms: u64) -> Rule {
+    pub(super) fn create_action_rule(id: i64, cooldown_ms: u64) -> Rule {
         let nodes = HashMap::from([
             (
                 "start".to_string(),
@@ -1179,7 +1469,7 @@ mod tests {
         }
     }
 
-    async fn rule_pool(rule: &Rule) -> SqlitePool {
+    pub(super) async fn rule_pool(rule: &Rule) -> SqlitePool {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
             .connect("sqlite::memory:")
@@ -1263,6 +1553,7 @@ mod tests {
             trigger: TriggerConfig::Interval { interval_ms: 1 },
             last_execution: None,
             last_cooldown_start: None,
+            retry_hold: None,
             onchange_state: OnChangeState::default(),
         });
 
@@ -1285,6 +1576,7 @@ mod tests {
             trigger: TriggerConfig::Interval { interval_ms: 500 },
             last_execution: None,
             last_cooldown_start: None,
+            retry_hold: None,
             onchange_state: OnChangeState::default(),
         };
 
@@ -1308,6 +1600,7 @@ mod tests {
             trigger: TriggerConfig::Interval { interval_ms: 100 },
             last_execution: None,
             last_cooldown_start: None,
+            retry_hold: None,
             onchange_state: OnChangeState::default(),
         };
 
@@ -1316,6 +1609,7 @@ mod tests {
             trigger: TriggerConfig::Interval { interval_ms: 200 },
             last_execution: None,
             last_cooldown_start: None,
+            retry_hold: None,
             onchange_state: OnChangeState::default(),
         };
 
@@ -1377,6 +1671,7 @@ mod tests {
             },
             last_execution: None,
             last_cooldown_start: None,
+            retry_hold: None,
             onchange_state,
         });
 
@@ -1840,6 +2135,7 @@ mod tests {
             trigger: TriggerConfig::default(),
             last_execution: Some(now),
             last_cooldown_start: Some(now),
+            retry_hold: None,
             onchange_state: onchange,
         }];
         let mut loaded = vec![
@@ -1848,6 +2144,7 @@ mod tests {
                 trigger: TriggerConfig::default(),
                 last_execution: None,
                 last_cooldown_start: None,
+                retry_hold: None,
                 onchange_state: OnChangeState::default(),
             },
             ScheduledRule {
@@ -1855,6 +2152,7 @@ mod tests {
                 trigger: TriggerConfig::default(),
                 last_execution: None,
                 last_cooldown_start: None,
+                retry_hold: None,
                 onchange_state: OnChangeState::default(),
             },
         ];
@@ -1914,4 +2212,329 @@ mod tests {
         };
         assert_eq!(interval_ms, 1_000);
     }
+    struct HangingActionCommands {
+        entered: tokio::sync::Notify,
+    }
+
+    #[async_trait]
+    impl RuleActionCommandFacade for HangingActionCommands {
+        async fn write_action(&self, _command: RuleActionCommand) -> PortResult<CommandReceipt> {
+            self.entered.notify_one();
+            std::future::pending().await
+        }
+    }
+
+    pub(super) async fn add_test_history(pool: &SqlitePool) {
+        sqlx::query("CREATE TABLE rule_history (rule_id INTEGER, triggered_at TEXT, execution_result TEXT, error TEXT)")
+            .execute(pool).await.expect("create history");
+    }
+
+    #[derive(Default)]
+    struct PartiallyAcceptedCommands(std::sync::atomic::AtomicUsize);
+
+    #[async_trait]
+    impl RuleActionCommandFacade for PartiallyAcceptedCommands {
+        async fn write_action(&self, _command: RuleActionCommand) -> PortResult<CommandReceipt> {
+            let call = self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if call.is_multiple_of(2) {
+                Ok(CommandReceipt::new(
+                    aether_domain::CommandId::new(1),
+                    aether_domain::TimestampMs::new(1),
+                ))
+            } else {
+                Err(aether_ports::PortError::new(
+                    aether_ports::PortErrorKind::Rejected,
+                    "second action rejected",
+                ))
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn regression_partial_device_actions_are_not_replayed_for_unchanged_inputs() {
+        for mode in ["tick", "watch", "interval"] {
+            let point = PointRef {
+                instance: 42,
+                point_type: PointKind::Measurement,
+                point: 7,
+            };
+            let trigger = if mode == "interval" {
+                TriggerConfig::Interval { interval_ms: 0 }
+            } else {
+                TriggerConfig::OnChange {
+                    point_refs: vec![point],
+                    time_deadband_ms: None,
+                    value_deadband: None,
+                }
+            };
+            let mut rule = create_action_rule(89, 0);
+            rule.trigger_config = Some(serde_json::to_string(&trigger).expect("trigger"));
+            if let RuleNode::ChangeValue {
+                rule: assignments, ..
+            } = rule.flow.nodes.get_mut("action").expect("action")
+            {
+                assignments.push(RuleValueAssignment {
+                    variables: "TARGET".to_string(),
+                    value: json!(2.0),
+                });
+            }
+            let pool = rule_pool(&rule).await;
+            add_test_history(&pool).await;
+            let live = Arc::new(crate::MemoryRuleLiveState::new());
+            assert!(live.set_instance(42, 0, 7, 2.0, 1));
+            let commands = Arc::new(PartiallyAcceptedCommands::default());
+            let logs = tempfile::tempdir().expect("logs");
+            let scheduler = RuleScheduler::with_state_store(
+                live.clone(),
+                pool,
+                100,
+                logs.path().to_path_buf(),
+                Arc::new(MemoryStateStore::new()),
+                Some(commands.clone()),
+            );
+            scheduler.load_rules().await.expect("load rules");
+            scheduler.rules.write().await[0]
+                .onchange_state
+                .last_value
+                .insert(point.cache_key(), 1.0);
+            let event = crate::point_watch_dispatcher::WatchEvent {
+                rule_ids: vec![89],
+                channel_id: 1,
+                point_kind: aether_domain::PointKind::Telemetry,
+                point_id: 7,
+                value: 2.0,
+                raw: 2.0,
+                timestamp_ms: 1,
+            };
+            if mode == "watch" {
+                scheduler
+                    .execute_watch_triggered(&event)
+                    .await
+                    .expect("first watch");
+            } else {
+                scheduler.tick().await.expect("first tick");
+            }
+            assert_eq!(commands.0.load(std::sync::atomic::Ordering::SeqCst), 2);
+            if mode == "watch" {
+                scheduler
+                    .execute_watch_triggered(&event)
+                    .await
+                    .expect("duplicate hint");
+            }
+            scheduler.tick().await.expect("same-input tick");
+            assert_eq!(
+                commands.0.load(std::sync::atomic::Ordering::SeqCst),
+                2,
+                "{mode}: an accepted physical action must not be sent again for the same failed execution"
+            );
+            assert_eq!(
+                scheduler.rules.read().await[0].onchange_state.last_value[&point.cache_key()],
+                1.0
+            );
+            sqlx::query("UPDATE rules SET name = 'renamed' WHERE id = 89")
+                .execute(&scheduler.pool)
+                .await
+                .expect("rename");
+            scheduler.reload_rules().await.expect("metadata reload");
+            scheduler.tick().await.expect("reload preserves hold");
+            assert_eq!(commands.0.load(std::sync::atomic::Ordering::SeqCst), 2);
+            assert!(live.set_instance(42, 0, 7, 3.0, 2));
+            scheduler.tick().await.expect("new input");
+            assert_eq!(
+                commands.0.load(std::sync::atomic::Ordering::SeqCst),
+                if mode == "interval" { 2 } else { 4 }
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn regression_hanging_rule_is_bounded_in_tick_watch_and_manual_paths() {
+        for mode in ["tick", "watch", "manual"] {
+            let rule = create_action_rule(81, 0);
+            let pool = rule_pool(&rule).await;
+            add_test_history(&pool).await;
+            let live = Arc::new(crate::MemoryRuleLiveState::new());
+            assert!(live.set_instance(42, 0, 7, 2.0, 1));
+            let commands = Arc::new(HangingActionCommands {
+                entered: tokio::sync::Notify::new(),
+            });
+            let logs = tempfile::tempdir().expect("rule logs");
+            let scheduler = Arc::new(RuleScheduler::with_state_store(
+                live,
+                pool,
+                100,
+                logs.path().to_path_buf(),
+                Arc::new(MemoryStateStore::new()),
+                Some(commands.clone()),
+            ));
+            let point = PointRef {
+                instance: 42,
+                point_type: PointKind::Measurement,
+                point: 7,
+            };
+            let mut baseline = OnChangeState::default();
+            baseline.last_value.insert(point.cache_key(), 1.0);
+            scheduler.rules.write().await.extend([
+                ScheduledRule {
+                    rule: Arc::new(rule),
+                    trigger: TriggerConfig::OnChange {
+                        point_refs: vec![point],
+                        time_deadband_ms: None,
+                        value_deadband: None,
+                    },
+                    last_execution: None,
+                    last_cooldown_start: None,
+                    retry_hold: None,
+                    onchange_state: baseline,
+                },
+                ScheduledRule {
+                    rule: Arc::new(create_test_rule(82, "next", 0)),
+                    trigger: TriggerConfig::Interval { interval_ms: 0 },
+                    last_execution: None,
+                    last_cooldown_start: None,
+                    retry_hold: None,
+                    onchange_state: OnChangeState::default(),
+                },
+            ]);
+            let task_scheduler = scheduler.clone();
+            let task = tokio::spawn(async move {
+                match mode {
+                    "tick" => task_scheduler.tick().await,
+                    "watch" => {
+                        task_scheduler
+                            .execute_watch_triggered(&crate::point_watch_dispatcher::WatchEvent {
+                                rule_ids: vec![81],
+                                channel_id: 1,
+                                point_kind: aether_domain::PointKind::Telemetry,
+                                point_id: 7,
+                                value: 2.0,
+                                raw: 2.0,
+                                timestamp_ms: 1,
+                            })
+                            .await
+                    },
+                    _ => task_scheduler.execute_rule(81).await.map(|_| ()),
+                }
+            });
+            tokio::time::timeout(Duration::from_secs(2), commands.entered.notified())
+                .await
+                .expect("command entered before pausing time");
+            tokio::time::pause();
+            tokio::time::advance(Duration::from_secs(31)).await;
+            tokio::time::resume();
+            let completion = tokio::time::timeout(Duration::from_secs(1), task).await;
+            assert!(
+                completion.is_ok(),
+                "{mode}: hanging action must release scheduler"
+            );
+            let result = completion
+                .expect("bounded execution")
+                .expect("task completed");
+            if mode == "manual" {
+                assert!(result.is_err(), "timeout must fail manual execution");
+            } else {
+                result.expect("scheduler continues after timeout");
+            }
+            {
+                let mut rules = scheduler.rules.write().await;
+                assert_eq!(rules[0].onchange_state.last_value[&point.cache_key()], 1.0);
+                assert!(rules[0].onchange_state.last_trigger.is_none());
+                if mode == "tick" {
+                    assert!(rules[1].last_execution.is_some(), "next rule completes");
+                }
+                Arc::make_mut(&mut rules[0].rule).enabled = false;
+                rules[1].last_execution = None;
+            }
+            scheduler.tick().await.expect("later tick progresses");
+            assert!(scheduler.rules.read().await[1].last_execution.is_some());
+        }
+    }
+
+    #[tokio::test]
+    async fn regression_failed_onchange_retains_change_for_retry_in_tick_and_watch() {
+        for watch in [false, true] {
+            for missing_node in [false, true] {
+                let mut rule = create_action_rule(83, 0);
+                if missing_node {
+                    rule.flow.nodes.remove("action");
+                }
+                let pool = rule_pool(&rule).await;
+                add_test_history(&pool).await;
+                let live = Arc::new(crate::MemoryRuleLiveState::new());
+                assert!(live.set_instance(42, 0, 7, 2.0, 1));
+                let logs = tempfile::tempdir().expect("rule logs");
+                let scheduler = RuleScheduler::with_state_store(
+                    live,
+                    pool,
+                    100,
+                    logs.path().to_path_buf(),
+                    Arc::new(MemoryStateStore::new()),
+                    Some(Arc::new(FailingActionCommands)),
+                );
+                let point = PointRef {
+                    instance: 42,
+                    point_type: PointKind::Measurement,
+                    point: 7,
+                };
+                let mut baseline = OnChangeState::default();
+                baseline.last_value.insert(point.cache_key(), 1.0);
+                scheduler.rules.write().await.push(ScheduledRule {
+                    rule: Arc::new(rule),
+                    trigger: TriggerConfig::OnChange {
+                        point_refs: vec![point],
+                        time_deadband_ms: Some(60_000),
+                        value_deadband: None,
+                    },
+                    last_execution: None,
+                    last_cooldown_start: None,
+                    retry_hold: None,
+                    onchange_state: baseline,
+                });
+                if watch {
+                    scheduler
+                        .execute_watch_triggered(&crate::point_watch_dispatcher::WatchEvent {
+                            rule_ids: vec![83],
+                            channel_id: 1,
+                            point_kind: aether_domain::PointKind::Telemetry,
+                            point_id: 7,
+                            value: 2.0,
+                            raw: 2.0,
+                            timestamp_ms: 1,
+                        })
+                        .await
+                        .expect("watch");
+                } else {
+                    scheduler.tick().await.expect("tick");
+                }
+                {
+                    let mut rules = scheduler.rules.write().await;
+                    assert_eq!(
+                        rules[0].onchange_state.last_value[&point.cache_key()],
+                        1.0,
+                        "failed execution must retain baseline: watch={watch} missing_node={missing_node}"
+                    );
+                    assert!(rules[0].onchange_state.last_trigger.is_none());
+                    rules[0].rule = Arc::new(create_test_rule(83, "recovered", 0));
+                }
+                scheduler.tick().await.expect("retry same change");
+                assert_eq!(
+                    scheduler.rules.read().await[0].onchange_state.last_value[&point.cache_key()],
+                    2.0
+                );
+                assert!(
+                    scheduler.rules.read().await[0]
+                        .onchange_state
+                        .last_trigger
+                        .is_some()
+                );
+                let success: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM rule_history WHERE json_extract(execution_result, '$.success') = 1")
+                    .fetch_one(&scheduler.pool).await.expect("read successful retry history");
+                assert_eq!(success, 1, "same change must execute once recovered");
+            }
+        }
+    }
 }
+
+#[cfg(test)]
+#[path = "scheduler_retry_tests.rs"]
+mod retry_tests;

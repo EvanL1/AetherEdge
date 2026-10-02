@@ -53,6 +53,7 @@ subtle = "2.6"
 
 [dev-dependencies]
 # criterion removed - no benchmarks
+tokio = { workspace = true, features = ["test-util"] }
 tempfile = { workspace = true }
 http-body-util = "0.1"
 jsonwebtoken = "9"
