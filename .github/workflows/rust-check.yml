@@ -191,8 +191,7 @@ jobs:
             -p aether-cloudlink-mqtt \
             -p aether-http-data-processor \
             -p aether-sqlite-history-query \
-            -p aether-example-minimal-gateway \
-            -p aether-example-energy-gateway
+            -p aether-example-minimal-gateway
 
       - name: Run Workspace Tests
         run: cargo nextest run --workspace --lib --bins --tests

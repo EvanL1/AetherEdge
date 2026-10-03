@@ -1,6 +1,6 @@
 //! Product API Integration Tests
 //!
-//! Tests product management with an explicitly loaded Energy Pack fixture:
+//! Tests product management with an explicitly loaded generic model fixture:
 //! - Lightweight product name listing
 //! - Detailed product information with measurements/actions/properties
 //!
@@ -11,7 +11,7 @@
 mod common;
 
 use anyhow::Result;
-use common::{TestEnv, energy_product_loader};
+use common::{TestEnv, fixture_product_loader};
 
 #[tokio::test]
 async fn test_product_list_lightweight() -> Result<()> {
@@ -19,30 +19,30 @@ async fn test_product_list_lightweight() -> Result<()> {
     let env = TestEnv::create().await?;
 
     // 2. Create product loader (products are compile-time constants)
-    let product_loader = energy_product_loader(env.pool().clone());
+    let product_loader = fixture_product_loader(env.pool().clone());
 
     // 3. Call get_all_product_names (lightweight method)
-    // The fixture explicitly selected the Energy Pack model directory.
+    // The fixture explicitly selected the generic model directory.
     let product_names = product_loader.get_all_product_names();
 
     // 4. Verify specific selected products exist
     let battery = product_names
         .iter()
-        .find(|(name, _)| name == "Battery")
-        .expect("Should find Battery");
-    assert_eq!(battery.1, Some("ESS".to_string()));
+        .find(|(name, _)| name == "TestDevice")
+        .expect("Should find TestDevice");
+    assert_eq!(battery.1, Some("DeviceGroup".to_string()));
 
     let station = product_names
         .iter()
-        .find(|(name, _)| name == "Station")
-        .expect("Should find Station");
-    assert_eq!(station.1, None, "Station should be a root product");
+        .find(|(name, _)| name == "SiteRoot")
+        .expect("Should find SiteRoot");
+    assert_eq!(station.1, None, "SiteRoot should be a root product");
 
     let ess = product_names
         .iter()
-        .find(|(name, _)| name == "ESS")
-        .expect("Should find ESS");
-    assert_eq!(ess.1, Some("Station".to_string()));
+        .find(|(name, _)| name == "DeviceGroup")
+        .expect("Should find DeviceGroup");
+    assert_eq!(ess.1, Some("SiteRoot".to_string()));
 
     // 6. Cleanup
     env.cleanup().await?;
@@ -56,25 +56,28 @@ async fn test_product_detail_complete() -> Result<()> {
     let env = TestEnv::create().await?;
 
     // 2. Create product loader
-    let product_loader = energy_product_loader(env.pool().clone());
+    let product_loader = fixture_product_loader(env.pool().clone());
 
-    // 3. Call get_product for Battery (detailed method)
+    // 3. Call get_product for TestDevice (detailed method)
     let product = product_loader
-        .get_product("Battery")
-        .expect("get_product should succeed for Battery");
+        .get_product("TestDevice")
+        .expect("get_product should succeed for TestDevice");
 
     // 4. Verify complete response structure
-    assert_eq!(product.product_name, "Battery");
-    assert_eq!(product.parent_name, Some("ESS".to_string()));
+    assert_eq!(product.product_name, "TestDevice");
+    assert_eq!(product.parent_name, Some("DeviceGroup".to_string()));
 
     // 5. Verify measurements exist
     assert!(
         !product.measurements.is_empty(),
-        "Battery should have measurements"
+        "TestDevice should have measurements"
     );
 
     // 6. Verify actions exist
-    assert!(!product.actions.is_empty(), "Battery should have actions");
+    assert!(
+        !product.actions.is_empty(),
+        "TestDevice should have actions"
+    );
 
     // 7. Cleanup
     env.cleanup().await?;
@@ -88,7 +91,7 @@ async fn test_product_closed_loop() -> Result<()> {
     let env = TestEnv::create().await?;
 
     // 2. Create product loader
-    let product_loader = energy_product_loader(env.pool().clone());
+    let product_loader = fixture_product_loader(env.pool().clone());
 
     // 3. STEP 1: Get product list (lightweight)
     let product_names = product_loader.get_all_product_names();
@@ -110,16 +113,16 @@ async fn test_product_closed_loop() -> Result<()> {
             "Parent name should match"
         );
 
-        // Note: Container products (ESS, Generator) may have empty measurements
+        // Note: Container products (DeviceGroup, OtherGroup) may have empty measurements
         // They aggregate data from child products rather than having their own points
     }
 
     // 5. Verify specific products
-    let battery = product_loader.get_product("Battery")?;
-    assert_eq!(battery.parent_name, Some("ESS".to_string()));
+    let battery = product_loader.get_product("TestDevice")?;
+    assert_eq!(battery.parent_name, Some("DeviceGroup".to_string()));
 
-    let pcs = product_loader.get_product("PCS")?;
-    assert_eq!(pcs.parent_name, Some("ESS".to_string()));
+    let pcs = product_loader.get_product("OtherDevice")?;
+    assert_eq!(pcs.parent_name, Some("DeviceGroup".to_string()));
 
     // 6. Cleanup
     env.cleanup().await?;
@@ -133,7 +136,7 @@ async fn test_product_not_found() -> Result<()> {
     let env = TestEnv::create().await?;
 
     // 2. Create product loader
-    let product_loader = energy_product_loader(env.pool().clone());
+    let product_loader = fixture_product_loader(env.pool().clone());
 
     // 3. Try to get a non-existent product
     let result = product_loader.get_product("nonexistent_product");
@@ -162,39 +165,39 @@ async fn test_product_hierarchy() -> Result<()> {
     let env = TestEnv::create().await?;
 
     // 2. Create product loader
-    let product_loader = energy_product_loader(env.pool().clone());
+    let product_loader = fixture_product_loader(env.pool().clone());
 
     // 3. Get product list
     let product_names = product_loader.get_all_product_names();
 
     // 4. Verify hierarchy relationships for selected products
-    // Station is root
+    // SiteRoot is root
     let station = product_names
         .iter()
-        .find(|(name, _)| name == "Station")
-        .expect("Should find Station");
+        .find(|(name, _)| name == "SiteRoot")
+        .expect("Should find SiteRoot");
     assert_eq!(station.1, None);
 
-    // ESS -> Station
+    // DeviceGroup -> SiteRoot
     let ess = product_names
         .iter()
-        .find(|(name, _)| name == "ESS")
-        .expect("Should find ESS");
-    assert_eq!(ess.1, Some("Station".to_string()));
+        .find(|(name, _)| name == "DeviceGroup")
+        .expect("Should find DeviceGroup");
+    assert_eq!(ess.1, Some("SiteRoot".to_string()));
 
-    // Battery -> ESS
+    // TestDevice -> DeviceGroup
     let battery = product_names
         .iter()
-        .find(|(name, _)| name == "Battery")
-        .expect("Should find Battery");
-    assert_eq!(battery.1, Some("ESS".to_string()));
+        .find(|(name, _)| name == "TestDevice")
+        .expect("Should find TestDevice");
+    assert_eq!(battery.1, Some("DeviceGroup".to_string()));
 
-    // PCS -> ESS
+    // OtherDevice -> DeviceGroup
     let pcs = product_names
         .iter()
-        .find(|(name, _)| name == "PCS")
-        .expect("Should find PCS");
-    assert_eq!(pcs.1, Some("ESS".to_string()));
+        .find(|(name, _)| name == "OtherDevice")
+        .expect("Should find OtherDevice");
+    assert_eq!(pcs.1, Some("DeviceGroup".to_string()));
 
     // 5. Cleanup
     env.cleanup().await?;
@@ -208,14 +211,14 @@ async fn test_product_lookup() -> Result<()> {
     let env = TestEnv::create().await?;
 
     // 2. Create product loader
-    let product_loader = energy_product_loader(env.pool().clone());
+    let product_loader = fixture_product_loader(env.pool().clone());
 
     // 3. Verify selected products exist
-    assert!(product_loader.get_product("Battery").is_ok());
-    assert!(product_loader.get_product("PCS").is_ok());
-    assert!(product_loader.get_product("Station").is_ok());
-    assert!(product_loader.get_product("ESS").is_ok());
-    assert!(product_loader.get_product("Generator").is_ok());
+    assert!(product_loader.get_product("TestDevice").is_ok());
+    assert!(product_loader.get_product("OtherDevice").is_ok());
+    assert!(product_loader.get_product("SiteRoot").is_ok());
+    assert!(product_loader.get_product("DeviceGroup").is_ok());
+    assert!(product_loader.get_product("OtherGroup").is_ok());
 
     // 4. Verify non-existent products don't exist
     assert!(product_loader.get_product("NonExistentProduct").is_err());

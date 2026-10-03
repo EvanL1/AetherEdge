@@ -41,7 +41,6 @@ members = [
     "services/api/adapters/http-data-processor",
     "services/api/adapters/sqlite-history-query",
     "examples/minimal-gateway",
-    "examples/energy-gateway",
     "libs/common",
     "libs/errors",
     "libs/aether-calc",

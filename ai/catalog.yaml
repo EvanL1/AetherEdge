@@ -109,7 +109,6 @@ components:
       - ruby -ryaml -e 'YAML.safe_load(File.read(ARGV.fetch(0)), [], [], false)' ai/evals/data-processing.yaml
       - cargo test -p aether-application --test data_processing_application
       - cargo test -p aether-http-data-processor --test http_data_processor
-      - cargo test -p aether-example-energy-gateway --test composition_contract
   data_processing_testkit:
     path: crates/aether-testkit
     responsibility: Reusable HistoryQuery and DataProcessor conformance checks and deterministic test doubles
@@ -160,11 +159,6 @@ components:
     responsibility: Opt-in production composition of SQLite history, snapshot covariates, read-only live state, audit, and HTTP processor routes
     verify:
       - cargo test -p aether-api --bin aether-api data_processing_runtime
-  energy_data_processing:
-    path: packs/energy/data-processing
-    responsibility: Disabled load/PV task declarations, uncommissioned binding, and cross-language v1 fixtures
-    verify:
-      - cargo test -p aether-example-energy-gateway --test data_processing_composition
   aether_uplink_runtime:
     path: services/uplink/src/uplink.rs
     responsibility: aether-uplink integration with DurableOutbox and UplinkPublisher

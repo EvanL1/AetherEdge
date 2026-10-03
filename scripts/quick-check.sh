@@ -83,8 +83,7 @@ echo -e "${YELLOW}Running unit tests...${NC}"
     -p aether-cloudlink-mqtt \
     -p aether-http-data-processor \
     -p aether-sqlite-history-query \
-    -p aether-example-minimal-gateway \
-    -p aether-example-energy-gateway
+    -p aether-example-minimal-gateway
 "${TEST_RUNNER[@]}" --workspace --lib --bins
 
 # Check command line arguments

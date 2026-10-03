@@ -1,0 +1,7 @@
+{
+  "name": "OtherDevice",
+  "pName": "DeviceGroup",
+  "M": [{"id":1,"name":"Pressure","unit":"Pa","type":"number"}],
+  "A": [{"id":1,"name":"Setpoint","unit":"Pa","type":"number"}],
+  "P": []
+}

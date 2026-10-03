@@ -22,9 +22,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tempfile::TempDir;
 
-pub fn energy_product_loader(pool: SqlitePool) -> ProductLoader {
-    let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packs/energy/models");
-    let library = ProductLibrary::load(Some(&directory)).expect("load Energy Pack model fixture");
+pub fn fixture_product_loader(pool: SqlitePool) -> ProductLoader {
+    let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/models");
+    let library = ProductLibrary::load(Some(&directory)).expect("load generic model fixture");
     ProductLoader::with_library(pool, Arc::new(library))
 }
 
@@ -216,9 +216,9 @@ pub mod fixtures {
 
     pub fn create_test_instance_properties() -> HashMap<String, serde_json::Value> {
         let mut props = HashMap::new();
-        props.insert("Max Capacity".to_string(), json!(500));
-        props.insert("Min SOC".to_string(), json!(10));
-        props.insert("Max SOC".to_string(), json!(95));
+        props.insert("Capacity".to_string(), json!(500));
+        props.insert("Lower Limit".to_string(), json!(10));
+        props.insert("Upper Limit".to_string(), json!(95));
         props
     }
 }

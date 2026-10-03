@@ -6,15 +6,15 @@
 //! - List: pagination and search
 //! - Batch: create/delete multiple instances
 //!
-//! The fixture explicitly loads Energy Pack products such as Battery, PCS,
-//! ESS, and Station.
+//! The fixture explicitly loads a small generic product hierarchy with measurement, action,
+//! and property points.
 
 #![allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
 
 mod common;
 
 use aether_automation::product_loader::CreateInstanceRequest;
-use common::{GovernedInstanceManager, TestEnv, energy_product_loader};
+use common::{GovernedInstanceManager, TestEnv, fixture_product_loader};
 use std::collections::HashMap;
 
 // ============================================================================
@@ -23,35 +23,35 @@ use std::collections::HashMap;
 
 /// Create an SQLite/SHM-oriented InstanceManager for testing.
 async fn create_test_instance_manager(env: &TestEnv) -> GovernedInstanceManager {
-    GovernedInstanceManager::new(env.pool.clone(), energy_product_loader(env.pool.clone())).await
+    GovernedInstanceManager::new(env.pool.clone(), fixture_product_loader(env.pool.clone())).await
 }
 
-/// Setup standard hierarchy for tests: Station(9901) -> ESS(9902)
-/// Returns ESS instance_id (9902) as parent for Battery/PCS instances
+/// Setup standard hierarchy for tests: SiteRoot(9901) -> DeviceGroup(9902)
+/// Returns DeviceGroup instance_id (9902) as parent for TestDevice/OtherDevice instances
 async fn setup_hierarchy(manager: &GovernedInstanceManager) -> u32 {
     let station_req = CreateInstanceRequest {
         instance_id: Some(9901),
         instance_name: "test_station_root".to_string(),
-        product_name: "Station".to_string(),
+        product_name: "SiteRoot".to_string(),
         parent_id: None,
         properties: HashMap::new(),
     };
     manager
         .create_instance(station_req)
         .await
-        .expect("Failed to create Station");
+        .expect("Failed to create SiteRoot");
 
     let ess_req = CreateInstanceRequest {
         instance_id: Some(9902),
         instance_name: "test_ess_parent".to_string(),
-        product_name: "ESS".to_string(),
+        product_name: "DeviceGroup".to_string(),
         parent_id: Some(9901),
         properties: HashMap::new(),
     };
     manager
         .create_instance(ess_req)
         .await
-        .expect("Failed to create ESS");
+        .expect("Failed to create DeviceGroup");
 
     9902
 }
@@ -88,7 +88,7 @@ async fn test_rename_instance_success() {
     let ess_id = setup_hierarchy(&manager).await;
 
     // Setup: create instance using built-in product
-    create_test_instance(&manager, 1, "original_name", "Battery", Some(ess_id)).await;
+    create_test_instance(&manager, 1, "original_name", "TestDevice", Some(ess_id)).await;
 
     // Rename the instance
     manager
@@ -110,8 +110,8 @@ async fn test_rename_instance_duplicate_error() {
     let ess_id = setup_hierarchy(&manager).await;
 
     // Setup: create two instances using built-in product
-    create_test_instance(&manager, 1, "instance_1", "Battery", Some(ess_id)).await;
-    create_test_instance(&manager, 2, "instance_2", "Battery", Some(ess_id)).await;
+    create_test_instance(&manager, 1, "instance_1", "TestDevice", Some(ess_id)).await;
+    create_test_instance(&manager, 2, "instance_2", "TestDevice", Some(ess_id)).await;
 
     // Try to rename instance_2 to instance_1 (should fail)
     let result = manager.rename_instance(2, "instance_1").await;
@@ -154,7 +154,7 @@ async fn test_delete_instance_success() {
     let ess_id = setup_hierarchy(&manager).await;
 
     // Setup using built-in product
-    create_test_instance(&manager, 1, "to_delete", "Battery", Some(ess_id)).await;
+    create_test_instance(&manager, 1, "to_delete", "TestDevice", Some(ess_id)).await;
 
     // Verify instance exists
     let instance = manager.get_instance(1).await;
@@ -192,7 +192,7 @@ async fn test_delete_instance_rejects_routed_instance() {
     let ess_id = setup_hierarchy(&manager).await;
 
     // Setup: create instance using built-in product
-    create_test_instance(&manager, 10, "cascade_instance", "Battery", Some(ess_id)).await;
+    create_test_instance(&manager, 10, "cascade_instance", "TestDevice", Some(ess_id)).await;
 
     // Add routing entries directly (simulate routing setup)
     // Note: channel_id can be NULL (ON DELETE SET NULL), so we don't need a valid channel
@@ -257,23 +257,23 @@ async fn test_list_instances_all() {
             &manager,
             i,
             &format!("list_inst_{}", i),
-            "Battery",
+            "TestDevice",
             Some(ess_id),
         )
         .await;
     }
 
-    // List all instances (5 Battery + 2 hierarchy = 7)
+    // List all instances (5 TestDevice + 2 hierarchy = 7)
     let instances = manager
         .list_instances()
         .await
         .expect("Failed to list instances");
     assert_eq!(instances.len(), 7);
 
-    // Verify Battery instances are present and ordered
+    // Verify TestDevice instances are present and ordered
     let battery_instances: Vec<_> = instances
         .iter()
-        .filter(|i| i.core.product_name == "Battery")
+        .filter(|i| i.core.product_name == "TestDevice")
         .collect();
     assert_eq!(battery_instances.len(), 5);
     for (i, inst) in battery_instances.iter().enumerate() {
@@ -290,21 +290,25 @@ async fn test_list_instances_by_product() {
     let ess_id = setup_hierarchy(&manager).await;
 
     // Setup: create instances for different built-in products
-    create_test_instance(&manager, 1, "inst_battery_1", "Battery", Some(ess_id)).await;
-    create_test_instance(&manager, 2, "inst_battery_2", "Battery", Some(ess_id)).await;
-    create_test_instance(&manager, 3, "inst_pcs_1", "PCS", Some(ess_id)).await;
+    create_test_instance(&manager, 1, "inst_battery_1", "TestDevice", Some(ess_id)).await;
+    create_test_instance(&manager, 2, "inst_battery_2", "TestDevice", Some(ess_id)).await;
+    create_test_instance(&manager, 3, "inst_pcs_1", "OtherDevice", Some(ess_id)).await;
 
-    // List only Battery instances
+    // List only TestDevice instances
     let (_, instances) = manager
-        .list_instances_paginated(Some("Battery"), 1, 10_000)
+        .list_instances_paginated(Some("TestDevice"), 1, 10_000)
         .await
         .expect("Failed to list instances");
     assert_eq!(instances.len(), 2);
-    assert!(instances.iter().all(|i| i.core.product_name == "Battery"));
+    assert!(
+        instances
+            .iter()
+            .all(|i| i.core.product_name == "TestDevice")
+    );
 
-    // List only PCS instances
+    // List only OtherDevice instances
     let (_, instances) = manager
-        .list_instances_paginated(Some("PCS"), 1, 10_000)
+        .list_instances_paginated(Some("OtherDevice"), 1, 10_000)
         .await
         .expect("Failed to list instances");
     assert_eq!(instances.len(), 1);
@@ -344,13 +348,13 @@ async fn test_list_instances_paginated() {
             &manager,
             i,
             &format!("page_inst_{:02}", i),
-            "Battery",
+            "TestDevice",
             Some(ess_id),
         )
         .await;
     }
 
-    // 15 Battery + 2 hierarchy = 17 total
+    // 15 TestDevice + 2 hierarchy = 17 total
     // Ordered by instance_id ASC: 1-15, 9901, 9902
 
     // Page 1: should have 10 items (IDs 1-10)
@@ -396,25 +400,32 @@ async fn test_list_instances_paginated_with_filter() {
             &manager,
             i,
             &format!("battery_inst_{}", i),
-            "Battery",
+            "TestDevice",
             Some(ess_id),
         )
         .await;
     }
     for i in 9..=12 {
-        create_test_instance(&manager, i, &format!("pcs_inst_{}", i), "PCS", Some(ess_id)).await;
+        create_test_instance(
+            &manager,
+            i,
+            &format!("pcs_inst_{}", i),
+            "OtherDevice",
+            Some(ess_id),
+        )
+        .await;
     }
 
-    // Paginate Battery only (8 total)
+    // Paginate TestDevice only (8 total)
     let (total, page1) = manager
-        .list_instances_paginated(Some("Battery"), 1, 5)
+        .list_instances_paginated(Some("TestDevice"), 1, 5)
         .await
         .expect("Failed to paginate");
     assert_eq!(total, 8);
     assert_eq!(page1.len(), 5);
 
     let (total, page2) = manager
-        .list_instances_paginated(Some("Battery"), 2, 5)
+        .list_instances_paginated(Some("TestDevice"), 2, 5)
         .await
         .expect("Failed to paginate");
     assert_eq!(total, 8);
@@ -434,10 +445,10 @@ async fn test_search_instances_by_name() {
     let ess_id = setup_hierarchy(&manager).await;
 
     // Setup: create instances with different naming patterns using built-in product
-    create_test_instance(&manager, 1, "inverter_01", "Battery", Some(ess_id)).await;
-    create_test_instance(&manager, 2, "inverter_02", "Battery", Some(ess_id)).await;
-    create_test_instance(&manager, 3, "battery_01", "Battery", Some(ess_id)).await;
-    create_test_instance(&manager, 4, "solar_panel_01", "Battery", Some(ess_id)).await;
+    create_test_instance(&manager, 1, "inverter_01", "TestDevice", Some(ess_id)).await;
+    create_test_instance(&manager, 2, "inverter_02", "TestDevice", Some(ess_id)).await;
+    create_test_instance(&manager, 3, "battery_01", "TestDevice", Some(ess_id)).await;
+    create_test_instance(&manager, 4, "solar_panel_01", "TestDevice", Some(ess_id)).await;
 
     // Search for "inverter"
     let (total, results) = manager
@@ -477,25 +488,25 @@ async fn test_search_instances_with_product_filter() {
     let ess_id = setup_hierarchy(&manager).await;
 
     // Setup: create instances for different built-in products
-    create_test_instance(&manager, 1, "battery_unit_01", "Battery", Some(ess_id)).await;
-    create_test_instance(&manager, 2, "battery_unit_02", "Battery", Some(ess_id)).await;
-    create_test_instance(&manager, 3, "pcs_unit_01", "PCS", Some(ess_id)).await;
+    create_test_instance(&manager, 1, "battery_unit_01", "TestDevice", Some(ess_id)).await;
+    create_test_instance(&manager, 2, "battery_unit_02", "TestDevice", Some(ess_id)).await;
+    create_test_instance(&manager, 3, "pcs_unit_01", "OtherDevice", Some(ess_id)).await;
 
-    // Search "unit" in Battery only
+    // Search "unit" in TestDevice only
     let (total, results) = manager
-        .search_instances("unit", Some("Battery"), 1, 10)
+        .search_instances("unit", Some("TestDevice"), 1, 10)
         .await
         .expect("Failed to search");
     assert_eq!(total, 2);
-    assert!(results.iter().all(|i| i.core.product_name == "Battery"));
+    assert!(results.iter().all(|i| i.core.product_name == "TestDevice"));
 
-    // Search "unit" in PCS only
+    // Search "unit" in OtherDevice only
     let (total, results) = manager
-        .search_instances("unit", Some("PCS"), 1, 10)
+        .search_instances("unit", Some("OtherDevice"), 1, 10)
         .await
         .expect("Failed to search");
     assert_eq!(total, 1);
-    assert_eq!(results[0].core.product_name, "PCS");
+    assert_eq!(results[0].core.product_name, "OtherDevice");
 
     env.cleanup().await.expect("Cleanup failed");
 }
@@ -516,13 +527,13 @@ async fn test_batch_create_instances() {
             &manager,
             i,
             &format!("batch_inst_{:02}", i),
-            "Battery",
+            "TestDevice",
             Some(ess_id),
         )
         .await;
     }
 
-    // Verify all created (20 Battery + 2 hierarchy = 22)
+    // Verify all created (20 TestDevice + 2 hierarchy = 22)
     let (total, _) = manager
         .list_instances_paginated(None, 1, 100)
         .await
@@ -544,7 +555,7 @@ async fn test_batch_delete_instances() {
             &manager,
             i,
             &format!("delete_inst_{}", i),
-            "Battery",
+            "TestDevice",
             Some(ess_id),
         )
         .await;
@@ -558,7 +569,7 @@ async fn test_batch_delete_instances() {
             .expect("Failed to delete instance");
     }
 
-    // Verify: only even-numbered Battery remain + 2 hierarchy instances
+    // Verify: only even-numbered TestDevice remain + 2 hierarchy instances
     let (_, instances) = manager
         .list_instances_paginated(None, 1, 10_000)
         .await
@@ -581,18 +592,18 @@ async fn test_instance_properties_preserved() {
     let manager = create_test_instance_manager(&env).await;
     let ess_id = setup_hierarchy(&manager).await;
 
-    // Create instance with properties declared by the Battery product template (P array).
-    // Battery.json defines number-typed properties only; use three distinct ones to verify
+    // Create instance with properties declared by the TestDevice product template (P array).
+    // TestDevice.json defines number-typed properties only; use three distinct ones to verify
     // that all written values survive the create → get round-trip.
     let mut properties = HashMap::new();
-    properties.insert("Max Capacity".to_string(), serde_json::json!(500));
-    properties.insert("Min SOC".to_string(), serde_json::json!(10));
-    properties.insert("Max SOC".to_string(), serde_json::json!(95));
+    properties.insert("Capacity".to_string(), serde_json::json!(500));
+    properties.insert("Lower Limit".to_string(), serde_json::json!(10));
+    properties.insert("Upper Limit".to_string(), serde_json::json!(95));
 
     let req = CreateInstanceRequest {
         instance_id: Some(1),
         instance_name: "props_test".to_string(),
-        product_name: "Battery".to_string(),
+        product_name: "TestDevice".to_string(),
         parent_id: Some(ess_id),
         properties: properties.clone(),
     };
@@ -604,15 +615,15 @@ async fn test_instance_properties_preserved() {
     // Retrieve and verify properties are preserved through the round-trip
     let instance = manager.get_instance(1).await.expect("Instance not found");
     assert_eq!(
-        instance.core.properties.get("Max Capacity"),
+        instance.core.properties.get("Capacity"),
         Some(&serde_json::json!(500))
     );
     assert_eq!(
-        instance.core.properties.get("Min SOC"),
+        instance.core.properties.get("Lower Limit"),
         Some(&serde_json::json!(10))
     );
     assert_eq!(
-        instance.core.properties.get("Max SOC"),
+        instance.core.properties.get("Upper Limit"),
         Some(&serde_json::json!(95))
     );
 

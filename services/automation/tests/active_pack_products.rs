@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use aether_automation::bootstrap::{
     load_pack_runtime_from_manifest, load_product_library, validate_instance_product_references,
@@ -13,12 +13,7 @@ fn runtime() -> aether_pack::PackRuntime {
         ["can", "gpio", "http", "modbus", "mqtt"],
     )
     .and_then(|manifest| manifest.pack_runtime())
-    .expect("explicit Energy test composition")
-}
-
-fn repository_energy_pack() -> PathBuf {
-    fs::canonicalize(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packs/energy"))
-        .expect("canonical repository energy pack")
+    .expect("explicit model test composition")
 }
 
 fn write_global(config: &Path, packs: serde_json::Value) {
@@ -88,18 +83,19 @@ fn fresh_site_without_an_active_pack_has_zero_products() {
 }
 
 #[test]
-fn explicitly_activated_energy_pack_supplies_its_thirteen_models() {
+fn explicitly_activated_pack_supplies_its_declared_model() {
     let config = tempfile::tempdir().expect("config directory");
+    let pack = tempfile::tempdir().expect("model pack");
+    write_model_pack(pack.path(), "test-pack", "TestDevice", "TestDevice");
     write_global(
         config.path(),
-        serde_json::json!([{ "id": "energy", "root": repository_energy_pack() }]),
+        serde_json::json!([{ "id": "test-pack", "root": pack.path() }]),
     );
-    let active = load_active_packs(config.path(), &runtime()).expect("validated energy pack");
+    let active = load_active_packs(config.path(), &runtime()).expect("validated model pack");
 
     let library = load_product_library(&active, None).expect("pack product library");
 
-    assert_eq!(library.len(), 13);
-    assert!(library.exists("Battery"));
+    assert_eq!(library.names(), vec!["TestDevice"]);
 }
 
 #[test]
@@ -187,25 +183,46 @@ fn two_active_packs_cannot_silently_override_the_same_product() {
 fn explicit_site_directory_may_override_an_active_pack_product() {
     let config = tempfile::tempdir().expect("config directory");
     let custom = tempfile::tempdir().expect("site products");
+    let pack = tempfile::tempdir().expect("model pack");
+    write_model_pack(pack.path(), "test-pack", "TestDevice", "TestDevice");
+    fs::write(
+        pack.path().join("models/other.json"),
+        r#"{"name":"OtherDevice","M":[{"id":7,"name":"Pack Value"}],"A":[],"P":[]}"#,
+    )
+    .expect("untouched Pack model");
+    let manifest_path = pack.path().join("pack.yaml");
+    let manifest = fs::read_to_string(&manifest_path).expect("model Pack manifest");
+    fs::write(
+        manifest_path,
+        manifest.replace(
+            "    - TestDevice\n",
+            "    - TestDevice\n    - OtherDevice\n",
+        ),
+    )
+    .expect("declare both Pack models");
     write_global(
         config.path(),
-        serde_json::json!([{ "id": "energy", "root": repository_energy_pack() }]),
+        serde_json::json!([{ "id": "test-pack", "root": pack.path() }]),
     );
     fs::write(
-        custom.path().join("Battery.json"),
-        r#"{"name":"Battery","pName":"ESS","M":[{"id":1,"name":"Site SOC"}],"A":[],"P":[]}"#,
+        custom.path().join("TestDevice.json"),
+        r#"{"name":"TestDevice","M":[{"id":1,"name":"Site Value"}],"A":[],"P":[]}"#,
     )
-    .expect("site Battery override");
-    let active = load_active_packs(config.path(), &runtime()).expect("validated energy Pack");
+    .expect("site product override");
+    let active = load_active_packs(config.path(), &runtime()).expect("validated model Pack");
 
     let library =
         load_product_library(&active, Some(custom.path())).expect("site override library");
 
-    assert_eq!(library.len(), 13);
+    assert_eq!(library.len(), 2);
     assert_eq!(
-        library.get("Battery").expect("Battery").measurements[0].name,
-        "Site SOC"
+        library.get("TestDevice").expect("TestDevice").measurements[0].name,
+        "Site Value"
     );
+    let untouched = library.get("OtherDevice").expect("untouched Pack model");
+    assert_eq!(untouched.measurements.len(), 1);
+    assert_eq!(untouched.measurements[0].id, 7);
+    assert_eq!(untouched.measurements[0].name, "Pack Value");
 }
 
 #[tokio::test]

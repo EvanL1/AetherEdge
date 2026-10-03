@@ -79,7 +79,8 @@ Two related commands are easy to confuse with sync:
 The repository's `config.template/` directory is the canonical fail-safe
 starting point. It contains no commissioned channel, device instance, or
 enabled control rule. Domain examples are opt-in; the energy examples live
-under `packs/energy/examples/config/`. Annotated:
+in [AetherEMS](https://github.com/EvanL1/AetherEMS/tree/main/packs/energy/examples/config).
+The generic configuration layout is:
 
 ```
 config.template/

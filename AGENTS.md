@@ -28,7 +28,6 @@ libs/         shared kernel implementation (SHM, local storage, config, sim)
 services/     io, automation, history, api, uplink and alarm processes
 tools/        aether CLI/MCP and the protocol simulator
 examples/     minimal generic and compatibility composition proofs
-packs/        Pack manifests
 contracts/    pinned AetherContracts release
 docs/         current concepts, guides and references
 ai/           generated agent catalog and the safety-policy authority
@@ -83,6 +82,9 @@ domain <- ports <- application <- services/interfaces
   subprocesses, provide an in-process simulation protocol, or manage host
   networking. Python and protocol simulators are limited to tooling outside
   `services/`.
+- Energy Pack assets, knowledge, commissioning examples, and their conformance
+  composition are maintained only in AetherEMS. Kernel tests use small generic
+  fixtures and must not depend on a neighboring downstream checkout.
 - Protocol-specific model catalogs such as SunSpec stay outside this kernel.
   A future downstream IO plugin must be pure Rust, statically composed through
   an accepted generic contract, and unable to write SHM or bypass governed

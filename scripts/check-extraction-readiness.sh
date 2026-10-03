@@ -137,25 +137,12 @@ assert_profiled_service() {
 
 check_local_gates() {
     local runtime_manifest_source="libs/aether-runtime-catalog/src/bin/aether-runtime-manifest.rs"
-    local runtime_features_source="distributions/aetherems/runtime-io-features.txt"
-    local temp_dir release_target runtime_features normalized_features artifact_entries
-
     echo "Checking locally provable extraction gates..."
     [[ -s "$runtime_manifest_source" ]] \
         || fail "runtime-manifest binary source is missing: $runtime_manifest_source"
     if git check-ignore -q "$runtime_manifest_source"; then
         fail "runtime-manifest binary source is ignored and would be absent from a clean checkout"
     fi
-    [[ -s "$runtime_features_source" ]] \
-        || fail "AetherEMS runtime feature authority is missing: $runtime_features_source"
-    IFS= read -r runtime_features < "$runtime_features_source"
-    [[ -n "$runtime_features" ]] \
-        || fail "AetherEMS runtime feature authority is empty"
-    normalized_features=$(cargo run --quiet -p aether-runtime-catalog \
-        --bin aether-runtime-manifest -- normalize-io-features \
-        --io-features "$runtime_features")
-    [[ "$runtime_features" == "$normalized_features" ]] \
-        || fail "AetherEMS runtime features are not canonical: $runtime_features"
     cargo check --quiet -p aether-runtime-catalog --bin aether-runtime-manifest
 
     ./scripts/check-energy-pack-boundary.sh
@@ -163,10 +150,8 @@ check_local_gates() {
     ./scripts/check-runtime-manifest.sh
 
     cargo test --quiet -p aether-example-minimal-gateway --test composition_contract
-    cargo test --quiet -p aether-example-energy-gateway --test composition_contract
-    cargo test --quiet -p aether-example-energy-gateway --test pack_artifact_contract
+    cargo test --quiet -p aether --test pack_artifact_install
     cargo run --quiet -p aether-example-minimal-gateway >/dev/null
-    cargo run --quiet -p aether-example-energy-gateway >/dev/null
 
     assert_profiled_service timescaledb postgres-storage
     if rg -q '^default[[:space:]]*=.*postgres-storage' services/history/Cargo.toml; then
@@ -176,41 +161,6 @@ check_local_gates() {
         | rg -q 'redis-bridge|postgres-history'; then
         fail "an external database adapter is a default workspace member"
     fi
-
-    temp_dir=$(mktemp -d)
-    trap 'rm -rf "$temp_dir"' RETURN
-    # Energy Pack artifacts are Linux-target-bound because their declared
-    # protocol set includes GPIO and CAN. Both released Linux architectures
-    # derive the same protocol catalog from this composition.
-    release_target=aarch64-unknown-linux-musl
-    mkdir -p "$temp_dir/runtime"
-    cargo run --quiet -p aether-runtime-catalog --bin aether-runtime-manifest -- \
-        generate "$release_target" "$temp_dir/runtime" "$runtime_features" >/dev/null
-    cargo run --quiet -p aether-runtime-catalog --bin aether-runtime-manifest -- \
-        verify --path "$temp_dir/runtime/runtime-manifest.json" \
-        --aether-version "$(workspace_version)" >/dev/null
-    ./scripts/build-pack-artifact.sh \
-        packs/energy \
-        "$temp_dir/runtime/runtime-manifest.json" \
-        "$temp_dir/energy.bundle" >/dev/null
-
-    artifact_entries=$(
-        find "$temp_dir/energy.bundle" -mindepth 1 -maxdepth 1 -exec basename {} \; \
-            | LC_ALL=C sort
-    )
-    [[ "$artifact_entries" == $'pack\npack-artifact.json' ]] \
-        || fail "Energy Pack artifact top level is not Pack-only: $artifact_entries"
-    if find "$temp_dir/energy.bundle" -type f \
-        \( -name Cargo.toml -o -name '*.rs' -o -name 'aether' -o -name 'aether-*.exe' \) \
-        -print -quit | grep -q .; then
-        fail "Energy Pack artifact contains Kernel source or an executable"
-    fi
-    while IFS= read -r -d '' artifact_file; do
-        [[ ! -x "$artifact_file" ]] \
-            || fail "Energy Pack artifact contains executable data: $artifact_file"
-    done < <(find "$temp_dir/energy.bundle" -type f -print0)
-    rm -rf "$temp_dir"
-    trap - RETURN
 
     echo "local extraction gates passed; external release/repository/CI evidence was not evaluated"
 }

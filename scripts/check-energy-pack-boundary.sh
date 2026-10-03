@@ -3,10 +3,6 @@
 set -euo pipefail
 
 readonly RETIRED_MODEL_CRATE="libs/aether-model"
-readonly PACK_MODELS="packs/energy/models"
-readonly PACK_KNOWLEDGE="packs/energy/knowledge"
-readonly ENERGY_HOMEPAGE_PRESET="packs/energy/examples/config/api/calculated_points.sql"
-readonly FORMAL_ASSET_CATEGORIES=(mappings rules evaluations)
 
 fail() {
     echo "ERROR: $*" >&2
@@ -16,19 +12,13 @@ fail() {
 [[ ! -e "$RETIRED_MODEL_CRATE" ]] \
     || fail "retired aether-model compatibility crate was restored"
 
-model_count=$(find "$PACK_MODELS" -maxdepth 1 -type f -name '*.json' | wc -l | tr -d ' ')
-[[ "$model_count" == 13 ]] || fail "energy pack must own exactly 13 model JSON files"
-
-knowledge_count=$(find "$PACK_KNOWLEDGE" -maxdepth 1 -type f -name '*.md' | wc -l | tr -d ' ')
-[[ "$knowledge_count" == 5 ]] || fail "energy pack must own exactly 5 knowledge pages"
+[[ ! -e packs/energy ]] \
+    || fail "Energy Pack assets belong in AetherEMS"
+[[ ! -e examples/energy-gateway ]] \
+    || fail "Energy composition and conformance tests belong in AetherEMS"
 
 [[ ! -e services/api/assets/calculated_points.sql ]] \
     || fail "core API still owns the Energy homepage calculated-point preset"
-[[ -s "$ENERGY_HOMEPAGE_PRESET" ]] \
-    || fail "Energy Pack homepage commissioning preset is missing"
-preset_point_count=$(rg -c '^\(' "$ENERGY_HOMEPAGE_PRESET" || true)
-[[ "$preset_point_count" == 19 ]] \
-    || fail "Energy Pack homepage commissioning preset must preserve exactly 19 legacy points"
 
 if sed '/^#\[cfg(test)\]/,$d' services/api/src/db.rs | rg -n \
     'include_(str|bytes)!\([^)]*calculated_points|INSERT[[:space:]]+INTO[[:space:]]+calculated_points|PV Energy|Diesel Energy|Saving Billing|icon-(pv|diesel|ess)-energy|\bSOC\b' \
@@ -64,37 +54,11 @@ fi
 if ! rg -q 'from_active_pack_config' tools/aether/src/main.rs; then
     fail "aether MCP does not consume the shared active Pack configuration"
 fi
-if rg -n 'aether://docs/domain/' README.md docs tools services libs examples packs \
+if rg -n 'aether://docs/domain/' README.md docs tools services libs examples \
     --glob '!node_modules/**' \
     --glob '!dist/**' \
     --glob '!docs/specs/**'; then
     fail "current documentation or tests still publish the pre-Pack MCP URI namespace"
-fi
-
-if ! rg -q '^  models:[[:space:]]*models[[:space:]]*$' packs/energy/pack.yaml; then
-    fail "Pack v1 manifest does not declare the models directory"
-fi
-if ! rg -q '^  knowledge:[[:space:]]*knowledge[[:space:]]*$' packs/energy/pack.yaml; then
-    fail "Pack v1 manifest does not declare the knowledge directory"
-fi
-
-for category in "${FORMAL_ASSET_CATEGORIES[@]}"; do
-    if ! rg -q "^  ${category}:[[:space:]]*${category}[[:space:]]*$" packs/energy/pack.yaml; then
-        fail "Pack v1 manifest does not declare the ${category} directory"
-    fi
-    [[ -f "packs/energy/${category}/index.yaml" ]] \
-        || fail "energy ${category} asset index is missing"
-done
-
-if ! rg -q '^  data_processing:[[:space:]]*data-processing/tasks[[:space:]]*$' \
-    packs/energy/pack.yaml; then
-    fail "Pack v1 manifest does not declare the Data Processing task directory"
-fi
-[[ -f packs/energy/data-processing/tasks/index.yaml ]] \
-    || fail "Energy Data Processing task index is missing"
-
-if [[ -e packs/energy/examples/config/automation/rules/battery_soc_management.json ]]; then
-    fail "formal energy rule remains embedded under examples/config"
 fi
 
 if rg -n \
@@ -102,14 +66,6 @@ if rg -n \
     tools/aether/src/core --glob '*.rs'; then
     fail "generic CLI/schema still hard-codes Energy product compatibility names"
 fi
-
-for migration in \
-    packs/energy/mappings/product-name-aliases.yaml \
-    packs/energy/mappings/legacy-instance-properties-v5.yaml; do
-    if ! rg -q '^  removed_from_kernel:[[:space:]]*0\.5\.0[[:space:]]*$' "$migration"; then
-        fail "Energy compatibility mapping lacks an explicit kernel-removal version: $migration"
-    fi
-done
 
 for schema in \
     contracts/pack/pack-artifact.v1.schema.json \
