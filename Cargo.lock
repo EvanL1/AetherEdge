@@ -369,23 +369,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "aether-example-energy-gateway"
-version = "0.0.1"
-dependencies = [
- "aether-edge-sdk",
- "aether-example-minimal-gateway",
- "aether-runtime-catalog",
- "aether-store-local",
- "async-trait",
- "serde",
- "serde_json",
- "serde_yaml_ng",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
-]
-
-[[package]]
 name = "aether-example-minimal-gateway"
 version = "0.0.1"
 dependencies = [

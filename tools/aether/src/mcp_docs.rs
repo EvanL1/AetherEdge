@@ -326,7 +326,7 @@ capabilities: {}
         for d in &resources {
             assert!(d.uri.starts_with("aether://docs/"), "bad uri {}", d.uri);
         }
-        assert!(!uris.contains(&"aether://packs/energy/knowledge/ess-primer"));
+        assert!(!uris.contains(&"aether://packs/test-pack/knowledge/guide"));
     }
 
     #[test]
@@ -365,36 +365,44 @@ capabilities: {}
     #[test]
     fn resource_name_is_last_segment() {
         assert_eq!(
-            resource_name("aether://packs/energy/knowledge/ess-primer"),
-            "ess-primer"
+            resource_name("aether://packs/test-pack/knowledge/guide"),
+            "guide"
         );
     }
 
     #[test]
-    fn activated_energy_pack_adds_namespaced_pack_owned_knowledge_at_runtime() {
+    fn activated_pack_adds_namespaced_pack_owned_knowledge_at_runtime() {
         let config = tempfile::tempdir().expect("config directory");
-        let energy =
-            fs::canonicalize(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packs/energy"))
-                .expect("canonical repository energy pack");
+        let pack = tempfile::tempdir().expect("knowledge pack");
+        fs::create_dir_all(pack.path().join("knowledge")).expect("knowledge directory");
+        fs::write(pack.path().join("pack.yaml"), TEST_PACK_MANIFEST).expect("manifest");
+        for name in ["guide", "reference"] {
+            fs::write(
+                pack.path().join(format!("knowledge/{name}.md")),
+                format!("---\ntitle: {name}\ndescription: Pack knowledge fixture\n---\n# {name}\nPack-owned knowledge.\n"),
+            )
+            .expect("knowledge asset");
+        }
         write_global(
             config.path(),
-            serde_json::json!([{ "id": "energy", "root": energy }]),
+            serde_json::json!([{ "id": "test-pack", "root": pack.path() }]),
         );
-        let active = load_active_packs(config.path(), &runtime()).expect("validated energy pack");
+        let active =
+            load_active_packs(config.path(), &runtime()).expect("validated knowledge pack");
 
         let resources = doc_resources(&active).expect("dynamic documentation catalog");
 
-        assert_eq!(resources.len(), 12);
+        assert_eq!(resources.len(), 9);
         assert!(
             resources
                 .iter()
-                .any(|doc| doc.uri == "aether://packs/energy/knowledge/ess-primer")
+                .any(|doc| doc.uri == "aether://packs/test-pack/knowledge/guide")
         );
         assert!(
             resources
                 .iter()
-                .find(|doc| doc.uri == "aether://packs/energy/knowledge/product-models")
-                .is_some_and(|doc| doc.body.contains("owns 13 products"))
+                .find(|doc| doc.uri == "aether://packs/test-pack/knowledge/reference")
+                .is_some_and(|doc| doc.body.contains("Pack-owned knowledge."))
         );
     }
 

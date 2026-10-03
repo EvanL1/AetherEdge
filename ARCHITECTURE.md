@@ -78,6 +78,8 @@ plane, and typed SHM port adapters. In particular:
 - Domain models and knowledge are absent by default. Automation and MCP load
   them only from manifest-validated Packs explicitly selected by
   `<AETHER_CONFIG_PATH>/global.yaml`; `packs: []` is the safe empty kernel.
+  AetherEMS owns the Energy Pack and its composition tests; Edge exercises
+  generic Pack loading and installation with small local test fixtures.
 - The composition-provided `runtime-manifest.json` records the Aether version,
   target, services, exact IO feature set, derived protocol adapters, and live
   application capability catalog under a canonical checksum. Automation, MCP,
@@ -91,11 +93,10 @@ The remaining kernel migration is narrower but still real:
   contracts. This includes explicit channel/runtime reload and the sensitive
   full-configuration query, which still depend on the loopback deployment
   boundary;
-- Energy mappings, rules, evaluations, and Data Processing tasks are isolated
-  Pack assets with closed v1 indexes. The local Kernel CLI can build and
-  atomically install a Pack-only artifact; independently published/signed
-  Aether and AetherEMS artifacts plus downstream consuming CI are still
-  required before repository split.
+- Energy mappings, rules, evaluations, and Data Processing tasks are maintained
+  in AetherEMS. The Kernel CLI builds and atomically installs Pack-only
+  artifacts. Independently published, signed AetherEdge and AetherEMS release
+  artifacts still require downstream release evidence.
 
 ## Target runtime
 

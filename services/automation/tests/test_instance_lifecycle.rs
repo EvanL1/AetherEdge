@@ -8,12 +8,12 @@ use std::collections::HashMap;
 
 use aether_automation::product_loader::CreateInstanceRequest;
 use anyhow::Result;
-use common::{GovernedInstanceManager, TestEnv, energy_product_loader, fixtures, helpers};
+use common::{GovernedInstanceManager, TestEnv, fixture_product_loader, fixtures, helpers};
 
 async fn manager(env: &TestEnv) -> GovernedInstanceManager {
     GovernedInstanceManager::new(
         env.pool().clone(),
-        energy_product_loader(env.pool().clone()),
+        fixture_product_loader(env.pool().clone()),
     )
     .await
 }
@@ -23,7 +23,7 @@ async fn create_hierarchy(manager: &GovernedInstanceManager) -> Result<()> {
         .create_instance(CreateInstanceRequest {
             instance_id: Some(9901),
             instance_name: "test_station_root".to_string(),
-            product_name: "Station".to_string(),
+            product_name: "SiteRoot".to_string(),
             parent_id: None,
             properties: HashMap::new(),
         })
@@ -32,7 +32,7 @@ async fn create_hierarchy(manager: &GovernedInstanceManager) -> Result<()> {
         .create_instance(CreateInstanceRequest {
             instance_id: Some(9902),
             instance_name: "test_ess_parent".to_string(),
-            product_name: "ESS".to_string(),
+            product_name: "DeviceGroup".to_string(),
             parent_id: Some(9901),
             properties: HashMap::new(),
         })
@@ -50,7 +50,7 @@ async fn create_instance_full_flow_requires_no_external_service() -> Result<()> 
         .create_instance(CreateInstanceRequest {
             instance_id: Some(1001),
             instance_name: "battery_001".to_string(),
-            product_name: "Battery".to_string(),
+            product_name: "TestDevice".to_string(),
             parent_id: Some(9902),
             properties: fixtures::create_test_instance_properties(),
         })
@@ -71,7 +71,7 @@ async fn duplicate_instance_is_rejected_by_local_persistence() -> Result<()> {
     let request = CreateInstanceRequest {
         instance_id: Some(1001),
         instance_name: "battery_001".to_string(),
-        product_name: "Battery".to_string(),
+        product_name: "TestDevice".to_string(),
         parent_id: Some(9902),
         properties: fixtures::create_test_instance_properties(),
     };

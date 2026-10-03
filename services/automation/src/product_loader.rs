@@ -97,10 +97,9 @@ impl ProductLoader {
 }
 
 #[cfg(test)]
-pub(crate) fn test_energy_product_loader(pool: SqlitePool) -> ProductLoader {
-    let directory =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packs/energy/models");
-    let library = ProductLibrary::load(Some(&directory)).expect("load Energy Pack model fixture");
+pub(crate) fn test_product_loader(pool: SqlitePool) -> ProductLoader {
+    let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/models");
+    let library = ProductLibrary::load(Some(&directory)).expect("load generic model fixture");
     ProductLoader::with_library(pool, Arc::new(library))
 }
 
@@ -182,7 +181,7 @@ mod tests {
         let loader = ProductLoader::new(pool);
 
         assert_eq!(loader.product_count(), 0);
-        assert!(loader.get_product("Battery").is_err());
+        assert!(loader.get_product("TestDevice").is_err());
     }
 
     #[test]
@@ -191,11 +190,13 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
-            let loader = test_energy_product_loader(pool);
+            let loader = test_product_loader(pool);
 
-            let product = loader.get_product("Battery").expect("Battery should exist");
-            assert_eq!(product.product_name, "Battery");
-            assert_eq!(product.parent_name, Some("ESS".to_string()));
+            let product = loader
+                .get_product("TestDevice")
+                .expect("TestDevice should exist");
+            assert_eq!(product.product_name, "TestDevice");
+            assert_eq!(product.parent_name, Some("DeviceGroup".to_string()));
             assert!(!product.measurements.is_empty());
         });
     }
@@ -207,13 +208,13 @@ mod tests {
             let pool = SqlitePool::connect("sqlite::memory:")
                 .await
                 .expect("test database");
-            let loader = test_energy_product_loader(pool);
+            let loader = test_product_loader(pool);
 
             let first = loader
-                .get_definition("Battery")
+                .get_definition("TestDevice")
                 .expect("first product definition");
             let second = loader
-                .get_definition("Battery")
+                .get_definition("TestDevice")
                 .expect("second product definition");
 
             assert!(std::ptr::eq(first, second));

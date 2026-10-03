@@ -82,8 +82,6 @@ scenarios:
     evidence:
       command: cargo test -p aether-application --test data_processing_application history_covariate_and_processor_failures_remain_typed_and_isolated
       test: history_covariate_and_processor_failures_remain_typed_and_isolated
-      additional_command: cargo test -p aether-example-energy-gateway --test composition_contract bundled_energy_composition_starts_uncommissioned_and_fail_safe
-      additional_test: bundled_energy_composition_starts_uncommissioned_and_fail_safe
 
   - id: derived-data-has-no-device-authority
     capability: data_processing.process

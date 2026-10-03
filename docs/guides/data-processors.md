@@ -8,10 +8,10 @@ updated: 2026-07-11
 
 This page explains the implemented integration pattern for **Aether Data
 Processing**. The core types, application orchestration, v1 codec, local test
-adapters, bounded HTTP adapter, schemas, and energy-pack examples are present
-in this repository. The opt-in `aether-api` composition reads a strict runtime
+adapters, bounded HTTP adapter, and schemas are present in this repository.
+AetherEMS owns the energy-pack examples. The opt-in `aether-api` composition reads a strict runtime
 configuration; the complete synthetic template is
-[`packs/energy/data-processing/runtime.example.yaml`](../../packs/energy/data-processing/runtime.example.yaml).
+[the AetherEMS runtime example](https://github.com/EvanL1/AetherEMS/blob/main/packs/energy/data-processing/runtime.example.yaml).
 
 A data processor receives a complete, governed input frame and returns derived
 data. It does not reach back into Aether to discover its own inputs. This makes

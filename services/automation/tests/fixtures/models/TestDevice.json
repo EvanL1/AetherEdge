@@ -1,0 +1,11 @@
+{
+  "name": "TestDevice",
+  "pName": "DeviceGroup",
+  "M": [{"id":1,"name":"Temperature","unit":"C","type":"number"}],
+  "A": [{"id":1,"name":"Setpoint","unit":"C","type":"number"}],
+  "P": [
+    {"id":1,"name":"Capacity","unit":"","type":"number"},
+    {"id":2,"name":"Lower Limit","unit":"","type":"number"},
+    {"id":3,"name":"Upper Limit","unit":"","type":"number"}
+  ]
+}

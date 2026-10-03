@@ -114,35 +114,38 @@ uvx --from check-jsonschema check-jsonschema \
 
 SCHEMA_BASE="file://$(pwd)/contracts/data-processing/"
 
-uvx --from check-jsonschema check-jsonschema \
-  --schemafile contracts/data-processing/process-task-request.v1.schema.json \
-  packs/energy/data-processing/fixtures/load-process-task-request.json
+jq '{task_id: .task.id, expected_task_revision: .task.revision,
+     binding_id: .binding.id, expected_binding_revision: .binding.revision,
+     as_of: .frame.as_of, options: .options}' \
+  crates/aether-data-processing/tests/fixtures/forecast-processing-request.json | \
+  uvx --from check-jsonschema check-jsonschema \
+    --schemafile contracts/data-processing/process-task-request.v1.schema.json -
 
 uvx --from check-jsonschema check-jsonschema --base-uri "$SCHEMA_BASE" \
   --schemafile contracts/data-processing/data-processing-request.v1.schema.json \
-  packs/energy/data-processing/fixtures/load-processing-request.json
+  crates/aether-data-processing/tests/fixtures/forecast-processing-request.json
 
 uvx --from check-jsonschema check-jsonschema --base-uri "$SCHEMA_BASE" \
   --schemafile contracts/data-processing/processing-result.v1.schema.json \
-  packs/energy/data-processing/fixtures/load-processing-result.json
+  crates/aether-data-processing/tests/fixtures/forecast-processing-result.json
 
 uvx --from check-jsonschema check-jsonschema --base-uri "$SCHEMA_BASE" \
   --schemafile contracts/data-processing/derived-data.v1.schema.json \
-  packs/energy/data-processing/fixtures/load-derived-data.json
+  crates/aether-data-processing/tests/fixtures/forecast-derived-data.json
 
-jq '.frame' packs/energy/data-processing/fixtures/load-processing-request.json | \
+jq '.frame' crates/aether-data-processing/tests/fixtures/forecast-processing-request.json | \
   uvx --from check-jsonschema check-jsonschema --base-uri "$SCHEMA_BASE" \
     --schemafile contracts/data-processing/processing-frame.v1.schema.json -
 
-jq '.output' packs/energy/data-processing/fixtures/load-processing-result.json | \
+jq '.output' crates/aether-data-processing/tests/fixtures/forecast-processing-result.json | \
   uvx --from check-jsonschema check-jsonschema --base-uri "$SCHEMA_BASE" \
     --schemafile contracts/data-processing/forecast-output.v1.schema.json -
 ```
 
-The request, result, derived-data, and application-request fixtures map
-directly to their schemas. `ProcessingFrame` and `ForecastOutput` are nested
-wire values, so the commands validate projections from the processor request
-and result fixtures. There is currently no standalone error-envelope fixture;
+The generic request, result, and derived-data fixtures map directly to their
+schemas. The application request, `ProcessingFrame`, and `ForecastOutput`
+commands validate projections from the processor request and result fixtures.
+There is currently no standalone error-envelope fixture;
 `error.v1.schema.json` is still checked against the Draft 2020-12 metaschema.
 
 Schema validation is the first wire check. It does not replace request byte

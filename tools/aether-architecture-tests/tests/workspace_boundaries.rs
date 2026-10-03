@@ -7,6 +7,7 @@ use std::sync::OnceLock;
 use serde::Deserialize;
 
 const RETIRED_PACKAGES: &[&str] = &[
+    "aether-example-energy-gateway",
     "aether-home-assistant-bridge",
     "aether-http-history-query",
     "aether-integration-control",
@@ -18,6 +19,8 @@ const RETIRED_PACKAGES: &[&str] = &[
     "aether-sunspec",
 ];
 const RETIRED_ROOT_PATHS: &[&str] = &[
+    "packs/energy",
+    "examples/energy-gateway",
     "libs/aether-model",
     "libs/aether-rtdb",
     "libs/aether-rtdb-shm",
@@ -226,27 +229,6 @@ fn has_production_workspace_dependency(
     workspace
         .production_workspace_dependencies(source)
         .any(|(_, target)| target.name == target_name)
-}
-
-fn production_workspace_dependency_closure<'a>(
-    workspace: &'a Workspace,
-    root: &'a Package,
-) -> BTreeSet<&'a str> {
-    let mut visited = BTreeSet::new();
-    let mut pending = vec![root];
-
-    while let Some(package) = pending.pop() {
-        if !visited.insert(package.name.as_str()) {
-            continue;
-        }
-        pending.extend(
-            workspace
-                .production_workspace_dependencies(package)
-                .map(|(_, dependency)| dependency),
-        );
-    }
-
-    visited
 }
 
 #[test]
@@ -524,24 +506,10 @@ fn core_and_gateway_do_not_select_forbidden_sdk_or_adapter_edges() {
 fn example_packages_preserve_composition_direction() {
     let workspace = workspace();
     let minimal = workspace.package("aether-example-minimal-gateway");
-    let energy = workspace.package("aether-example-energy-gateway");
     let mut violations = Vec::new();
 
     if !has_production_workspace_dependency(workspace, minimal, "aether-edge-sdk") {
         violations.push("minimal gateway no longer composes aether-edge-sdk".to_string());
     }
-    let minimal_graph = production_workspace_dependency_closure(workspace, minimal);
-    if minimal_graph.contains("aether-example-energy-gateway") {
-        violations
-            .push("minimal gateway transitively depends on the energy composition".to_string());
-    }
-    if !has_production_workspace_dependency(workspace, energy, "aether-example-minimal-gateway") {
-        violations.push("energy gateway no longer extends the minimal composition".to_string());
-    }
-    let energy_graph = production_workspace_dependency_closure(workspace, energy);
-    if !energy_graph.contains("aether-edge-sdk") {
-        violations.push("energy gateway no longer composes aether-edge-sdk".to_string());
-    }
-
     assert_no_violations("example composition direction changed", violations);
 }
