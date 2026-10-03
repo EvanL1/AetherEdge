@@ -19,6 +19,7 @@ impl IoProcess {
         let child = Command::new(env!("CARGO_BIN_EXE_aether-io"))
             .args(["--no-color", "--bind-address", "127.0.0.1:0"])
             .current_dir(root)
+            .env("RUST_LOG", "info")
             .env("AETHER_DB_PATH", root.join("config.db"))
             .env("AETHER_SHM_PATH", point)
             .env("AETHER_CHANNEL_HEALTH_SHM_PATH", health)
