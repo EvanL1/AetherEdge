@@ -49,7 +49,6 @@ services:
       - CSV_BASE_PATH=/app/config/io
       - CONFIG_BASE_PATH=/app/config/io
       - AETHER_LOG_DIR=/app/logs
-      - ENABLE_SHARED_MEMORY=${ENABLE_SHARED_MEMORY:-true}
       - AETHER_M2C_SOCKET=/shm/aether/aether-m2c.sock
       - AETHER_AUTOMATION_POINT_WATCH_SOCKET=/shm/aether/aether-point-watch-automation.sock
       - NO_PROXY=*
@@ -76,7 +75,6 @@ services:
       - RUST_LOG=${RUST_LOG:-info}
       - AETHER_DB_PATH=/app/data/aether.db
       - AETHER_LOG_DIR=/app/logs
-      - ENABLE_SHARED_MEMORY=${ENABLE_SHARED_MEMORY:-true}
       - AETHER_M2C_SOCKET=/shm/aether/aether-m2c.sock
       - AETHER_AUTOMATION_POINT_WATCH_SOCKET=/shm/aether/aether-point-watch-automation.sock
       - NO_PROXY=*
@@ -137,6 +135,11 @@ services:
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY must be set; generate at least 32 random bytes}
       - AETHER_BOOTSTRAP_ADMIN_PASSWORD=${AETHER_BOOTSTRAP_ADMIN_PASSWORD:-}
       - AETHER_ALLOW_PUBLIC_REGISTRATION=${AETHER_ALLOW_PUBLIC_REGISTRATION:-false}
+      - AETHER_IO_URL=${AETHER_IO_URL:-http://127.0.0.1:6001}
+      - AETHER_AUTOMATION_URL=${AETHER_AUTOMATION_URL:-http://127.0.0.1:6002}
+      - AETHER_HISTORY_URL=${AETHER_HISTORY_URL:-http://127.0.0.1:6004}
+      - AETHER_UPLINK_URL=${AETHER_UPLINK_URL:-http://127.0.0.1:6006}
+      - AETHER_ALARM_URL=${AETHER_ALARM_URL:-http://127.0.0.1:6007}
       - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
       - REFRESH_TOKEN_EXPIRE_DAYS=${REFRESH_TOKEN_EXPIRE_DAYS:-7}
       - AETHER_LOG_DIR=/app/logs

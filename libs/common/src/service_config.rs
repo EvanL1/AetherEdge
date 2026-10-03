@@ -781,9 +781,15 @@ impl ComparisonOperator {
 
     /// Compare two f64 values
     pub fn compare_f64(&self, left: f64, right: f64) -> bool {
+        // Tolerate finite rounding error at the operands' magnitude while
+        // retaining IEEE equality for NaN and infinities.
+        let equal = left == right
+            || (left.is_finite()
+                && right.is_finite()
+                && (left - right).abs() <= f64::EPSILON * left.abs().max(right.abs()).max(1.0));
         match self {
-            Self::Equal => (left - right).abs() < f64::EPSILON,
-            Self::NotEqual => (left - right).abs() >= f64::EPSILON,
+            Self::Equal => equal,
+            Self::NotEqual => !equal,
             Self::GreaterThan => left > right,
             Self::GreaterThanOrEqual => left >= right,
             Self::LessThan => left < right,
@@ -894,5 +900,31 @@ mod tests {
         let fr: FourRemote = FourRemote::Telemetry;
         let pt: PointType = fr;
         assert_eq!(pt, PointType::Telemetry);
+    }
+    #[test]
+    fn regression_equality_tolerates_large_magnitude_roundoff() {
+        for (left, right, equal) in [
+            (1000.0, 1000.0_f64.next_up(), true),
+            (-1000.0, -1000.0_f64.next_up(), true),
+            (1e12, 1e12_f64.next_up(), true),
+            (1000.0, 1000.001, false),
+            (0.0, f64::EPSILON / 2.0, true),
+            (0.0, 1e-12, false),
+            (f64::INFINITY, f64::INFINITY, true),
+            (f64::INFINITY, f64::NEG_INFINITY, false),
+            (f64::INFINITY, 1.0, false),
+            (f64::NAN, f64::NAN, false),
+        ] {
+            assert_eq!(
+                ComparisonOperator::Equal.compare_f64(left, right),
+                equal,
+                "{left:?} == {right:?}"
+            );
+            assert_eq!(
+                ComparisonOperator::NotEqual.compare_f64(left, right),
+                !equal,
+                "{left:?} != {right:?}"
+            );
+        }
     }
 }

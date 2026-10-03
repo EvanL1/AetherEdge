@@ -69,6 +69,9 @@ domain <- ports <- application <- services/interfaces
   another concrete runtime implementation.
 - SHM is the authority for live point state. An external store may mirror it,
   but must never silently become the authority.
+- IO retains exclusive process ownership of both point and health SHM paths
+  before cleanup or topology publication. These lifetime writer locks are
+  separate from the short-lived reader and topology transaction locks.
 - Remote applications enter only through authenticated `aether-api:6005`. The
   internal IO, automation, history, uplink, and alarm ports stay on loopback.
 - Application interfaces receive the read-only `LiveState` port. Only the

@@ -1,5 +1,7 @@
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use aether_application::{ControlApplication, SafetyPolicy};
 use aether_automation::infra::application_control::{
@@ -12,7 +14,7 @@ use aether_ports::{
 };
 use aether_rules::{
     MemoryRuleLiveState, Rule, RuleActionCommand, RuleActionCommandFacade, RuleExecutor,
-    extract_rule_flow,
+    RuleScheduler, extract_rule_flow,
 };
 use async_trait::async_trait;
 use serde_json::{Value, json};
@@ -394,4 +396,157 @@ async fn command_measurement_and_non_finite_action_targets_fail_closed() {
 
     assert!(dispatcher.commands().is_empty());
     assert!(audit.records().is_empty());
+}
+
+#[derive(Default)]
+struct BlockFirstTerminalAudit {
+    blocked: AtomicBool,
+    entered: tokio::sync::Notify,
+}
+
+#[async_trait]
+impl AuditSink for BlockFirstTerminalAudit {
+    async fn record(&self, record: AuditRecord) -> PortResult<()> {
+        if record.outcome() == AuditOutcome::Succeeded && !self.blocked.swap(true, Ordering::SeqCst)
+        {
+            self.entered.notify_one();
+            std::future::pending::<()>().await;
+        }
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn accepted_action_with_blocked_terminal_audit_is_not_resent_after_scheduler_timeout() {
+    assert_accepted_action_is_not_resent(false).await;
+}
+
+#[tokio::test]
+async fn input_changed_during_blocked_terminal_audit_is_not_resent_after_scheduler_timeout() {
+    assert_accepted_action_is_not_resent(true).await;
+}
+
+async fn assert_accepted_action_is_not_resent(change_input_while_audit_pending: bool) {
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .expect("rules database");
+    common::schema::init_rules_schema(&pool)
+        .await
+        .expect("rules schema");
+    // Priority and concurrency fix the order: the OnChange command is accepted
+    // before another rule can make progress. That second rule proves the
+    // deadline releases the scheduler, including on a subsequent tick.
+    for (rule, priority, trigger) in [
+        (
+            action_rule(71, "action", json!(12.5)),
+            10,
+            json!({
+                "type": "on_change",
+                "point_refs": [{"instance": 42, "point_type": "measurement", "point": 7}]
+            }),
+        ),
+        (
+            action_rule(72, "action", json!(99.0)),
+            0,
+            json!({
+                "type": "interval", "interval_ms": 0
+            }),
+        ),
+    ] {
+        sqlx::query(
+            "INSERT INTO rules
+            (id, name, nodes_json, enabled, priority, cooldown_ms, trigger_config)
+            VALUES (?, ?, ?, 1, ?, 0, ?)",
+        )
+        .bind(rule.id)
+        .bind(rule.name)
+        .bind(serde_json::to_string(&rule.flow).expect("compact rule flow"))
+        .bind(priority)
+        .bind(trigger.to_string())
+        .execute(&pool)
+        .await
+        .expect("stored rule");
+    }
+    let live_state = Arc::new(MemoryRuleLiveState::new());
+    assert!(live_state.set_instance(42, 0, 7, 2.0, 1));
+    let dispatcher = Arc::new(RecordingDispatcher::default());
+    let audit = Arc::new(BlockFirstTerminalAudit::default());
+    let application = Arc::new(ControlApplication::new(
+        dispatcher.clone(),
+        audit.clone(),
+        SafetyPolicy,
+    ));
+    let action_application = Arc::new(RuleActionApplication::new(application));
+    let logs = tempfile::tempdir().expect("rule logs");
+    let mut scheduler = RuleScheduler::with_state_store(
+        live_state.clone(),
+        pool,
+        100,
+        logs.path().to_path_buf(),
+        Arc::new(aether_calc::MemoryStateStore::new()),
+        Some(action_application),
+    );
+    scheduler.set_max_concurrency(1);
+    assert_eq!(
+        scheduler.load_rules().await.expect("load database rules"),
+        2
+    );
+    let scheduler = Arc::new(scheduler);
+
+    let task_scheduler = scheduler.clone();
+    let task = tokio::spawn(async move { task_scheduler.start().await });
+    tokio::time::timeout(Duration::from_secs(1), audit.entered.notified())
+        .await
+        .expect("first accepted command reaches its blocked terminal audit");
+    // Keep startup and initial I/O on real time; advance only once the
+    // accepted command is known to be waiting on its terminal audit.
+    tokio::time::pause();
+    assert_eq!(
+        dispatcher.commands().len(),
+        1,
+        "dispatch is already accepted"
+    );
+    if change_input_while_audit_pending {
+        // The scheduler sampled 2 before execution. Input changes to 3 after
+        // dispatch acceptance, while the terminal audit still blocks. Holding
+        // only that old sample must not turn stable 3 into an automatic retry.
+        assert!(live_state.set_instance(42, 0, 7, 3.0, 2));
+    }
+    tokio::time::advance(Duration::from_secs(31)).await;
+
+    // Poll observable dispatches while SQLite's real worker commits history;
+    // wall time bounds failure without advancing any additional virtual time.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let progressed = loop {
+        let other_commands = dispatcher
+            .commands()
+            .iter()
+            .filter(|command| command.value() == 99.0)
+            .count();
+        if other_commands >= 2 {
+            break true;
+        }
+        if Instant::now() >= deadline {
+            break false;
+        }
+        tokio::task::yield_now().await;
+    };
+    scheduler.stop();
+    task.abort();
+    let _ = task.await;
+    assert!(
+        progressed,
+        "another rule must execute after the deadline and on the next tick"
+    );
+    let accepted_for_unchanged_input = dispatcher
+        .commands()
+        .iter()
+        .filter(|command| command.value() == 12.5)
+        .count();
+    assert_eq!(
+        accepted_for_unchanged_input, 1,
+        "an accepted action whose terminal audit timed out must not be automatically replayed"
+    );
 }

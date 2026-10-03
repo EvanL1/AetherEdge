@@ -1,7 +1,7 @@
 ---
 title: Rule Engine
 description: Dual-column rule storage, tick and event scheduling, execution, and hot reload
-updated: 2026-07-10
+updated: 2026-10-02
 ---
 
 # Rule Engine
@@ -88,7 +88,7 @@ Two deadbands filter noise, combined with AND semantics:
   Without one, any change between finite values counts.
 
 NaN values (Aether's "temporarily unavailable" sentinel) never count as a
-change; the first finite value after a gap triggers once. After each trigger,
+change; the first finite value after a gap triggers once. After each successful trigger,
 the per-point "last value" advances to what the executor actually read during
 execution, so future comparisons are anchored to the value the rule logic
 actually saw.
@@ -97,6 +97,17 @@ Due rules execute concurrently with bounded parallelism (four at a time by
 default). Independently of triggers, a rule may declare a `cooldown_ms`; the
 cooldown starts only after an execution that succeeded and performed at least
 one action, and suppresses re-execution until it elapses.
+
+Scheduled and explicit rule executions have a 30-second deadline. A failed
+execution preserves the OnChange baseline and time deadband, allowing the
+same change to retry when no device action was accepted. A timeout may leave
+a device command's outcome unknown; a partial failure may already have applied
+some actions. Both cases are recorded in rule history and hold automatic
+retries for the same input. OnChange becomes eligible again when a subscribed
+point has a new finite value. Interval rules remain held until their execution
+definition changes or an explicit execution succeeds. Metadata-only edits and
+unrelated reloads preserve the hold. Reconcile device state before explicitly
+executing or editing a held rule; the deadline cannot undo accepted commands.
 
 ## Execution
 
@@ -107,6 +118,11 @@ output wire, `action-changeValue` nodes write a value to a point,
 the end node terminates the path. Those four names are the wire format, carried
 in each node's `data.type`; [Writing rules](../guides/writing-rules.md) shows a
 complete document.
+
+A Switch stops at its first matching branch; a missing output wire fails the
+execution. ChangeValue checks every assignment target before sending the node's
+actions. Equality comparisons tolerate floating-point rounding relative to the
+operands' magnitude, with an absolute epsilon floor near zero.
 
 Input variables are read through the SHM-backed `RuleLiveState`, and the reads
 are strict: if a variable's data is unavailable this cycle, the evaluation short-circuits rather

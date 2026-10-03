@@ -241,3 +241,25 @@ async fn test_rule_flow_parsing_edge_cases() {
         result.err()
     );
 }
+
+#[tokio::test]
+async fn regression_upsert_preserves_trigger_config_on_insert_and_update() -> Result<()> {
+    let pool = setup_test_db().await;
+    let mut rule = json!({"name": "trigger", "flow_json": sample_flow_json(),
+        "trigger_config": {"type": "interval", "interval_ms": 250}});
+    upsert_rule(&pool, 77, &rule).await?;
+    assert_eq!(
+        get_rule(&pool, 77).await?["trigger_config"],
+        json!({"type":"interval", "interval_ms":250})
+    );
+    rule["trigger_config"] = json!({"type": "on_change", "point_refs": [{"instance": 5, "point_type": "measurement", "point": 3}]});
+    upsert_rule(&pool, 77, &rule).await?;
+    assert_eq!(
+        get_rule(&pool, 77).await?["trigger_config"],
+        rule["trigger_config"]
+    );
+    rule["trigger_config"] = json!(null);
+    upsert_rule(&pool, 77, &rule).await?;
+    assert!(get_rule(&pool, 77).await?["trigger_config"].is_null());
+    Ok(())
+}

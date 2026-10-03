@@ -80,6 +80,7 @@ chrono = { workspace = true }
 clap = { workspace = true }
 rand = { workspace = true }
 uuid = { workspace = true }
+fs2 = "0.4"
 
 # SQLite for configuration
 sqlx = { workspace = true }

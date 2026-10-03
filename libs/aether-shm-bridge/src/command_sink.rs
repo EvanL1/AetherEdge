@@ -517,14 +517,19 @@ impl CommandNotifier {
                 return Err(CommandNotifyError::Expired);
             }
             self.try_reconnect().await?;
-            let stream = self.stream.as_mut().ok_or_else(|| {
+            // Own the stream across the await: cancellation must discard any
+            // partial frame instead of letting the next command reuse it.
+            let mut stream = self.stream.take().ok_or_else(|| {
                 CommandNotifyError::Io(io::Error::new(
                     io::ErrorKind::NotConnected,
                     format!("IO command listener {:?} is disconnected", self.path),
                 ))
             })?;
             match tokio::time::timeout(UDS_WRITE_TIMEOUT, stream.write_all(&frame)).await {
-                Ok(Ok(())) => return Ok(()),
+                Ok(Ok(())) => {
+                    self.stream = Some(stream);
+                    return Ok(());
+                },
                 Ok(Err(_error)) if attempt + 1 < Self::SEND_RETRIES => {
                     self.disconnect(true);
                     tokio::time::sleep(Self::RETRY_DELAY).await;
@@ -747,3 +752,7 @@ fn new_producer_id() -> u64 {
     let producer = time_bits ^ (u64::from(std::process::id()) << 32);
     producer.max(1)
 }
+
+#[cfg(test)]
+#[path = "command_sink_tests.rs"]
+mod tests;

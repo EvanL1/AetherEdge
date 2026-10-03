@@ -401,9 +401,19 @@ pub async fn list_alerts(pool: &SqlitePool, params: &AlertFilter) -> Result<Page
     })
 }
 
-pub async fn insert_alert(pool: &SqlitePool, rule: &AlertRule, current_value: f64) -> Result<i64> {
+/// Starts an alarm episode only while its rule remains enabled.
+///
+/// The enabled check is part of the write statement so an in-flight monitor
+/// snapshot cannot recreate an alert after disable/delete reconciliation.
+/// The active row and trigger history commit together before notification.
+pub async fn insert_alert(
+    pool: &SqlitePool,
+    rule: &AlertRule,
+    current_value: f64,
+) -> Result<Option<i64>> {
     let now = Utc::now().timestamp();
     let snapshot = rule.snapshot();
+    let mut tx = pool.begin().await.context("begin alarm trigger")?;
 
     let id = sqlx::query_scalar::<_, i64>(
         r#"
@@ -411,7 +421,8 @@ pub async fn insert_alert(pool: &SqlitePool, rule: &AlertRule, current_value: f6
             (rule_id, rule_snapshot, service_type, channel_id, data_type, point_id,
              rule_name, warning_level, operator, threshold_value, current_value,
              status, triggered_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
+        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?
+        WHERE EXISTS (SELECT 1 FROM alert_rule WHERE id = ? AND enabled = 1)
         RETURNING id
         "#,
     )
@@ -427,10 +438,29 @@ pub async fn insert_alert(pool: &SqlitePool, rule: &AlertRule, current_value: f6
     .bind(rule.value)
     .bind(current_value)
     .bind(now)
-    .fetch_one(pool)
+    .bind(rule.id)
+    .fetch_optional(&mut *tx)
     .await
     .context("insert alert")?;
 
+    if let Some(id) = id {
+        sqlx::query(
+            "INSERT INTO alert_event
+                (rule_id, rule_snapshot, service_type, channel_id, data_type, point_id,
+                 rule_name, warning_level, operator, threshold_value,
+                 trigger_value, event_type, triggered_at)
+             SELECT rule_id, rule_snapshot, service_type, channel_id, data_type, point_id,
+                    rule_name, warning_level, operator, threshold_value,
+                    current_value, 'trigger', triggered_at
+             FROM alert WHERE id = ?",
+        )
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .context("insert trigger event")?;
+    }
+
+    tx.commit().await.context("commit alarm trigger")?;
     Ok(id)
 }
 

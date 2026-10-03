@@ -764,3 +764,79 @@ fn test_formula_single_variable() {
     values.insert("X1".to_string(), 42.0);
     assert_eq!(evaluate_token_formula(&formula, &values), Some(42.0));
 }
+
+#[tokio::test]
+async fn regression_unwired_matched_switch_does_not_fall_through() {
+    for targets in [None, Some(Vec::<String>::new())] {
+        let (_state, executor, mut rule) = setup_soc_test("99.5").await;
+        let RuleNode::Switch { wires, .. } = rule.flow.nodes.get_mut("switch1").unwrap() else {
+            panic!("switch fixture");
+        };
+        match targets {
+            None => {
+                wires.remove("out002");
+            },
+            Some(targets) => {
+                wires.insert("out002".to_string(), targets);
+            },
+        }
+        let result = executor.execute(&rule).await.unwrap();
+        assert!(!result.success, "an unwired first match must stop routing");
+        assert!(result.actions_executed.is_empty());
+        assert_eq!(
+            result.node_details["switch1"].matched_port.as_deref(),
+            Some("out002")
+        );
+    }
+}
+
+#[test]
+fn regression_equality_tolerates_large_magnitude_roundoff() {
+    let (_state, executor) = new_executor();
+    for (left, right, equal) in [
+        (1000.0, 1000.0_f64.next_up(), true),
+        (-1000.0, -1000.0_f64.next_up(), true),
+        (1e12, 1e12_f64.next_up(), true),
+        (1000.0, 1000.001, false),
+        (0.0, f64::EPSILON / 2.0, true),
+        (0.0, 1e-12, false),
+        (f64::INFINITY, f64::INFINITY, true),
+        (f64::INFINITY, f64::NEG_INFINITY, false),
+        (f64::INFINITY, 1.0, false),
+        (f64::NAN, f64::NAN, false),
+    ] {
+        let values = HashMap::from([("L".to_string(), left), ("R".to_string(), right)]);
+        for (operator, expected) in [("==", equal), ("eq", equal), ("!=", !equal), ("ne", !equal)] {
+            let condition = FlowCondition {
+                cond_type: "variable".to_string(),
+                variables: Some("L".to_string()),
+                operator: Some(operator.to_string()),
+                value: Some(json!("R")),
+            };
+            assert_eq!(
+                executor.evaluate_flow_condition(&condition, &values),
+                expected,
+                "{left:?} {operator} {right:?}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn regression_unknown_assignment_target_fails_rule() {
+    let (_state, executor, mut rule) = setup_soc_test("3.5").await;
+    let RuleNode::ChangeValue {
+        rule: assignments, ..
+    } = rule.flow.nodes.get_mut("changeValue1").unwrap()
+    else {
+        panic!("action fixture");
+    };
+    assignments[0].variables = "UNKNOWN".to_string();
+    let result = executor.execute(&rule).await.unwrap();
+    assert!(
+        !result.success,
+        "unknown assignment cannot silently succeed"
+    );
+    assert!(result.error.as_deref().unwrap().contains("UNKNOWN"));
+    assert!(result.actions_executed.is_empty());
+}

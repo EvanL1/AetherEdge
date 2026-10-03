@@ -43,10 +43,65 @@ fn snapshot_interval(configured_secs: Option<u64>) -> Duration {
     Duration::from_secs(configured_secs.unwrap_or(300).max(1))
 }
 
-#[tokio::main]
-async fn main() -> AetherResult<()> {
-    // Parse arguments and initialize
+/// Retain one owner across all topology generations, independently of the
+/// short-lived transaction locks used by readers and topology replacement.
+fn acquire_writer_ownership(path: &std::path::Path) -> Result<std::fs::File, IoError> {
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent).map_err(|error| {
+            IoError::config(format!("create SHM writer directory {parent:?}: {error}"))
+        })?;
+    }
+    let mut lock_path = path.as_os_str().to_os_string();
+    lock_path.push(".writer.lock");
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&lock_path)
+        .map_err(|error| IoError::config(format!("open SHM writer lock {lock_path:?}: {error}")))?;
+    fs2::FileExt::try_lock_exclusive(&lock).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::WouldBlock {
+            IoError::config(format!(
+                "SHM {} is already owned by another aether-io process",
+                path.display()
+            ))
+        } else {
+            IoError::config(format!("acquire SHM writer lock {lock_path:?}: {error}"))
+        }
+    })?;
+    Ok(lock)
+}
+
+fn main() -> AetherResult<()> {
     let args = Args::parse();
+    common::service_bootstrap::load_development_env();
+    let shm_path = default_shm_path();
+    let health_path = std::env::var("AETHER_CHANNEL_HEALTH_SHM_PATH")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| channel_health_path_from_shm(&shm_path));
+    // Keep ownership outside the async runtime so even startup errors stop
+    // every background writer before releasing either process lease.
+    let _writer_ownership = if args.validate {
+        None
+    } else {
+        Some((
+            acquire_writer_ownership(&shm_path)?,
+            acquire_writer_ownership(&health_path)?,
+        ))
+    };
+    run(args, shm_path, health_path)
+}
+
+#[tokio::main]
+async fn run(
+    args: Args,
+    shm_path: std::path::PathBuf,
+    health_path: std::path::PathBuf,
+) -> AetherResult<()> {
+    // Parse arguments and initialize
     let service_args = args.clone().into();
 
     let service_info = ServiceInfo::new(
@@ -127,10 +182,6 @@ async fn main() -> AetherResult<()> {
         initial_publication_epoch,
         initial_health_path,
     ) = {
-        let shm_path = default_shm_path();
-        let health_path = std::env::var("AETHER_CHANNEL_HEALTH_SHM_PATH")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|_| channel_health_path_from_shm(&shm_path));
         let runtime_config = ShmRuntimeConfig::new(&shm_path, max_slots);
         let manifest = Arc::new(initial_point_manifest);
         let snapshot_path = std::env::var("SHM_SNAPSHOT_PATH")

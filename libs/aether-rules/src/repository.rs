@@ -170,6 +170,12 @@ pub async fn upsert_rule(pool: &SqlitePool, rule_id: i64, rule: &Value) -> Resul
         .and_then(|n| u64::try_from(n).ok())
         .unwrap_or(0);
 
+    let trigger_config = rule
+        .get("trigger_config")
+        .filter(|value| !value.is_null())
+        .map(serde_json::to_string)
+        .transpose()?;
+
     // Get format type (default: "vue-flow")
     let format = rule
         .get("format")
@@ -188,8 +194,8 @@ pub async fn upsert_rule(pool: &SqlitePool, rule_id: i64, rule: &Value) -> Resul
 
     sqlx::query(
         r#"
-        INSERT INTO rules (id, name, description, nodes_json, flow_json, format, enabled, priority, cooldown_ms)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO rules (id, name, description, nodes_json, flow_json, format, enabled, priority, cooldown_ms, trigger_config)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             name = excluded.name,
             description = excluded.description,
@@ -199,6 +205,7 @@ pub async fn upsert_rule(pool: &SqlitePool, rule_id: i64, rule: &Value) -> Resul
             enabled = excluded.enabled,
             priority = excluded.priority,
             cooldown_ms = excluded.cooldown_ms,
+            trigger_config = excluded.trigger_config,
             updated_at = CURRENT_TIMESTAMP
         "#,
     )
@@ -211,6 +218,7 @@ pub async fn upsert_rule(pool: &SqlitePool, rule_id: i64, rule: &Value) -> Resul
     .bind(enabled)
     .bind(priority as i64)
     .bind(cooldown_ms as i64)
+    .bind(trigger_config)
     .execute(pool)
     .await?;
 
