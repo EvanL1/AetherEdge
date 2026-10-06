@@ -31,8 +31,6 @@ pub use service_config::{
     // Config types
     ApiConfig,
     BaseServiceConfig,
-    // Enums
-    ComparisonOperator,
     // Validation
     ConfigValidator,
     // Constants
