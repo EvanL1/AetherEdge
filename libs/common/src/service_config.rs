@@ -3,7 +3,7 @@
 //! This module provides shared types for service configuration including:
 //! - Base configuration structs (ApiConfig, LoggingConfig)
 //! - Validation framework (ConfigValidator, ValidationResult)
-//! - Shared enums (PointRole, InstanceStatus, ResponseStatus, ComparisonOperator)
+//! - Shared enums (PointRole, InstanceStatus, ResponseStatus)
 
 use aether_schema_macro::Schema;
 use serde::de::DeserializeOwned;
@@ -396,28 +396,10 @@ pub trait ConfigValidator: Send + Sync {
 /// pub type RulesValidator = GenericValidator<RulesConfig>;
 /// ```
 pub struct GenericValidator<T> {
-    config: Option<T>,
-    raw_yaml: Option<serde_yml::Value>,
+    config: T,
 }
 
 impl<T: DeserializeOwned + ConfigValidator> GenericValidator<T> {
-    /// Create validator from YAML value
-    pub fn from_yaml(yaml: serde_yml::Value) -> Self {
-        let config = serde_yml::from_value(yaml.clone()).ok();
-        Self {
-            config,
-            raw_yaml: Some(yaml),
-        }
-    }
-
-    /// Create validator from already-parsed config
-    pub fn from_config(config: T) -> Self {
-        Self {
-            config: Some(config),
-            raw_yaml: None,
-        }
-    }
-
     /// Create validator from file path
     pub fn from_file(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
@@ -439,76 +421,28 @@ impl<T: DeserializeOwned + ConfigValidator> GenericValidator<T> {
             }
         })?;
 
-        // Also parse as YAML Value for raw_yaml field
-        let yaml: serde_yml::Value = serde_yml::from_str(&content)?;
+        // Reject duplicate keys even in fields ignored by the typed config.
+        serde_yml::from_str::<serde_yml::Value>(&content)?;
 
-        Ok(Self {
-            config: Some(config),
-            raw_yaml: Some(yaml),
-        })
-    }
-
-    /// Get reference to the parsed config
-    pub fn config(&self) -> Option<&T> {
-        self.config.as_ref()
-    }
-
-    /// Take ownership of the parsed config
-    pub fn into_config(self) -> Option<T> {
-        self.config
-    }
-}
-
-impl<T: DeserializeOwned + ConfigValidator> GenericValidator<T> {
-    /// Delegate validation to inner config, or return error if config is unavailable
-    fn delegate_or_error(
-        &self,
-        level: ValidationLevel,
-        f: impl FnOnce(&T) -> Result<ValidationResult>,
-    ) -> Result<ValidationResult> {
-        match &self.config {
-            Some(config) => f(config),
-            None => {
-                let mut result = ValidationResult::new(level);
-                result.add_error("Configuration not available".to_string());
-                Ok(result)
-            },
-        }
+        Ok(Self { config })
     }
 }
 
 impl<T: DeserializeOwned + ConfigValidator> ConfigValidator for GenericValidator<T> {
     fn validate_syntax(&self) -> Result<ValidationResult> {
-        let mut result = ValidationResult::new(ValidationLevel::Syntax);
-
-        if self.config.is_none() {
-            if let Some(yaml) = &self.raw_yaml {
-                match serde_yml::from_value::<T>(yaml.clone()) {
-                    Ok(_) => {
-                        result.add_warning("Configuration parsed but not stored".to_string());
-                    },
-                    Err(e) => {
-                        result.add_error(format!("Invalid YAML syntax: {}", e));
-                    },
-                }
-            } else {
-                result.add_error("No configuration data available".to_string());
-            }
-        }
-
-        Ok(result)
+        Ok(ValidationResult::new(ValidationLevel::Syntax))
     }
 
     fn validate_schema(&self) -> Result<ValidationResult> {
-        self.delegate_or_error(ValidationLevel::Schema, |c| c.validate_schema())
+        self.config.validate_schema()
     }
 
     fn validate_business(&self) -> Result<ValidationResult> {
-        self.delegate_or_error(ValidationLevel::Business, |c| c.validate_business())
+        self.config.validate_business()
     }
 
     fn validate_runtime(&self) -> Result<ValidationResult> {
-        self.delegate_or_error(ValidationLevel::Runtime, |c| c.validate_runtime())
+        self.config.validate_runtime()
     }
 }
 
@@ -709,135 +643,6 @@ impl fmt::Display for InstanceStatus {
     }
 }
 
-/// Comparison operator for rules engine
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
-pub enum ComparisonOperator {
-    /// Equal to (==)
-    #[serde(rename = "eq")]
-    #[default]
-    Equal,
-    /// Not equal to (!=)
-    #[serde(rename = "ne")]
-    NotEqual,
-    /// Greater than (>)
-    #[serde(rename = "gt")]
-    GreaterThan,
-    /// Greater than or equal to (>=)
-    #[serde(rename = "gte")]
-    GreaterThanOrEqual,
-    /// Less than (<)
-    #[serde(rename = "lt")]
-    LessThan,
-    /// Less than or equal to (<=)
-    #[serde(rename = "lte")]
-    LessThanOrEqual,
-    /// Value is within range (inclusive)
-    #[serde(rename = "in")]
-    InRange,
-    /// Value is outside range (exclusive)
-    #[serde(rename = "not_in")]
-    NotInRange,
-    /// String contains substring
-    #[serde(rename = "contains")]
-    Contains,
-    /// String matches regex pattern
-    #[serde(rename = "matches")]
-    Matches,
-}
-
-impl ComparisonOperator {
-    /// Convert to string representation
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Equal => "eq",
-            Self::NotEqual => "ne",
-            Self::GreaterThan => "gt",
-            Self::GreaterThanOrEqual => "gte",
-            Self::LessThan => "lt",
-            Self::LessThanOrEqual => "lte",
-            Self::InRange => "in",
-            Self::NotInRange => "not_in",
-            Self::Contains => "contains",
-            Self::Matches => "matches",
-        }
-    }
-
-    /// Get symbol representation
-    pub fn symbol(&self) -> &'static str {
-        match self {
-            Self::Equal => "==",
-            Self::NotEqual => "!=",
-            Self::GreaterThan => ">",
-            Self::GreaterThanOrEqual => ">=",
-            Self::LessThan => "<",
-            Self::LessThanOrEqual => "<=",
-            Self::InRange => "∈",
-            Self::NotInRange => "∉",
-            Self::Contains => "⊃",
-            Self::Matches => "~",
-        }
-    }
-
-    /// Compare two f64 values
-    pub fn compare_f64(&self, left: f64, right: f64) -> bool {
-        // Tolerate finite rounding error at the operands' magnitude while
-        // retaining IEEE equality for NaN and infinities.
-        let equal = left == right
-            || (left.is_finite()
-                && right.is_finite()
-                && (left - right).abs() <= f64::EPSILON * left.abs().max(right.abs()).max(1.0));
-        match self {
-            Self::Equal => equal,
-            Self::NotEqual => !equal,
-            Self::GreaterThan => left > right,
-            Self::GreaterThanOrEqual => left >= right,
-            Self::LessThan => left < right,
-            Self::LessThanOrEqual => left <= right,
-            _ => false, // InRange and NotInRange need special handling
-        }
-    }
-
-    /// Compare two i64 values
-    pub fn compare_i64(&self, left: i64, right: i64) -> bool {
-        match self {
-            Self::Equal => left == right,
-            Self::NotEqual => left != right,
-            Self::GreaterThan => left > right,
-            Self::GreaterThanOrEqual => left >= right,
-            Self::LessThan => left < right,
-            Self::LessThanOrEqual => left <= right,
-            _ => false, // InRange and NotInRange need special handling
-        }
-    }
-}
-
-impl FromStr for ComparisonOperator {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "eq" | "==" | "=" | "equal" => Ok(Self::Equal),
-            "ne" | "!=" | "<>" | "not_equal" => Ok(Self::NotEqual),
-            "gt" | ">" | "greater" => Ok(Self::GreaterThan),
-            "gte" | ">=" | "greater_equal" => Ok(Self::GreaterThanOrEqual),
-            "lt" | "<" | "less" => Ok(Self::LessThan),
-            "lte" | "<=" | "less_equal" => Ok(Self::LessThanOrEqual),
-            "in" | "within" | "between" => Ok(Self::InRange),
-            "not_in" | "outside" | "not_between" => Ok(Self::NotInRange),
-            "contains" | "has" | "includes" => Ok(Self::Contains),
-            "matches" | "~" | "regex" => Ok(Self::Matches),
-            _ => Err(format!("Unknown comparison operator: {}", s)),
-        }
-    }
-}
-
-impl fmt::Display for ComparisonOperator {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.symbol())
-    }
-}
-
 /// FourRemote is an alias for PointType for backward compatibility
 ///
 /// Both represent the same concept: the four remote point types (T/S/C/A)
@@ -885,46 +690,155 @@ mod tests {
     }
 
     #[test]
-    fn test_comparison_operator_compare_methods() {
-        let op = ComparisonOperator::GreaterThan;
-        assert!(op.compare_f64(5.0, 3.0));
-        assert!(!op.compare_f64(3.0, 5.0));
-
-        let op = ComparisonOperator::Equal;
-        assert!(op.compare_i64(42, 42));
-        assert!(!op.compare_i64(42, 43));
-    }
-
-    #[test]
     fn test_four_remote_is_point_type() {
         let fr: FourRemote = FourRemote::Telemetry;
         let pt: PointType = fr;
         assert_eq!(pt, PointType::Telemetry);
-    }
-    #[test]
-    fn regression_equality_tolerates_large_magnitude_roundoff() {
-        for (left, right, equal) in [
-            (1000.0, 1000.0_f64.next_up(), true),
-            (-1000.0, -1000.0_f64.next_up(), true),
-            (1e12, 1e12_f64.next_up(), true),
-            (1000.0, 1000.001, false),
-            (0.0, f64::EPSILON / 2.0, true),
-            (0.0, 1e-12, false),
-            (f64::INFINITY, f64::INFINITY, true),
-            (f64::INFINITY, f64::NEG_INFINITY, false),
-            (f64::INFINITY, 1.0, false),
-            (f64::NAN, f64::NAN, false),
+        for (value, expected) in [
+            ("T", FourRemote::Telemetry),
+            ("S", FourRemote::Signal),
+            ("C", FourRemote::Control),
+            ("A", FourRemote::Adjustment),
         ] {
-            assert_eq!(
-                ComparisonOperator::Equal.compare_f64(left, right),
-                equal,
-                "{left:?} == {right:?}"
-            );
-            assert_eq!(
-                ComparisonOperator::NotEqual.compare_f64(left, right),
-                !equal,
-                "{left:?} != {right:?}"
-            );
+            assert_eq!(value.parse::<FourRemote>().unwrap(), expected);
+        }
+    }
+    #[derive(Deserialize)]
+    struct Config {
+        value: u32,
+        fail_stage: Option<ValidationLevel>,
+    }
+
+    impl Config {
+        fn stage(&self, level: ValidationLevel) -> Result<ValidationResult> {
+            if self.fail_stage == Some(level) {
+                anyhow::bail!("{level:?} failed for {}", self.value);
+            }
+            let mut result = ValidationResult::new(level);
+            result.add_warning(format!("{level:?}: {}", self.value));
+            if level == ValidationLevel::Business {
+                result.add_error(format!("Rejected value: {}", self.value));
+            }
+            Ok(result)
+        }
+    }
+
+    impl ConfigValidator for Config {
+        fn validate_syntax(&self) -> Result<ValidationResult> {
+            anyhow::bail!("typed syntax validation must not run after file parsing")
+        }
+
+        fn validate_schema(&self) -> Result<ValidationResult> {
+            self.stage(ValidationLevel::Schema)
+        }
+
+        fn validate_business(&self) -> Result<ValidationResult> {
+            self.stage(ValidationLevel::Business)
+        }
+
+        fn validate_runtime(&self) -> Result<ValidationResult> {
+            self.stage(ValidationLevel::Runtime)
+        }
+    }
+
+    fn config_file(content: &str) -> tempfile::NamedTempFile {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(file.path(), content).unwrap();
+        file
+    }
+
+    #[test]
+    fn parsed_file_validates_stages_in_order_without_delegating_syntax() {
+        let file = config_file("value: 7\n");
+        let validator = GenericValidator::<Config>::from_file(file.path()).unwrap();
+        for (level, warnings, errors) in [
+            (ValidationLevel::Syntax, vec![], vec![]),
+            (ValidationLevel::Schema, vec!["Schema: 7"], vec![]),
+            (
+                ValidationLevel::Business,
+                vec!["Schema: 7", "Business: 7"],
+                vec!["Rejected value: 7"],
+            ),
+            (
+                ValidationLevel::Runtime,
+                vec!["Schema: 7", "Business: 7", "Runtime: 7"],
+                vec!["Rejected value: 7"],
+            ),
+        ] {
+            let result = validator.validate(level).unwrap();
+            assert_eq!(result.level, level);
+            assert_eq!(result.is_valid, errors.is_empty());
+            assert_eq!(result.warnings, warnings);
+            assert_eq!(result.errors, errors);
+        }
+    }
+
+    #[test]
+    fn typed_validation_errors_propagate_from_each_stage() {
+        for stage in [
+            ValidationLevel::Schema,
+            ValidationLevel::Business,
+            ValidationLevel::Runtime,
+        ] {
+            let file = config_file(&format!("value: 7\nfail_stage: {stage:?}\n"));
+            let validator = GenericValidator::<Config>::from_file(file.path()).unwrap();
+            let error = validator.validate(ValidationLevel::Runtime).unwrap_err();
+            assert_eq!(error.to_string(), format!("{stage:?} failed for 7"));
+        }
+    }
+
+    #[test]
+    fn invalid_configuration_reports_file_line_column_and_reason() {
+        for content in ["value: invalid\n", "value: [\n"] {
+            let file = config_file(content);
+            let error = GenericValidator::<Config>::from_file(file.path())
+                .err()
+                .unwrap();
+            let message = error.to_string();
+            let prefix = format!("Configuration error in {}:", file.path().display());
+            let location = message.strip_prefix(&prefix).unwrap();
+            let (coordinates, reason) = location.split_once("\n  ").unwrap();
+            let (line, column) = coordinates.split_once(':').unwrap();
+            assert!(line.parse::<usize>().unwrap() > 0);
+            assert!(column.parse::<usize>().unwrap() > 0);
+            assert!(!reason.is_empty());
+            assert!(reason.contains("line"));
+        }
+    }
+
+    #[test]
+    fn file_read_failure_preserves_path_and_io_cause() {
+        let file = config_file("value: 7\n");
+        std::fs::remove_file(file.path()).unwrap();
+        let error = GenericValidator::<Config>::from_file(file.path())
+            .err()
+            .unwrap();
+        assert_eq!(
+            error.to_string(),
+            format!("Failed to read file: {}", file.path().display())
+        );
+        assert_eq!(
+            error
+                .chain()
+                .find_map(|cause| cause.downcast_ref::<std::io::Error>())
+                .unwrap()
+                .kind(),
+            std::io::ErrorKind::NotFound
+        );
+    }
+
+    #[test]
+    fn duplicate_keys_in_ignored_fields_are_rejected() {
+        for content in [
+            "value: 7\nignored: 1\nignored: 2\n",
+            "value: 7\nignored: {nested: 1, nested: 2}\n",
+        ] {
+            let file = config_file(content);
+            assert!(serde_yml::from_str::<Config>(content).is_ok());
+            let error = GenericValidator::<Config>::from_file(file.path())
+                .err()
+                .unwrap();
+            assert!(error.to_string().contains("duplicate entry"));
         }
     }
 }
