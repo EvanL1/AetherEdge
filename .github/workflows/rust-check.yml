@@ -337,6 +337,7 @@ jobs:
   e2e-tests:
     name: E2E Integration Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     needs: [unit-tests, config-validation]
 
     steps:
@@ -352,55 +353,23 @@ jobs:
       # Build all required binaries
       - name: Build Binaries
         run: |
-          echo "Building simulator, aether-io, aether-automation, and aether..."
-          cargo build --release -p simulator -p aether-io -p aether-automation -p aether
+          cargo build --locked --release --bins \
+            -p simulator -p aether-io -p aether-automation -p aether \
+            -p aether-runtime-catalog
 
       # Run E2E test script
-      - name: Run SHM-only Runtime Test
+      - name: Verify live acquisition and IO restart recovery
         run: |
-          chmod +x scripts/check-shm-only-runtime.sh
-          ./scripts/check-shm-only-runtime.sh
-
-      # Collect debug artifacts on failure
-      - name: Collect E2E Artifacts on Failure
-        if: failure()
-        run: |
-          mkdir -p /tmp/e2e-artifacts
-          curl -s http://127.0.0.1:6001/health > /tmp/e2e-artifacts/io_health.json 2>/dev/null || true
-          curl -s http://127.0.0.1:6002/health > /tmp/e2e-artifacts/automation_health.json 2>/dev/null || true
+          python3 scripts/test-shm-runtime.py \
+            --bin-dir target/release --artifacts /tmp/e2e-artifacts
 
       - name: Upload E2E Artifacts
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-failure-artifacts
+          name: e2e-runtime-artifacts
           path: /tmp/e2e-artifacts/
           retention-days: 7
-
-      # Cleanup
-      - name: Cleanup
-        if: always()
-        run: |
-          docker compose down -v --rmi local
-          docker system prune -f
-
-      - name: Test Summary
-        if: always()
-        run: |
-          echo "=============================================="
-          echo "   E2E Integration Tests Complete"
-          echo "=============================================="
-          echo ""
-          echo "Test flow verified:"
-          echo "  - Modbus simulator (TCP port 5020)"
-          echo "  - aether-io data acquisition"
-          echo "  - authoritative SHM live-state transport"
-          echo "  - Point value transformation (scale/offset)"
-          echo ""
-          echo "Key components tested:"
-          echo "  - simulator -> aether-io Modbus connection"
-          echo "  - aether-io -> SHM -> aether-automation"
-          echo "  - Configuration loading (aether)"
 
   # Stable terminal gate for branch protection. Requiring this one check
   # prevents a PR from merging while downstream tests are still running.
