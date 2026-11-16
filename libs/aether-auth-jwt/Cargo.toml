@@ -13,6 +13,9 @@ publish = false
 [dependencies]
 aether-application = { version = "0.0.1", path = "../../crates/aether-application" }
 aether-domain = { version = "0.0.1", path = "../../crates/aether-domain" }
+# Only the header map and header-name types, so every interface reads the
+# confirmation header through one function instead of repeating the lookup.
+http = "1"
 jsonwebtoken = "9"
 serde = { workspace = true }
 thiserror = { workspace = true }

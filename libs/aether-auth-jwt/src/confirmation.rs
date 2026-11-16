@@ -1,19 +1,23 @@
 //! The single reading of the explicit-confirmation request header.
 
+use http::{HeaderMap, HeaderName};
 use thiserror::Error;
 
 /// Request header through which a caller explicitly confirms a governed
 /// mutation.
 ///
-/// Services must take the name from here. A second declaration is how the
-/// transports came to disagree about what the header means.
+/// Interfaces do not read this header themselves: they call
+/// [`Confirmation::from_headers`] or [`Confirmation::from_headers_or_decline`].
+/// A second declaration is how the transports came to disagree about what the
+/// header means.
 pub const CONFIRMATION_HEADER: &str = "x-aether-confirmed";
 
 /// Whether the caller explicitly confirmed the request.
 ///
-/// The only way to obtain [`Confirmation::Confirmed`] from transport input is
-/// [`Confirmation::from_header_values`], so every interface agrees on what
-/// counts as a confirmation.
+/// This module is the only place the header is parsed, so every interface
+/// agrees on what counts as a confirmation. How a malformed header is
+/// *reported* still belongs to each interface: one that validates requests
+/// itself rejects it, one that defers to the application layer declines it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Confirmation {
     /// Exactly one header value was received and it was the literal `true`.
@@ -52,14 +56,36 @@ impl Confirmation {
         }
     }
 
-    /// Reads the header for an interface that reports a missing confirmation
-    /// through the application layer instead of rejecting the request itself.
+    /// Reads the confirmation header of an HTTP request, rejecting a malformed
+    /// one.
     ///
-    /// Malformed input is treated as no confirmation, so the application
-    /// still records and refuses the attempt.
+    /// For interfaces that validate the request themselves and answer a
+    /// malformed header with a client error.
+    pub fn from_headers(headers: &HeaderMap) -> Result<Self, MalformedConfirmation> {
+        Self::from_header_values(
+            headers
+                .get_all(CONFIRMATION_HEADER)
+                .iter()
+                .map(|value| value.as_bytes()),
+        )
+    }
+
+    /// Reads the confirmation header of an HTTP request, declining on a
+    /// malformed one.
+    ///
+    /// For interfaces that hand every attempt to the application layer so it
+    /// is audited there: malformed input is never a confirmation, and the
+    /// application refuses the command as unconfirmed.
     #[must_use]
-    pub fn from_header_values_fail_closed<'a>(values: impl IntoIterator<Item = &'a [u8]>) -> Self {
-        Self::from_header_values(values).unwrap_or(Self::NotConfirmed)
+    pub fn from_headers_or_decline(headers: &HeaderMap) -> Self {
+        Self::from_headers(headers).unwrap_or(Self::NotConfirmed)
+    }
+
+    /// Returns the header name for an interface that must list it, such as a
+    /// CORS allow-list, without declaring the string itself.
+    #[must_use]
+    pub const fn header_name() -> HeaderName {
+        HeaderName::from_static(CONFIRMATION_HEADER)
     }
 
     /// Returns whether the caller confirmed.

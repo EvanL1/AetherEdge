@@ -184,6 +184,7 @@ version = "0.0.1"
 dependencies = [
  "aether-application",
  "aether-domain",
+ "http",
  "jsonwebtoken",
  "serde",
  "thiserror 2.0.18",

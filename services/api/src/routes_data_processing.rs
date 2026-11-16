@@ -11,7 +11,7 @@ use aether_application::{
     Actor, ApplicationError, DATA_PROCESSING_AUDIT_FINALIZATION_TIMEOUT_MS,
     DataProcessingTaskSummary, RequestContext,
 };
-use aether_auth_jwt::{CONFIRMATION_HEADER, Confirmation, scope_allows};
+use aether_auth_jwt::{Confirmation, scope_allows};
 use aether_data_processing::{MEDIA_TYPE, encode_derived_data};
 use aether_domain::{
     BindingIdentity, FeatureRole, FeatureValueType, ForecastOptions, HistoryAggregation,
@@ -760,14 +760,9 @@ fn request_id(headers: &HeaderMap) -> Result<String, ApiError> {
 }
 
 fn parse_confirmation(headers: &HeaderMap) -> Result<bool, ApiError> {
-    Confirmation::from_header_values(
-        headers
-            .get_all(CONFIRMATION_HEADER)
-            .iter()
-            .map(|value| value.as_bytes()),
-    )
-    .map(Confirmation::is_confirmed)
-    .map_err(|_| ApiError::invalid_request())
+    Confirmation::from_headers(headers)
+        .map(Confirmation::is_confirmed)
+        .map_err(|_| ApiError::invalid_request())
 }
 
 fn current_timestamp() -> Result<TimestampMs, ApiError> {
@@ -1034,9 +1029,15 @@ mod tests {
     fn confirmation_header_is_explicit_and_request_ids_are_safe() {
         let mut headers = HeaderMap::new();
         assert!(!parse_confirmation(&headers).expect("missing means false"));
-        headers.insert(CONFIRMATION_HEADER, HeaderValue::from_static("true"));
+        headers.insert(
+            aether_auth_jwt::CONFIRMATION_HEADER,
+            HeaderValue::from_static("true"),
+        );
         assert!(parse_confirmation(&headers).expect("explicit true"));
-        headers.insert(CONFIRMATION_HEADER, HeaderValue::from_static("yes"));
+        headers.insert(
+            aether_auth_jwt::CONFIRMATION_HEADER,
+            HeaderValue::from_static("yes"),
+        );
         assert!(parse_confirmation(&headers).is_err());
 
         headers.insert(

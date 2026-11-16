@@ -9,6 +9,7 @@ use aether_auth_jwt::{
     AccessTokenAuthenticator, CONFIRMATION_HEADER, Confirmation, MalformedConfirmation,
 };
 use aether_domain::TimestampMs;
+use http::{HeaderMap, HeaderValue};
 
 const SECRET: &str = "test-only-jwt-secret-32-bytes-minimum";
 
@@ -17,7 +18,7 @@ fn parse(values: &[&[u8]]) -> Result<Confirmation, MalformedConfirmation> {
 }
 
 #[test]
-fn the_header_name_is_published_once() {
+fn the_wire_name_is_stable() {
     assert_eq!(CONFIRMATION_HEADER, "x-aether-confirmed");
 }
 
@@ -64,16 +65,68 @@ fn repeated_headers_are_malformed_even_when_they_agree() {
     assert_eq!(parse(&[b"false", b"true"]), Err(MalformedConfirmation));
 }
 
-#[test]
-fn the_fail_closed_reading_never_turns_malformed_input_into_confirmation() {
-    let fail_closed =
-        |values: &[&[u8]]| Confirmation::from_header_values_fail_closed(values.iter().copied());
+fn headers(values: &[&'static str]) -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    for value in values {
+        headers.append(CONFIRMATION_HEADER, HeaderValue::from_static(value));
+    }
+    headers
+}
 
-    assert_eq!(fail_closed(&[b"true"]), Confirmation::Confirmed);
-    assert_eq!(fail_closed(&[]), Confirmation::NotConfirmed);
-    assert_eq!(fail_closed(&[b"false"]), Confirmation::NotConfirmed);
-    assert_eq!(fail_closed(&[b" TRUE "]), Confirmation::NotConfirmed);
-    assert_eq!(fail_closed(&[b"true", b"true"]), Confirmation::NotConfirmed);
+#[test]
+fn an_http_header_map_is_read_with_the_same_rule() {
+    assert_eq!(
+        Confirmation::from_headers(&headers(&[])),
+        Ok(Confirmation::NotConfirmed)
+    );
+    assert_eq!(
+        Confirmation::from_headers(&headers(&["true"])),
+        Ok(Confirmation::Confirmed)
+    );
+    assert_eq!(
+        Confirmation::from_headers(&headers(&["false"])),
+        Ok(Confirmation::NotConfirmed)
+    );
+    for malformed in [
+        &["true", "true"][..],
+        &["true", "false"],
+        &["true, true"],
+        &[" true"],
+        &["TRUE"],
+        &["yes"],
+    ] {
+        assert_eq!(
+            Confirmation::from_headers(&headers(malformed)),
+            Err(MalformedConfirmation),
+            "{malformed:?}"
+        );
+    }
+}
+
+#[test]
+fn the_declining_reader_never_turns_malformed_input_into_confirmation() {
+    assert_eq!(
+        Confirmation::from_headers_or_decline(&headers(&["true"])),
+        Confirmation::Confirmed
+    );
+    for declined in [
+        &[][..],
+        &["false"],
+        &[" TRUE "],
+        &["true", "true"],
+        &["true", "anything"],
+    ] {
+        assert_eq!(
+            Confirmation::from_headers_or_decline(&headers(declined)),
+            Confirmation::NotConfirmed,
+            "{declined:?}"
+        );
+    }
+}
+
+#[test]
+fn an_interface_can_name_the_header_without_declaring_it() {
+    assert_eq!(Confirmation::header_name().as_str(), CONFIRMATION_HEADER);
 }
 
 #[test]

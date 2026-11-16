@@ -1281,12 +1281,7 @@ async fn apply_alarm_mutation(
     let request_id = headers
         .get("x-request-id")
         .and_then(|value| value.to_str().ok());
-    let confirmation = aether_auth_jwt::Confirmation::from_header_values_fail_closed(
-        headers
-            .get_all(aether_auth_jwt::CONFIRMATION_HEADER)
-            .iter()
-            .map(|value| value.as_bytes()),
-    );
+    let confirmation = aether_auth_jwt::Confirmation::from_headers_or_decline(headers);
     let timestamp = chrono::Utc::now().timestamp_millis().max(0) as u64;
     let invocation = state.access_authenticator.invocation(
         authorization,
@@ -1312,12 +1307,7 @@ async fn apply_alert_resolution(
     let request_id = headers
         .get("x-request-id")
         .and_then(|value| value.to_str().ok());
-    let confirmation = aether_auth_jwt::Confirmation::from_header_values_fail_closed(
-        headers
-            .get_all(aether_auth_jwt::CONFIRMATION_HEADER)
-            .iter()
-            .map(|value| value.as_bytes()),
-    );
+    let confirmation = aether_auth_jwt::Confirmation::from_headers_or_decline(headers);
     let timestamp = chrono::Utc::now().timestamp_millis().max(0) as u64;
     let invocation = state.access_authenticator.invocation(
         authorization,
@@ -1645,6 +1635,48 @@ mod tests {
                 .is_none(),
             "unconfirmed command must not reach alarm storage"
         );
+    }
+
+    #[tokio::test]
+    async fn a_repeated_or_inexact_confirmation_header_does_not_create_a_rule() {
+        // The first value alone used to decide, so `true` followed by anything
+        // confirmed the command, and ` TRUE ` was accepted here but not at the
+        // gateway.
+        for (name, values) in [
+            ("repeated", &["true", "true"][..]),
+            ("contradictory", &["true", "false"]),
+            ("padded", &[" TRUE "]),
+        ] {
+            let state = test_state().await;
+            let mut request = Request::post("/alarmApi/rules")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {}", access_token()));
+            for value in values {
+                request = request.header("x-aether-confirmed", *value);
+            }
+
+            let response = create_routes(Arc::clone(&state))
+                .oneshot(
+                    request
+                        .body(Body::from(create_rule_request(name).to_string()))
+                        .expect("request"),
+                )
+                .await
+                .expect("response");
+
+            assert_eq!(
+                response.status(),
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "{values:?}"
+            );
+            assert!(
+                db::find_rule_by_name(&state.db, name)
+                    .await
+                    .expect("query rule")
+                    .is_none(),
+                "{values:?} must not reach alarm storage"
+            );
+        }
     }
 
     #[tokio::test]

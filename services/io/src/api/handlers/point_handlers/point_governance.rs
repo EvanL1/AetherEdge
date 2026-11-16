@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use aether_application::{ApplicationError, CompletionAuditStatus};
-use aether_auth_jwt::{AccessTokenAuthenticator, CONFIRMATION_HEADER, Confirmation};
+use aether_auth_jwt::{AccessTokenAuthenticator, Confirmation};
 use aether_ports::{ChannelRevision, PortErrorKind};
 use axum::http::{HeaderMap, StatusCode, header};
 
@@ -77,12 +77,7 @@ fn request_context(
     let request_id = headers
         .get(REQUEST_ID_HEADER)
         .and_then(|value| value.to_str().ok());
-    let confirmation = Confirmation::from_header_values_fail_closed(
-        headers
-            .get_all(CONFIRMATION_HEADER)
-            .iter()
-            .map(|value| value.as_bytes()),
-    );
+    let confirmation = Confirmation::from_headers_or_decline(headers);
     let timestamp = chrono::Utc::now().timestamp_millis().max(0) as u64;
     governed
         .access_authenticator

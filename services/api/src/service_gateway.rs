@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use aether_auth_jwt::{CONFIRMATION_HEADER, Confirmation, ROLE_COMMAND_PERMISSIONS, scope_allows};
+use aether_auth_jwt::{Confirmation, ROLE_COMMAND_PERMISSIONS, scope_allows};
 use axum::{
     Json, Router,
     body::{Body, to_bytes},
@@ -223,12 +223,7 @@ fn authorize_service_request(
     {
         return Err(GatewayAuthorizationError::MutationForbidden);
     }
-    let confirmation = Confirmation::from_header_values_fail_closed(
-        headers
-            .get_all(CONFIRMATION_HEADER)
-            .iter()
-            .map(|value| value.as_bytes()),
-    );
+    let confirmation = Confirmation::from_headers_or_decline(headers);
     if !confirmation.is_confirmed() {
         return Err(GatewayAuthorizationError::ConfirmationRequired);
     }
@@ -339,7 +334,7 @@ fn request_header_allowlist() -> [header::HeaderName; 9] {
         header::IF_MATCH,
         header::IF_NONE_MATCH,
         header::HeaderName::from_static("x-request-id"),
-        header::HeaderName::from_static(CONFIRMATION_HEADER),
+        Confirmation::header_name(),
         header::HeaderName::from_static("x-aether-expected-revision"),
         header::HeaderName::from_static("idempotency-key"),
     ]
