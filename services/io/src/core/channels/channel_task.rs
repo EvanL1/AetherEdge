@@ -282,7 +282,7 @@ pub(super) async fn run_unified_channel_task(
     );
 
     // Use configured poll interval
-    let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(
+    let mut interval = common::time::ticker(tokio::time::Duration::from_millis(
         ctx.poll_interval_ms.get(),
     ));
 

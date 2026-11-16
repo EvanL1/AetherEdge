@@ -58,7 +58,11 @@ pub async fn run_can_sender(
 ) -> Result<()> {
     info!("CAN sender starting on interface={interface} unit_id={unit_id}");
     let socket = CanSocket::open(interface)?;
-    let mut ticker = tokio::time::interval(Duration::from_millis(interval_ms));
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "simulator tooling does not link `common`; the period is clamped to non-zero here"
+    )]
+    let mut ticker = tokio::time::interval(Duration::from_millis(interval_ms.max(1)));
     loop {
         ticker.tick().await;
         let state = sm_store

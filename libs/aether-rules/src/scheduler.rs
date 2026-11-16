@@ -24,7 +24,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
-use tokio::time::interval;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
@@ -625,7 +624,11 @@ impl RuleScheduler {
 
         info!("Scheduler start ({}ms)", self.tick_ms);
 
-        let mut tick_interval = interval(Duration::from_millis(self.tick_ms));
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "aether-rules does not link `common`; the period is clamped to non-zero here"
+        )]
+        let mut tick_interval = tokio::time::interval(Duration::from_millis(self.tick_ms.max(1)));
 
         loop {
             // Branch 1 (common): 100ms tick
@@ -2448,6 +2451,34 @@ mod tests {
             scheduler.tick().await.expect("later tick progresses");
             assert!(scheduler.rules.read().await[1].last_execution.is_some());
         }
+    }
+
+    #[tokio::test]
+    async fn regression_zero_tick_period_does_not_panic_the_scheduler_loop() {
+        // `tokio::time::interval` panics on a zero period and the release
+        // profile aborts on panic, so a tick of 0 used to end the process.
+        let rule = create_test_rule(84, "zero-tick", 0);
+        let pool = rule_pool(&rule).await;
+        let logs = tempfile::tempdir().expect("rule logs");
+        let scheduler = Arc::new(RuleScheduler::new(
+            Arc::new(crate::MemoryRuleLiveState::new()),
+            pool,
+            0,
+            logs.path().to_path_buf(),
+        ));
+
+        let running = scheduler.clone();
+        let task = tokio::spawn(async move { running.start().await });
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        scheduler.stop();
+
+        let finished = tokio::time::timeout(Duration::from_secs(2), task)
+            .await
+            .expect("the scheduler loop stops once cancelled");
+        assert!(
+            finished.is_ok(),
+            "a zero tick period must not panic the scheduler loop: {finished:?}"
+        );
     }
 
     #[tokio::test]

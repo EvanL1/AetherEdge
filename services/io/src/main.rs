@@ -301,7 +301,7 @@ async fn run(
             let handle = Arc::clone(&handle);
             let snapshot_path = snapshot_path.clone();
             tokio::spawn(async move {
-                let mut interval = tokio::time::interval(snapshot_interval);
+                let mut interval = common::time::ticker(snapshot_interval);
                 interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
                 // Tokio intervals tick immediately once. Consume that tick so
                 // startup restore is not immediately overwritten by a
@@ -351,7 +351,7 @@ async fn run(
         let heartbeat_handle = Arc::clone(&shm_handle);
         let heartbeat_shutdown = shutdown_token.clone();
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(1));
+            let mut interval = common::time::ticker(Duration::from_secs(1));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
                 tokio::select! {
@@ -399,7 +399,7 @@ async fn run(
         let writer = Arc::clone(&channel_health_writer);
         let heartbeat_shutdown = shutdown_token.clone();
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(1));
+            let mut interval = common::time::ticker(Duration::from_secs(1));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
                 tokio::select! {

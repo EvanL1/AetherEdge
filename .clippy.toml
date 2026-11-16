@@ -19,3 +19,12 @@ too-many-lines-threshold = 200
 
 # Avoid breaking exported API
 avoid-breaking-exported-api = true
+
+# A zero period makes `tokio::time::interval` panic, and the release profile
+# aborts on panic: one mis-set interval took a service down four times before
+# this rule existed. The message names the fix so the next occurrence is
+# corrected at the cause instead of with another local clamp.
+disallowed-methods = [
+    { path = "tokio::time::interval", reason = "panics on a zero period and release builds abort on panic; build the timer with `common::time::ticker`, which clamps a zero period and logs it" },
+    { path = "tokio::time::interval_at", reason = "panics on a zero period and release builds abort on panic; build the timer with `common::time::ticker_at`, which clamps a zero period and logs it" },
+]
