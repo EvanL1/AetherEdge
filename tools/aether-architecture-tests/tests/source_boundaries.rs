@@ -12,6 +12,15 @@ use syn::{
     ItemUse, Lit, Meta, Token, UseTree,
 };
 
+const CONFIRMATION_HEADER: &str = "x-aether-confirmed";
+const SERVICE_PACKAGES: &[&str] = &[
+    "aether-io",
+    "aether-automation",
+    "aether-alarm",
+    "aether-history",
+    "aether-api",
+    "aether-uplink",
+];
 const AUTOMATION_CONFIGURATION_TABLES: &[&str] = &[
     "measurement_routing",
     "action_routing",
@@ -447,6 +456,15 @@ impl<'ast> Visit<'ast> for BoundaryVisitor<'_> {
         {
             self.record("production surface restored direct acquisition live-state injection");
         }
+        if value == CONFIRMATION_HEADER && SERVICE_PACKAGES.contains(&self.package_name) {
+            self.record(
+                "service declares the confirmation header itself; take the name from \
+                 aether_auth_jwt::CONFIRMATION_HEADER and read it only through \
+                 aether_auth_jwt::Confirmation::from_header_values, so every transport \
+                 agrees on what counts as confirmed (a local parser is how alarm/io came \
+                 to accept ` TRUE ` while the gateway required the exact `true`)",
+            );
+        }
         visit::visit_lit_str(self, literal);
     }
 
@@ -804,6 +822,55 @@ fn structured_policy_detects_bypasses_and_ignores_test_only_fixtures() {
             .any(|violation| violation.contains("reload fanout")),
         "{cli:#?}"
     );
+}
+
+#[test]
+fn services_read_the_confirmation_header_only_through_the_shared_parser() {
+    let service = inspect_snippet(
+        "aether-alarm",
+        &[],
+        r#"
+        const CONFIRMATION_HEADER: &str = "x-aether-confirmed";
+
+        fn confirmed(headers: &HeaderMap) -> bool {
+            headers
+                .get(CONFIRMATION_HEADER)
+                .and_then(|value| value.to_str().ok())
+                .is_some_and(|value| value.trim().eq_ignore_ascii_case("true"))
+        }
+
+        #[cfg(test)]
+        fn fixture() -> &'static str {
+            "x-aether-confirmed"
+        }
+        "#,
+    );
+    assert_eq!(service.len(), 1, "{service:#?}");
+    assert!(
+        service
+            .iter()
+            .next()
+            .is_some_and(|violation| violation.contains("aether_auth_jwt::Confirmation")),
+        "the violation must name the shared parser: {service:#?}"
+    );
+
+    let owner = inspect_snippet(
+        "aether-auth-jwt",
+        &[],
+        r#"pub const CONFIRMATION_HEADER: &str = "x-aether-confirmed";"#,
+    );
+    assert!(owner.is_empty(), "{owner:#?}");
+
+    let client = inspect_snippet(
+        "aether",
+        &[],
+        r#"
+        fn confirm(request: RequestBuilder) -> RequestBuilder {
+            request.header("x-aether-confirmed", "true")
+        }
+        "#,
+    );
+    assert!(client.is_empty(), "{client:#?}");
 }
 
 #[test]

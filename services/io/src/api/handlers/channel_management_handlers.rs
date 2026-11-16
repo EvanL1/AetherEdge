@@ -14,7 +14,7 @@ use aether_application::{
     ApplicationError, ChannelManagementApplication, ChannelMutationAcceptance,
     ChannelReconciliationAcceptance, ChannelReconciliationApplication, CompletionAuditStatus,
 };
-use aether_auth_jwt::AccessTokenAuthenticator;
+use aether_auth_jwt::{AccessTokenAuthenticator, CONFIRMATION_HEADER, Confirmation};
 use aether_domain::{ChannelId, TimestampMs};
 use aether_ports::{
     ChannelDefinition, ChannelLoggingPolicy, ChannelMutation, ChannelMutationKind,
@@ -35,7 +35,6 @@ use crate::api::dto::{
     ChannelMutationResult, ChannelRuntimeProjectionResult, ErrorInfo,
 };
 
-const CONFIRMATION_HEADER: &str = "x-aether-confirmed";
 const REQUEST_ID_HEADER: &str = "x-request-id";
 const EXPECTED_REVISION_HEADER: &str = "x-aether-expected-revision";
 
@@ -111,15 +110,17 @@ impl ChannelManagementHttpBoundary {
         let request_id = headers
             .get(REQUEST_ID_HEADER)
             .and_then(|value| value.to_str().ok());
-        let confirmed = headers
-            .get(CONFIRMATION_HEADER)
-            .and_then(|value| value.to_str().ok())
-            .is_some_and(|value| value.trim().eq_ignore_ascii_case("true"));
+        let confirmation = Confirmation::from_header_values_fail_closed(
+            headers
+                .get_all(CONFIRMATION_HEADER)
+                .iter()
+                .map(|value| value.as_bytes()),
+        );
         let timestamp = chrono::Utc::now().timestamp_millis().max(0) as u64;
         let invocation = governed.access_authenticator.invocation(
             authorization,
             request_id,
-            confirmed,
+            confirmation,
             TimestampMs::new(timestamp),
         );
 
@@ -151,15 +152,17 @@ impl ChannelManagementHttpBoundary {
             .get(header::AUTHORIZATION)
             .and_then(|value| value.to_str().ok());
         let request_id = required_request_id(headers)?;
-        let confirmed = headers
-            .get(CONFIRMATION_HEADER)
-            .and_then(|value| value.to_str().ok())
-            .is_some_and(|value| value.trim().eq_ignore_ascii_case("true"));
+        let confirmation = Confirmation::from_header_values_fail_closed(
+            headers
+                .get_all(CONFIRMATION_HEADER)
+                .iter()
+                .map(|value| value.as_bytes()),
+        );
         let timestamp = chrono::Utc::now().timestamp_millis().max(0) as u64;
         let invocation = governed.access_authenticator.invocation(
             authorization,
             Some(request_id),
-            confirmed,
+            confirmation,
             TimestampMs::new(timestamp),
         );
 

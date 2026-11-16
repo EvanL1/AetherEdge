@@ -1281,15 +1281,17 @@ async fn apply_alarm_mutation(
     let request_id = headers
         .get("x-request-id")
         .and_then(|value| value.to_str().ok());
-    let confirmed = headers
-        .get("x-aether-confirmed")
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| value.trim().eq_ignore_ascii_case("true"));
+    let confirmation = aether_auth_jwt::Confirmation::from_header_values_fail_closed(
+        headers
+            .get_all(aether_auth_jwt::CONFIRMATION_HEADER)
+            .iter()
+            .map(|value| value.as_bytes()),
+    );
     let timestamp = chrono::Utc::now().timestamp_millis().max(0) as u64;
     let invocation = state.access_authenticator.invocation(
         authorization,
         request_id,
-        confirmed,
+        confirmation,
         aether_domain::TimestampMs::new(timestamp),
     );
     state
@@ -1310,15 +1312,17 @@ async fn apply_alert_resolution(
     let request_id = headers
         .get("x-request-id")
         .and_then(|value| value.to_str().ok());
-    let confirmed = headers
-        .get("x-aether-confirmed")
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| value.trim().eq_ignore_ascii_case("true"));
+    let confirmation = aether_auth_jwt::Confirmation::from_header_values_fail_closed(
+        headers
+            .get_all(aether_auth_jwt::CONFIRMATION_HEADER)
+            .iter()
+            .map(|value| value.as_bytes()),
+    );
     let timestamp = chrono::Utc::now().timestamp_millis().max(0) as u64;
     let invocation = state.access_authenticator.invocation(
         authorization,
         request_id,
-        confirmed,
+        confirmation,
         aether_domain::TimestampMs::new(timestamp),
     );
     let acceptance = state

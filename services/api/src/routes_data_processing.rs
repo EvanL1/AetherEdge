@@ -11,7 +11,7 @@ use aether_application::{
     Actor, ApplicationError, DATA_PROCESSING_AUDIT_FINALIZATION_TIMEOUT_MS,
     DataProcessingTaskSummary, RequestContext,
 };
-use aether_auth_jwt::scope_allows;
+use aether_auth_jwt::{CONFIRMATION_HEADER, Confirmation, scope_allows};
 use aether_data_processing::{MEDIA_TYPE, encode_derived_data};
 use aether_domain::{
     BindingIdentity, FeatureRole, FeatureValueType, ForecastOptions, HistoryAggregation,
@@ -35,7 +35,6 @@ use crate::auth::Claims;
 use crate::state::AppState;
 
 const REQUEST_ID_HEADER: &str = "x-request-id";
-const CONFIRMED_HEADER: &str = "x-aether-confirmed";
 const MAX_PROCESS_BODY_BYTES: usize = 64 * 1024;
 const MAX_IDENTIFIER_BYTES: usize = 256;
 const MAX_REQUEST_ID_BYTES: usize = 128;
@@ -761,18 +760,14 @@ fn request_id(headers: &HeaderMap) -> Result<String, ApiError> {
 }
 
 fn parse_confirmation(headers: &HeaderMap) -> Result<bool, ApiError> {
-    let mut values = headers.get_all(CONFIRMED_HEADER).iter();
-    let Some(value) = values.next() else {
-        return Ok(false);
-    };
-    if values.next().is_some() {
-        return Err(ApiError::invalid_request());
-    }
-    match value.to_str() {
-        Ok("true") => Ok(true),
-        Ok("false") => Ok(false),
-        _ => Err(ApiError::invalid_request()),
-    }
+    Confirmation::from_header_values(
+        headers
+            .get_all(CONFIRMATION_HEADER)
+            .iter()
+            .map(|value| value.as_bytes()),
+    )
+    .map(Confirmation::is_confirmed)
+    .map_err(|_| ApiError::invalid_request())
 }
 
 fn current_timestamp() -> Result<TimestampMs, ApiError> {
@@ -1039,9 +1034,9 @@ mod tests {
     fn confirmation_header_is_explicit_and_request_ids_are_safe() {
         let mut headers = HeaderMap::new();
         assert!(!parse_confirmation(&headers).expect("missing means false"));
-        headers.insert(CONFIRMED_HEADER, HeaderValue::from_static("true"));
+        headers.insert(CONFIRMATION_HEADER, HeaderValue::from_static("true"));
         assert!(parse_confirmation(&headers).expect("explicit true"));
-        headers.insert(CONFIRMED_HEADER, HeaderValue::from_static("yes"));
+        headers.insert(CONFIRMATION_HEADER, HeaderValue::from_static("yes"));
         assert!(parse_confirmation(&headers).is_err());
 
         headers.insert(

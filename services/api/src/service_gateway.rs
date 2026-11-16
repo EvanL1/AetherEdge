@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use aether_auth_jwt::{ROLE_COMMAND_PERMISSIONS, scope_allows};
+use aether_auth_jwt::{CONFIRMATION_HEADER, Confirmation, ROLE_COMMAND_PERMISSIONS, scope_allows};
 use axum::{
     Json, Router,
     body::{Body, to_bytes},
@@ -223,11 +223,13 @@ fn authorize_service_request(
     {
         return Err(GatewayAuthorizationError::MutationForbidden);
     }
-    if headers
-        .get("x-aether-confirmed")
-        .and_then(|value| value.to_str().ok())
-        != Some("true")
-    {
+    let confirmation = Confirmation::from_header_values_fail_closed(
+        headers
+            .get_all(CONFIRMATION_HEADER)
+            .iter()
+            .map(|value| value.as_bytes()),
+    );
+    if !confirmation.is_confirmed() {
         return Err(GatewayAuthorizationError::ConfirmationRequired);
     }
     Ok(())
@@ -337,7 +339,7 @@ fn request_header_allowlist() -> [header::HeaderName; 9] {
         header::IF_MATCH,
         header::IF_NONE_MATCH,
         header::HeaderName::from_static("x-request-id"),
-        header::HeaderName::from_static("x-aether-confirmed"),
+        header::HeaderName::from_static(CONFIRMATION_HEADER),
         header::HeaderName::from_static("x-aether-expected-revision"),
         header::HeaderName::from_static("idempotency-key"),
     ]
@@ -503,6 +505,33 @@ mod tests {
             &headers,
         )
         .expect("read-only batch query must pass");
+    }
+
+    #[test]
+    fn a_repeated_or_inexact_confirmation_header_does_not_authorize_a_mutation() {
+        for values in [&["true", "true"][..], &[" true"], &["TRUE"], &["yes"]] {
+            let mut headers = HeaderMap::new();
+            for value in values {
+                headers.append(
+                    aether_auth_jwt::CONFIRMATION_HEADER,
+                    value.parse().expect("valid header"),
+                );
+            }
+
+            let error = authorize_service_request(
+                &claims("Admin"),
+                ServiceName::Uplink,
+                "mqtt/config",
+                &Method::POST,
+                &headers,
+            )
+            .expect_err("only one exact `true` confirms a mutation");
+            assert_eq!(
+                error,
+                GatewayAuthorizationError::ConfirmationRequired,
+                "{values:?}"
+            );
+        }
     }
 
     fn scoped_claims(role: &str, scope: Vec<&str>) -> Claims {

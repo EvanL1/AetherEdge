@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use aether_application::{ApplicationError, CompletionAuditStatus};
-use aether_auth_jwt::AccessTokenAuthenticator;
+use aether_auth_jwt::{AccessTokenAuthenticator, CONFIRMATION_HEADER, Confirmation};
 use aether_ports::{ChannelRevision, PortErrorKind};
 use axum::http::{HeaderMap, StatusCode, header};
 
@@ -12,7 +12,6 @@ use crate::point_topology::{
     PointTopologyAcceptance, PointTopologyApplication, PointTopologyMutation,
 };
 
-const CONFIRMATION_HEADER: &str = "x-aether-confirmed";
 const REQUEST_ID_HEADER: &str = "x-request-id";
 const EXPECTED_REVISION_HEADER: &str = "x-aether-expected-revision";
 
@@ -78,17 +77,19 @@ fn request_context(
     let request_id = headers
         .get(REQUEST_ID_HEADER)
         .and_then(|value| value.to_str().ok());
-    let confirmed = headers
-        .get(CONFIRMATION_HEADER)
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| value.trim().eq_ignore_ascii_case("true"));
+    let confirmation = Confirmation::from_header_values_fail_closed(
+        headers
+            .get_all(CONFIRMATION_HEADER)
+            .iter()
+            .map(|value| value.as_bytes()),
+    );
     let timestamp = chrono::Utc::now().timestamp_millis().max(0) as u64;
     governed
         .access_authenticator
         .invocation(
             authorization,
             request_id,
-            confirmed,
+            confirmation,
             aether_domain::TimestampMs::new(timestamp),
         )
         .context()
