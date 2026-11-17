@@ -116,11 +116,8 @@ impl WsHub {
         })
     }
 
-    pub fn register(
-        &self,
-        client_id: String,
-        data_type_ws: String,
-    ) -> mpsc::UnboundedReceiver<String> {
+    pub fn register(&self, data_type_ws: String) -> (String, mpsc::UnboundedReceiver<String>) {
+        let client_id = uuid::Uuid::new_v4().to_string();
         let (tx, rx) = mpsc::unbounded_channel();
         let now = Utc::now().timestamp();
 
@@ -138,8 +135,8 @@ impl WsHub {
             last_activity: Arc::new(AtomicI64::new(now)),
         });
 
-        self.clients.insert(client_id, handle);
-        rx
+        self.clients.insert(client_id.clone(), handle);
+        (client_id, rx)
     }
 
     pub fn deregister(&self, client_id: &str) {
@@ -784,14 +781,9 @@ async fn load_rule_execution(
 
 // ── WebSocket Connection Handler ──────────────────────────────────────────────
 
-pub async fn handle_socket(
-    socket: WebSocket,
-    client_id: String,
-    data_type_ws: String,
-    hub: Arc<WsHub>,
-) {
+pub async fn handle_socket(socket: WebSocket, data_type_ws: String, hub: Arc<WsHub>) {
     let (mut ws_sender, mut ws_receiver) = socket.split();
-    let mut rx = hub.register(client_id.clone(), data_type_ws);
+    let (client_id, mut rx) = hub.register(data_type_ws);
 
     // Send welcome message
     let welcome = json!({
