@@ -4114,9 +4114,6 @@ async fn channel_management_requires_authentication_and_confirmation_before_side
 
 #[tokio::test]
 async fn a_repeated_or_inexact_confirmation_header_never_reaches_the_channel_mutator() {
-    // The first value alone used to decide, so `true` followed by anything
-    // confirmed the command, and ` TRUE ` was accepted here but not at the
-    // gateway.
     for values in [&["true", "true"][..], &["true", "false"], &[" TRUE "]] {
         let mutator = RecordingChannelMutator::successful(Some(
             aether_ports::ChannelRuntimeProjection::Stopped,

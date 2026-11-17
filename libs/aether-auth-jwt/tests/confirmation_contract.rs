@@ -1,10 +1,3 @@
-//! Every transport must agree on what counts as an explicit confirmation.
-//!
-//! Before this contract existed the same header was read by seven call sites
-//! with three different meanings: two services trimmed and ignored case, the
-//! gateway compared the first value exactly, and one route rejected anything
-//! that was not a single literal boolean. These tests pin the one reading.
-
 use aether_auth_jwt::{
     AccessTokenAuthenticator, CONFIRMATION_HEADER, Confirmation, MalformedConfirmation,
 };

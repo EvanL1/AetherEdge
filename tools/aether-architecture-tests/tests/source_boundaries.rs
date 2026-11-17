@@ -278,7 +278,6 @@ impl BoundaryVisitor<'_> {
         ));
     }
 
-    /// Header lookup ignores case, so the name is matched the same way.
     fn inspect_confirmation_header_name(&mut self, name: &[u8]) {
         if name.eq_ignore_ascii_case(CONFIRMATION_HEADER.as_bytes()) {
             self.record_local_confirmation_reader();

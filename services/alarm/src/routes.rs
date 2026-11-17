@@ -1641,9 +1641,6 @@ mod tests {
 
     #[tokio::test]
     async fn a_repeated_or_inexact_confirmation_header_does_not_create_a_rule() {
-        // The first value alone used to decide, so `true` followed by anything
-        // confirmed the command, and ` TRUE ` was accepted here but not at the
-        // gateway.
         for (name, values) in [
             ("repeated", &["true", "true"][..]),
             ("contradictory", &["true", "false"]),
