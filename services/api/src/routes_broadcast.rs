@@ -18,7 +18,7 @@ use crate::state::AppState;
 #[utoipa::path(post, path = "/api/v1/broadcast", tag = "WebSocket",
     security(("bearer_auth" = [])),
     request_body(content = serde_json::Value, description = "Arbitrary JSON payload to broadcast to all connected WebSocket clients"),
-    responses((status = 200, description = "Broadcast delivered", body = crate::models::GatewayDataResponse<serde_json::Value>)))]
+    responses((status = 200, description = "Broadcast delivered", body = crate::models::GatewayDataResponse<serde_json::Value>), (status = 403, description = "Administrator privileges required")))]
 pub async fn broadcast_message(
     State(state): State<Arc<AppState>>,
     Json(body): Json<serde_json::Value>,

@@ -117,6 +117,22 @@ pub async fn require_jwt(
     next.run(req).await
 }
 
+pub async fn require_operator(req: Request, next: Next) -> Response {
+    match req.extensions().get::<crate::auth::Claims>() {
+        Some(claims) if claims.may_mutate_application_state() => next.run(req).await,
+        Some(claims) => crate::routes_auth::authority_denied(claims, "Engineer or Admin"),
+        None => AuthFailure::AuthenticationRequired.into_response(),
+    }
+}
+
+pub async fn require_administrator(req: Request, next: Next) -> Response {
+    match req.extensions().get::<crate::auth::Claims>() {
+        Some(claims) if claims.may_administer() => next.run(req).await,
+        Some(claims) => crate::routes_auth::authority_denied(claims, "Administrator"),
+        None => AuthFailure::AuthenticationRequired.into_response(),
+    }
+}
+
 fn authenticate_request(state: &AppState, req: &mut Request) -> Result<(), AuthFailure> {
     let websocket_upgrade = is_websocket_upgrade(req);
     if has_query_token(req) && !websocket_upgrade {

@@ -94,6 +94,32 @@ pub(crate) async fn app_state_with_public_registration(
     })
 }
 
+pub(crate) fn narrowed_authorization_headers(role_name: &str, scope: &[&str]) -> HeaderMap {
+    let now = chrono::Utc::now().timestamp() as usize;
+    let claims = crate::auth::Claims {
+        user_id: 1,
+        username: format!("{}-narrowed-test-user", role_name.to_lowercase()),
+        role: Some(role_name.to_owned()),
+        token_id: None,
+        scope: scope.iter().map(|entry| (*entry).to_owned()).collect(),
+        exp: now + 300,
+        iat: now,
+        token_type: "access".to_owned(),
+    };
+    let token = jsonwebtoken::encode(
+        &jsonwebtoken::Header::new(jsonwebtoken::Algorithm::HS256),
+        &claims,
+        &jsonwebtoken::EncodingKey::from_secret(TEST_JWT_SECRET.as_bytes()),
+    )
+    .expect("create narrowed API test token");
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::AUTHORIZATION,
+        HeaderValue::from_str(&format!("Bearer {token}")).expect("valid authorization header"),
+    );
+    headers
+}
+
 pub(crate) fn authorization_headers(role_name: &str) -> HeaderMap {
     let role_id = match role_name {
         "Admin" => 1,
