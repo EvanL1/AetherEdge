@@ -51,10 +51,6 @@ const SKIPPED: &[(&str, &[&str])] = &[
 const KNOWN_DIVERGENCES: &[(&str, Outcome<'static>)] = &[
     ("raw-json-duplicate-key", Outcome::Accepted),
     ("raw-json-escaped-duplicate-key", Outcome::Accepted),
-    (
-        "raw-json-lone-surrogate",
-        Outcome::Rejected("JSON_SYNTAX_ERROR"),
-    ),
     ("raw-json-unsafe-integer", Outcome::Accepted),
     ("raw-json-unsafe-integer-exponent", Outcome::Accepted),
     ("raw-json-unsafe-integer-fraction", Outcome::Accepted),

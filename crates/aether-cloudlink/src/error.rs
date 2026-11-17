@@ -280,7 +280,10 @@ fn json_failure(source: &serde_json::Error) -> CloudLinkFailureCode {
         CloudLinkFailureCode::UnknownField
     } else if message.contains("duplicate field") {
         CloudLinkFailureCode::DuplicateJsonKey
-    } else if message.contains("surrogate") || message.contains("unicode code point") {
+    } else if message.contains("surrogate")
+        || message.contains("unexpected end of hex escape")
+        || message.contains("unicode code point")
+    {
         CloudLinkFailureCode::JsonInvalidUnicode
     } else {
         CloudLinkFailureCode::JsonSyntaxError

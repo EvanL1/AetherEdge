@@ -151,3 +151,27 @@ fn a_data_loss_range_that_is_unordered_or_reaches_retained_data_is_reported_when
         assert_eq!(error.failure_code(), "DATA_LOSS_RANGE_INVALID", "{member}");
     }
 }
+
+#[test]
+fn every_unpaired_surrogate_escape_is_invalid_unicode() {
+    for string in [
+        r#""\ud800""#,
+        r#""\ud800\n""#,
+        r#""\ud800A""#,
+        r#""\udc00""#,
+    ] {
+        let document = format!(r#"{{"schema":{string}}}"#);
+        let error = CloudLinkCodec::decode(document.as_bytes())
+            .expect_err("an unpaired surrogate must not decode");
+
+        assert_eq!(error.failure_code(), "JSON_INVALID_UNICODE", "{string}");
+    }
+}
+
+#[test]
+fn a_malformed_unicode_escape_stays_a_syntax_error() {
+    let error = CloudLinkCodec::decode(br#"{"schema":"\u12"}"#)
+        .expect_err("a truncated escape must not decode");
+
+    assert_eq!(error.failure_code(), "JSON_SYNTAX_ERROR");
+}
