@@ -21,9 +21,9 @@ use crate::state::AppState;
 
 /// Turn the configured poll interval into a tick period.
 ///
-/// `tokio::time::interval` panics on a zero period and the workspace release
-/// profile sets `panic = "abort"`, so an unclamped `DATA_FETCH_INTERVAL=0` would
-/// take the whole alarm service down at startup.
+/// One second is the shortest poll this service runs at. `common::time::ticker`
+/// already keeps a zero period from panicking the timer; this floor is what
+/// stops `DATA_FETCH_INTERVAL=0` from becoming a millisecond polling loop.
 fn monitor_interval(configured_secs: u64) -> Duration {
     Duration::from_secs(configured_secs.max(1))
 }

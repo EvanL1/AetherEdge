@@ -60,7 +60,7 @@ pub async fn run_can_sender(
     let socket = CanSocket::open(interface)?;
     #[expect(
         clippy::disallowed_methods,
-        reason = "simulator tooling does not link `common`; the period is clamped to non-zero here"
+        reason = "simulator tooling does not link `common`; the scenario rejects a zero interval and it is clamped again here"
     )]
     let mut ticker = tokio::time::interval(Duration::from_millis(interval_ms.max(1)));
     loop {

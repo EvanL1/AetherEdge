@@ -37,8 +37,9 @@ use aether_shm_bridge::{
 
 /// Resolve the SHM snapshot period from `SHM_SNAPSHOT_INTERVAL`.
 ///
-/// `tokio::time::interval` panics on a zero period and the release profile sets
-/// `panic = "abort"`, so an unclamped `0` would kill the IO service at startup.
+/// One second is the shortest snapshot period. `common::time::ticker` already
+/// keeps a zero period from panicking the timer; this floor is what stops a
+/// configured `0` from snapshotting every millisecond.
 fn snapshot_interval(configured_secs: Option<u64>) -> Duration {
     Duration::from_secs(configured_secs.unwrap_or(300).max(1))
 }

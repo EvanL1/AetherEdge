@@ -581,9 +581,9 @@ mod mapping_tests {
 
 /// Turn a configured millisecond interval into a tick period.
 ///
-/// `tokio::time::interval` panics on a zero period and the workspace release
-/// profile sets `panic = "abort"`, so a channel config carrying `0` would take
-/// the whole IO service down rather than just failing that channel.
+/// One millisecond is the shortest period the socket client polls at.
+/// `common::time::ticker` already keeps a zero period from panicking the
+/// timer; this floor is the smallest interval a channel may ask for.
 /// Only the Linux socket client drives a ticker; `test` keeps it reachable for
 /// the unit tests on every platform.
 #[cfg(any(target_os = "linux", test))]

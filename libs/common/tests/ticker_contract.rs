@@ -39,9 +39,10 @@ async fn a_delayed_ticker_clamps_a_zero_period_and_waits_for_its_start() {
     let mut timer = ticker_at(start, Duration::ZERO);
 
     assert_eq!(timer.period(), MIN_TICK_PERIOD);
-    let first = timer.tick().await;
+    timer.tick().await;
+    // `tick()` returns the scheduled deadline, so compare against the clock.
     assert!(
-        first >= start,
+        tokio::time::Instant::now() >= start,
         "a delayed ticker must not fire before its start"
     );
 }
