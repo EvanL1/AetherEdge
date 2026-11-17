@@ -1,13 +1,3 @@
-//! Every failure code this product can emit is one the pinned contract
-//! release defines.
-//!
-//! The codes used to be free-form strings in a hand-written `match`, and
-//! three of them (`INVALID_JSON`, `UNSUPPORTED_MESSAGE`, `IDENTIFIER_INVALID`)
-//! were not in the AetherContracts failure taxonomy at all, so a consumer
-//! switching on the contractual identifiers could not recognise them. The
-//! codes are now enums, and these tests bind every variant to the taxonomy
-//! file the consumer lock pins.
-
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -16,8 +6,6 @@ use aether_cloudlink::{CloudLinkCodec, CloudLinkFailure, CloudLinkFailureCode};
 use aether_integration_contract::IntegrationContractErrorCode;
 use serde_json::Value;
 
-/// Scopes that describe the release tooling or a language binding's own API,
-/// never a failure of a message on the wire.
 const NON_WIRE_SCOPES: &[&str] = &[
     "distribution",
     "distribution-tool",
@@ -25,8 +13,6 @@ const NON_WIRE_SCOPES: &[&str] = &[
     "binding-lookup",
 ];
 
-/// Reads `code -> scope` from the taxonomy file named by the consumer lock, so
-/// the test follows the pin instead of hard-coding a release directory.
 fn pinned_taxonomy() -> HashMap<String, String> {
     let repository_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let lock: Value = serde_json::from_slice(
@@ -103,8 +89,6 @@ fn malformed_json_is_reported_as_a_syntax_error() {
 
 #[test]
 fn a_message_of_an_unknown_kind_is_reported_as_an_unsupported_version() {
-    // The contract's reference binding reports an unknown schema or kind as
-    // `UNSUPPORTED_VERSION`; there is no separate "unsupported message" code.
     let error = CloudLinkCodec::decode(
         br#"{"schema":"aether.cloudlink.v9.from-the-future","kind":"teleport"}"#,
     )

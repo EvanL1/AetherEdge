@@ -110,56 +110,30 @@ pub enum CloudLinkCodecError {
     },
 }
 
-/// Contractual failure identifiers this crate reports for its own errors.
-///
-/// A variant exists only for a code the pinned AetherContracts failure
-/// taxonomy defines; `tests/failure_taxonomy_contract.rs` checks every entry
-/// of [`CloudLinkFailureCode::ALL`] against the pinned file. Adding a code
-/// here that the contract does not define fails that test.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CloudLinkFailureCode {
-    /// Input exceeds a declared bound.
     FieldBound,
-    /// The declared protocol version, schema, or message kind is unsupported.
     UnsupportedVersion,
-    /// An Integration stream is bound to a different session stream.
     StreamBindingConflict,
-    /// An Integration batch identity differs from its envelope.
     BatchIdMismatch,
-    /// A closed object contains an undeclared field.
     UnknownField,
-    /// Raw JSON is malformed.
     JsonSyntaxError,
-    /// Raw JSON repeats an object member name.
     DuplicateJsonKey,
-    /// A JSON string contains invalid Unicode.
     JsonInvalidUnicode,
-    /// A value has no canonical JSON representation.
     JsonUnsupportedValue,
-    /// Authentication material is required and absent.
     AuthenticationRequired,
-    /// Authentication material violates the selected profile.
     AuthenticationInvalid,
-    /// A version is not strict SemVer.
     SemverInvalid,
-    /// A digest has an invalid representation.
     InvalidDigest,
-    /// A cursor identity is repeated or conflicts.
     CursorConflict,
-    /// A decimal integer string is not canonical.
     IntegerNonCanonical,
-    /// A canonical decimal integer exceeds its range.
     IntegerOutOfRange,
-    /// A digest does not match the content it covers.
     DigestMismatch,
-    /// A message does not belong to the current session.
     StaleSession,
-    /// A message is outside its validity window.
     MessageExpired,
 }
 
 impl CloudLinkFailureCode {
-    /// Every code this crate can report for its own errors.
     pub const ALL: [Self; 19] = [
         Self::FieldBound,
         Self::UnsupportedVersion,
@@ -182,7 +156,6 @@ impl CloudLinkFailureCode {
         Self::MessageExpired,
     ];
 
-    /// Returns the AetherContracts failure spelling.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -209,20 +182,13 @@ impl CloudLinkFailureCode {
     }
 }
 
-/// The contractual failure a codec error maps to.
-///
-/// Integration Contract failures keep the code their own crate assigned;
-/// everything else is one of this crate's codes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CloudLinkFailure {
-    /// A failure this crate classifies.
     Codec(CloudLinkFailureCode),
-    /// A failure classified by the Integration Contract crate.
     Integration(aether_integration_contract::IntegrationContractErrorCode),
 }
 
 impl CloudLinkFailure {
-    /// Returns the AetherContracts failure spelling.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -233,7 +199,6 @@ impl CloudLinkFailure {
 }
 
 impl CloudLinkCodecError {
-    /// Returns the contractual failure this error maps to.
     #[must_use]
     pub fn failure(&self) -> CloudLinkFailure {
         use CloudLinkFailureCode as Code;
@@ -247,10 +212,7 @@ impl CloudLinkCodecError {
             Self::IntegrationStreamBindingConflict => Code::StreamBindingConflict,
             Self::IntegrationBatchIdMismatch => Code::BatchIdMismatch,
             Self::InvalidJson { source } => json_failure(source),
-            // Our own content could not be written as canonical JSON.
             Self::CanonicalJson { .. } => Code::JsonUnsupportedValue,
-            // The contract has no separate "unsupported message" failure; its
-            // reference binding reports an unknown schema or kind this way.
             Self::UnsupportedMessage { .. }
             | Self::UnsupportedProtocolVersion { .. }
             | Self::VersionNegotiationFailed => Code::UnsupportedVersion,
@@ -287,26 +249,17 @@ impl CloudLinkCodecError {
             Self::DigestMismatch => Code::DigestMismatch,
             Self::SessionMismatch => Code::StaleSession,
             Self::MessageExpired => Code::MessageExpired,
-            // `MANIFEST_INVALID` is the release tooling's code for a
-            // contract release manifest; a Runtime Manifest whose bytes do
-            // not match their checksum is a digest mismatch.
             Self::RuntimeManifestChecksum => Code::DigestMismatch,
         };
         CloudLinkFailure::Codec(code)
     }
 
-    /// Returns the stable public AetherContracts failure taxonomy code.
     #[must_use]
     pub fn failure_code(&self) -> &'static str {
         self.failure().as_str()
     }
 }
 
-/// Classifies a strict-JSON decoding failure.
-///
-/// `serde_json` reports these only as text, so the closed-object violations
-/// are recognised by the phrases it uses for them. Anything unrecognised is a
-/// syntax error, which is also what a truncated or malformed document is.
 fn json_failure(source: &serde_json::Error) -> CloudLinkFailureCode {
     let message = source.to_string();
     if message.contains("unknown field") {

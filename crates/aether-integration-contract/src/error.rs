@@ -40,7 +40,6 @@ pub enum IntegrationContractErrorCode {
 }
 
 impl IntegrationContractErrorCode {
-    /// Every code this crate can report.
     pub const ALL: [Self; 15] = [
         Self::JsonSyntaxError,
         Self::UnknownField,
@@ -68,9 +67,6 @@ impl IntegrationContractErrorCode {
             Self::UnsupportedSchema => "UNSUPPORTED_VERSION",
             Self::FieldBound => "FIELD_BOUND",
             Self::TextInvalid => "TEXT_INVALID",
-            // The taxonomy has no identifier-specific failure: an identifier
-            // that is empty, too long, or outside its alphabet exceeds a
-            // declared string bound.
             Self::IdentifierInvalid => "FIELD_BOUND",
             Self::IntegerNonCanonical => "INTEGER_NON_CANONICAL",
             Self::IntegerOutOfRange => "INTEGER_OUT_OF_RANGE",
