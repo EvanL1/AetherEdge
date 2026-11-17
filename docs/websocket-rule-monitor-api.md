@@ -5,7 +5,7 @@
 ## 连接
 
 ```
-ws://localhost:6005/ws?client_id={client_id}
+ws://localhost:6005/ws
 ```
 
 ## 订阅规则

@@ -269,7 +269,6 @@ impl utoipa::Modify for SecurityAddon {
 
 #[derive(Deserialize)]
 struct WsParams {
-    client_id: Option<String>,
     data_type: Option<String>,
 }
 
@@ -277,7 +276,6 @@ struct WsParams {
     get,
     path = "/ws",
     params(
-        ("client_id" = Option<String>, Query, description = "Optional client identifier"),
         ("data_type" = Option<String>, Query, description = "Subscription data category"),
         ("token" = Option<String>, Query, description = "Access JWT fallback for browser WebSocket upgrades; normal HTTP requests must use the Authorization header")
     ),
@@ -296,13 +294,10 @@ async fn ws_handler(
     Query(params): Query<WsParams>,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    let client_id = params
-        .client_id
-        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let data_type = params.data_type.unwrap_or_else(|| "general".to_string());
     let hub = Arc::clone(&state.ws_hub);
 
-    ws.on_upgrade(move |socket| ws::handle_socket(socket, client_id, data_type, hub))
+    ws.on_upgrade(move |socket| ws::handle_socket(socket, data_type, hub))
 }
 
 #[utoipa::path(
@@ -415,7 +410,12 @@ fn build_router(state: Arc<AppState>) -> Router {
                 middleware_auth::require_administrator,
             )),
         )
-        .route("/broadcast/status", get(routes_broadcast::broadcast_status))
+        .route(
+            "/broadcast/status",
+            get(routes_broadcast::broadcast_status).layer(axum::middleware::from_fn(
+                middleware_auth::require_administrator,
+            )),
+        )
         .nest("/homepage", homepage_routes)
         .nest("/network", network_routes)
         .nest("/config", config_routes)
@@ -990,6 +990,54 @@ mod local_route_authorization_tests {
                     .is_none(),
                 "{role}"
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod websocket_identity_tests {
+    use axum::{
+        body::Body,
+        http::{Request, StatusCode},
+    };
+    use tower::ServiceExt;
+
+    use crate::test_support::{app_state, authorization_headers};
+
+    use super::build_router;
+
+    #[tokio::test]
+    async fn a_new_connection_never_displaces_an_existing_one() {
+        let state = app_state().await;
+
+        let (first, mut first_messages) = state.ws_hub.register("general".to_owned());
+        let (second, _second_messages) = state.ws_hub.register("general".to_owned());
+
+        assert_ne!(first, second);
+        assert!(state.ws_hub.send_to(&first, "still connected".to_owned()));
+        assert_eq!(
+            first_messages.recv().await.as_deref(),
+            Some("still connected")
+        );
+    }
+
+    #[tokio::test]
+    async fn listing_websocket_connections_requires_an_administrator() {
+        let app = build_router(app_state().await);
+
+        for (role, expected) in [
+            ("Viewer", StatusCode::FORBIDDEN),
+            ("Engineer", StatusCode::FORBIDDEN),
+            ("Admin", StatusCode::OK),
+        ] {
+            let mut request = Request::builder()
+                .uri("/api/v1/broadcast/status")
+                .body(Body::empty())
+                .expect("valid request");
+            request.headers_mut().extend(authorization_headers(role));
+
+            let response = app.clone().oneshot(request).await.expect("status response");
+            assert_eq!(response.status(), expected, "{role}");
         }
     }
 }
