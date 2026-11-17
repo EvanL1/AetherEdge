@@ -1,8 +1,8 @@
 {
   "contract": "aether.cloudlink",
-  "contracts_release": "0.1.0-alpha.3",
+  "contracts_release": "0.1.0-alpha.4",
   "status": "product-local-implementation-overlay",
-  "authority": "AetherContracts v0.1.0-alpha.3",
+  "authority": "AetherContracts v0.1.0-alpha.4",
   "owner": "AetherEdge implementation evidence",
   "authoritative_artifacts": {
     "specification": "AetherContracts spec/cloudlink-v1alpha1.md",

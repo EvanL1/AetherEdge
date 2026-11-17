@@ -3,7 +3,7 @@
 ## Status and scope
 
 This document describes the experimental CloudLink candidate. The public
-AetherContracts `v0.1.0-alpha.3` release is the sole authority, and AetherEdge and
+AetherContracts `v0.1.0-alpha.4` release is the sole authority, and AetherEdge and
 AetherCloud commit the same digest-pinned consumer lock. The current claim is
 complete distribution integrity, full fixture execution, and historical
 dual-product alpha.3 evidence. The current strict authentication path has only
@@ -12,7 +12,7 @@ conformance.
 The public AetherContracts release and compatibility guide define the shared
 protocol; this page only explains the AetherEdge integration.
 
-The lock imports the exact alpha.3 adoption closure. Strict Runtime Manifest
+The lock imports the exact alpha.4 adoption closure. Strict Runtime Manifest
 SemVer and replay/digest/cursor context vectors execute in both products. Local wire,
 authentication, gate, scenario, and fixture-manifest files are migration or
 product integration material and cannot override AetherContracts.
@@ -31,8 +31,9 @@ Implemented by this slice:
 Present in the imported experimental subset:
 
 - every wire field, topic, receipt, and replay/data-loss exchange;
-- the exact alpha.3 challenge, Gateway-signature, and trusted-connector origin
-  proposal shapes; production key lifecycle remains unresolved;
+- the exact alpha.4 challenge-request, challenge, Gateway-signature, and
+  trusted-connector origin proposal shapes; production key lifecycle remains
+  unresolved;
 - edge-native telemetry without a mandatory Thing Model revision.
 
 The incompatible repository-local AetherEdge and AetherCloud vocabularies are
@@ -86,7 +87,7 @@ facts and provides no command, arbitrary RPC, or physical-control capability.
 
 | Concern | AetherEdge before this slice | AetherCloud reference | Candidate resolution |
 |---|---|---|---|
-| Wire package | Unversioned legacy JSON | Strict TypeScript codec/ingress | Byte-identical alpha.3 schemas/fixtures and matching Rust/TypeScript vocabulary |
+| Wire package | Unversioned legacy JSON | Strict TypeScript codec/ingress | Byte-identical pinned alpha.4 schemas/fixtures and matching Rust/TypeScript vocabulary |
 | Delivery removal | After local `AsyncClient::publish` acceptance | Durable application ACK required; memory foundations only | Dedicated spool removes only after validated durable ACK |
 | Session | No CloudLink session/epoch | Domain/application memory implementation | Candidate hello/accepted and monotonic epoch binding |
 | Authentication | MQTT username/password or mTLS; product/device topic identity | Session verifier consumes alpha structural evidence | Hello carries the exact challenge and Gateway signature object, or trusted adapter metadata is required outside payload; production key lifecycle remains proposed |
@@ -131,9 +132,10 @@ uses the same authenticator projections to verify the complete
 Gateway-signed transcript instead of accepting a shape-only proof.
 
 This is authentication test evidence, not production key provisioning.
-`session-accepted` in alpha.3 is still not cryptographically bound to
-`challenge_id` and `client_nonce`; alpha.4 must bind the complete current
-handshake transcript.
+`session-accepted` in the pinned alpha.4 release is still unsigned and not
+cryptographically bound to `challenge_id` and `client_nonce`. AetherContracts
+records this as a production blocker and plans a signed, correlated response
+for the next protocol version.
 
 ## Time, integers, bounds, and digest
 

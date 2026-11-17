@@ -27,4 +27,4 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
-      - uses: EvanL1/AetherContracts/.github/actions/verify-consumer@c5aad674f0844138e778963118e786e430ffb365
+      - uses: EvanL1/AetherContracts/.github/actions/verify-consumer@8c858ba978aa183a3c534c34f62596f4902461ae

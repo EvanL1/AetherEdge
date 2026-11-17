@@ -22,7 +22,6 @@ pub use wire::{
     ObservedValueV1Alpha1,
 };
 
-/// Exact candidate release against which this binding was implemented.
 pub const AETHER_CONTRACTS_RELEASE: &str = "0.1.0-alpha.4";
 
 /// Closed topology schema discriminator.

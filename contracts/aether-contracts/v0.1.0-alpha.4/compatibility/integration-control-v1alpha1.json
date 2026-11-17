@@ -1,0 +1,34 @@
+{
+  "schema": "aether.integration-control.compatibility.v1alpha1",
+  "status": "experimental-default-off",
+  "module": "aether.integration-control",
+  "version": "v1alpha1",
+  "default_enabled": false,
+  "implemented": [
+    "closed device.power.set.v1 intent schema",
+    "closed CloudLink action offer and receipt entry schemas",
+    "exact Integration topology generation, entity, and Boolean power-point binding",
+    "fixed high-risk permission, confirmation, expiry, idempotency, audit, and edge-final-decision metadata",
+    "exact Cloud offer signing projection",
+    "job identity and intent digest replay rules",
+    "experimental default-off Home Assistant mapping profile",
+    "provider-accepted receipt semantics with physical outcome fixed to unknown",
+    "valid and wire-invalid fixture manifest",
+    "language-neutral context reducer and repository TCK"
+  ],
+  "breaking_changes": [
+    "add another action without a separately versioned closed schema and TCK",
+    "permit caller-supplied provider domain, service, service data, URL, token, or arbitrary JSON",
+    "weaken the exact topology generation, entity, point, permission, confirmation, expiry, audit, or edge-final-decision binding",
+    "change provider-accepted into physical completion or successful physical execution",
+    "enable the extension through base CloudLink negotiation alone"
+  ],
+  "not_claimed": [
+    "production Cloud control-key provisioning, rotation, revocation, or verifier ownership",
+    "AetherCloud job persistence and delivery implementation",
+    "AetherEdge persistent inbox, local policy, or Home Assistant command implementation",
+    "language binding conformance",
+    "production Broker, crash-restart, or end-to-end evidence",
+    "physical device completion"
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "integration-topology-snapshot.schema.json",
+  "title": "Experimental Aether CloudLink Integration topology snapshot v1 alpha 1",
+  "allOf": [
+    { "$ref": "envelope.schema.json#/$defs/uplinkEnvelope" },
+    {
+      "properties": {
+        "message_kind": { "const": "integration-topology-snapshot" },
+        "payload": {
+          "$ref": "https://contracts.aether.dev/schemas/integration/v1alpha1/integration-topology-snapshot.schema.json"
+        }
+      }
+    }
+  ]
+}

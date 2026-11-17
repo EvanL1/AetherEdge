@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "session-challenge-request.schema.json",
+  "title": "Experimental Aether CloudLink session challenge request v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "protocol",
+    "message_kind",
+    "gateway_id",
+    "credential_binding",
+    "offered_protocol_versions",
+    "client_nonce",
+    "resume"
+  ],
+  "properties": {
+    "schema": { "const": "aether.cloudlink.session-challenge-request.v1" },
+    "protocol": { "const": "aether.cloudlink" },
+    "message_kind": { "const": "session-challenge-request" },
+    "gateway_id": { "$ref": "envelope.schema.json#/$defs/uuid" },
+    "credential_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["credential_id", "generation"],
+      "properties": {
+        "credential_id": { "$ref": "envelope.schema.json#/$defs/credentialId" },
+        "generation": { "$ref": "envelope.schema.json#/$defs/positiveUint64" }
+      }
+    },
+    "offered_protocol_versions": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "uniqueItems": true,
+      "items": { "const": "1.0" }
+    },
+    "client_nonce": { "$ref": "envelope.schema.json#/$defs/nonce" },
+    "resume": {
+      "type": "array",
+      "maxItems": 32,
+      "items": { "$ref": "envelope.schema.json#/$defs/resumeCursor" }
+    }
+  }
+}

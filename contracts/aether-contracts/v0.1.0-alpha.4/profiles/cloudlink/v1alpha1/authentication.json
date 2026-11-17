@@ -1,0 +1,328 @@
+{
+  "schema": "aether.cloudlink.authentication-profile.v1alpha1",
+  "status": "experimental",
+  "gate_status": "experimental",
+  "activation": {
+    "default_enabled": false,
+    "selection": "explicit"
+  },
+  "signature_algorithm": "Ed25519",
+  "signature_encoding": "unpadded-base64url",
+  "origin_models": {
+    "gateway-signed": {
+      "challenge_request": {
+        "schema": "session-challenge-request.schema.json",
+        "mqtt_route": "up_session",
+        "wire_fields": [
+          "schema",
+          "protocol",
+          "message_kind",
+          "gateway_id",
+          "credential_binding",
+          "offered_protocol_versions",
+          "client_nonce",
+          "resume"
+        ],
+        "credential_binding_fields": ["credential_id", "generation"],
+        "request_is_identity_credential": false,
+        "commissioned_gateway_required": true,
+        "active_credential_binding_required": true,
+        "rate_limit_required": true,
+        "ineligible_or_limited_request": "do-not-issue-a-challenge"
+      },
+      "session_establishment": {
+        "transcript": [
+          "Gateway publishes one session-challenge-request on the Gateway up/session topic",
+          "Cloud rate-limits the request and resolves its Gateway and credential binding to an active commissioned delegation; the request itself is not identity evidence",
+          "Cloud persists one exact signed session-challenge before publishing it on the Gateway down/session topic",
+          "A retry before challenge expiry republishes the exact persisted challenge without changing its bytes, identifiers, nonce, times, or signature",
+          "Gateway validates the challenge identity, Cloud signature, issue time, expiry, and one-time challenge state",
+          "Gateway publishes one session-hello whose gateway_signature covers the exact signed object",
+          "Cloud validates the active credential generation and Gateway key before accepting a session",
+          "Cloud atomically consumes the challenge exactly once with durable session acceptance, then returns session-accepted"
+        ],
+        "request_schema": "session-challenge-request.schema.json",
+        "challenge_schema": "session-challenge.schema.json",
+        "hello_schema": "session-hello.schema.json",
+        "challenge_persistence": {
+          "persist_before_publish": true,
+          "retry_before_expiry": "republish-exact-persisted-challenge",
+          "regeneration_while_unexpired": false,
+          "request_state_bindings": [
+            "gateway_id",
+            "credential_binding.credential_id",
+            "credential_binding.generation",
+            "offered_protocol_versions",
+            "client_nonce",
+            "resume"
+          ],
+          "hello_must_exactly_match_request_state": [
+            "gateway_id",
+            "credential_binding.credential_id",
+            "credential_binding.generation",
+            "offered_protocol_versions",
+            "client_nonce",
+            "resume"
+          ]
+        },
+        "cloud_challenge_signing": {
+          "signed_object_schema": "aether.cloudlink.session-challenge-signing.v1alpha1",
+          "signed_object_fields": [
+            "schema",
+            "gateway_id",
+            "challenge_id",
+            "cloud_nonce",
+            "issued_at_ms",
+            "expires_at_ms"
+          ],
+          "wire_to_signing_projection": {
+            "schema": "literal:aether.cloudlink.session-challenge-signing.v1alpha1",
+            "gateway_id": "session-challenge.gateway_id",
+            "challenge_id": "session-challenge.challenge_id",
+            "cloud_nonce": "session-challenge.cloud_nonce",
+            "issued_at_ms": "session-challenge.issued_at_ms",
+            "expires_at_ms": "session-challenge.expires_at_ms"
+          },
+          "canonicalization": "RFC 8785 JCS UTF-8 bytes"
+        },
+        "signed_object_schema": "aether.cloudlink.session-establishment-signing.v1alpha1",
+        "signed_object_fields": [
+          "schema",
+          "gateway_id",
+          "credential_id",
+          "credential_generation",
+          "gateway_key_id",
+          "challenge_id",
+          "cloud_nonce",
+          "client_nonce",
+          "offered_protocol_versions",
+          "resume"
+        ],
+        "wire_to_signing_projection": {
+          "schema": "literal:aether.cloudlink.session-establishment-signing.v1alpha1",
+          "gateway_id": "session-hello.gateway_id",
+          "credential_id": "session-hello.credential_binding.credential_id",
+          "credential_generation": "session-hello.credential_binding.generation",
+          "gateway_key_id": "session-hello.gateway_key_id",
+          "challenge_id": "session-hello.challenge_id",
+          "cloud_nonce": "persisted-session-challenge.cloud_nonce",
+          "client_nonce": "session-hello.client_nonce",
+          "offered_protocol_versions": "session-hello.offered_protocol_versions",
+          "resume": "session-hello.resume"
+        },
+        "canonicalization": "RFC 8785 JCS UTF-8 bytes",
+        "replay_bounds": {
+          "challenge_id_unique": true,
+          "challenge_single_use": true,
+          "challenge_deadline_check": "evaluation_time_ms < expires_at_ms",
+          "challenge_deadline_or_later": "MESSAGE_EXPIRED",
+          "challenge_expiry_equality_is_expired": true,
+          "credential_generation_exact_match": true,
+          "gateway_id_exact_match": true
+        },
+        "acceptance_transaction": {
+          "challenge_consumption": "atomic-exactly-once-with-session-acceptance",
+          "failure_consumes_challenge": false,
+          "successful_session_without_consumption": false
+        }
+      },
+      "per_uplink": {
+        "requirement": "every-uplink",
+        "authentication_field": "message_authentication",
+        "signed_object_schema": "aether.cloudlink.uplink-signing.v1alpha1",
+        "signed_object_fields": [
+          "schema",
+          "gateway_id",
+          "credential_generation",
+          "session_id",
+          "session_epoch",
+          "message_kind",
+          "sent_at_ms",
+          "expires_at_ms",
+          "stream_id",
+          "stream_epoch",
+          "position",
+          "batch_id",
+          "business_digest"
+        ],
+        "canonicalization": "RFC 8785 JCS UTF-8 bytes",
+        "absent_optional_values": "JSON null",
+        "wire_to_signing_projections": {
+          "delivery": {
+            "applies_to": [
+              "core-envelope",
+              "integration-topology-snapshot",
+              "integration-observation-batch",
+              "integration-action-receipt"
+            ],
+            "projection": {
+              "schema": "literal:aether.cloudlink.uplink-signing.v1alpha1",
+              "gateway_id": "uplink.gateway_id",
+              "credential_generation": "uplink.credential_generation",
+              "session_id": "uplink.session_id",
+              "session_epoch": "uplink.session_epoch",
+              "message_kind": "uplink.message_kind",
+              "sent_at_ms": "uplink.sent_at_ms",
+              "expires_at_ms": "uplink.expires_at_ms-or-JSON-null",
+              "stream_id": "uplink.delivery.stream_id",
+              "stream_epoch": "uplink.delivery.stream_epoch",
+              "position": "uplink.delivery.position",
+              "batch_id": "uplink.delivery.batch_id",
+              "business_digest": "uplink.delivery.digest"
+            }
+          },
+          "heartbeat": {
+            "applies_to": ["heartbeat"],
+            "projection": {
+              "schema": "literal:aether.cloudlink.uplink-signing.v1alpha1",
+              "gateway_id": "heartbeat.gateway_id",
+              "credential_generation": "heartbeat.credential_generation",
+              "session_id": "heartbeat.session_id",
+              "session_epoch": "heartbeat.session_epoch",
+              "message_kind": "heartbeat.message_kind",
+              "sent_at_ms": "heartbeat.observed_at_ms",
+              "expires_at_ms": "literal:JSON-null",
+              "stream_id": "literal:JSON-null",
+              "stream_epoch": "literal:JSON-null",
+              "position": "literal:JSON-null",
+              "batch_id": "literal:JSON-null",
+              "business_digest": "literal:JSON-null"
+            }
+          }
+        },
+        "delivery_immutable_replay_projection": {
+          "object_schema": "aether.cloudlink.immutable-delivery-replay.v1alpha1",
+          "object_fields": [
+            "schema",
+            "gateway_id",
+            "credential_generation",
+            "message_kind",
+            "sent_at_ms",
+            "expires_at_ms",
+            "stream_id",
+            "stream_epoch",
+            "position",
+            "batch_id",
+            "business_digest"
+          ],
+          "signing_to_immutable_projection": {
+            "schema": "literal:aether.cloudlink.immutable-delivery-replay.v1alpha1",
+            "gateway_id": "uplink-signing.gateway_id",
+            "credential_generation": "uplink-signing.credential_generation",
+            "message_kind": "uplink-signing.message_kind",
+            "sent_at_ms": "uplink-signing.sent_at_ms",
+            "expires_at_ms": "uplink-signing.expires_at_ms",
+            "stream_id": "uplink-signing.stream_id",
+            "stream_epoch": "uplink-signing.stream_epoch",
+            "position": "uplink-signing.position",
+            "batch_id": "uplink-signing.batch_id",
+            "business_digest": "uplink-signing.business_digest"
+          },
+          "digest": "sha256:<lowercase-hex> over RFC 8785 JCS UTF-8 object bytes",
+          "session_independent": true
+        },
+        "replay_bounds": {
+          "accepted_session_exact_match": true,
+          "credential_generation_exact_match": true,
+          "signature_scope": "one exact canonical signing object",
+          "validation_order": "signature, active key, Broker principal authorization namespace, accepted current session and Gateway identity, and credential generation before durable identity lookup, freshness, or replay",
+          "delivery": {
+            "first_acceptance_deadline_check": "evaluation_time_ms < expires_at_ms when expires_at_ms is present",
+            "first_acceptance_expiry_equality_failure": "MESSAGE_EXPIRED",
+            "replay_identity": [
+              "gateway_id",
+              "stream_id",
+              "stream_epoch",
+              "position"
+            ],
+            "replay_state": [
+              "authorization_namespace_partition",
+              "replay_identity",
+              "immutable_delivery_digest",
+              "current_session_binding.session_id",
+              "current_session_binding.session_epoch",
+              "current_session_binding.exact_signing_object_digest"
+            ],
+            "committed_record_semantics": "business-effect-and-replay-record-atomically-durable",
+            "durable_lookup_scope": "validated-authorization-namespace-partition-then-four-field-replay-identity",
+            "namespace_from_payload": false,
+            "global_unpartitioned_lookup": "forbidden",
+            "pending_authentication_record_bypasses_expiry": false,
+            "first_commit_before_receipt": "business-effect-and-replay-record-commit-atomically",
+            "rebind_commit_before_receipt": "updated-current-session-binding-is-durable",
+            "same_session_exact_replay": "idempotent-without-repeating-business-side-effects",
+            "higher_session_epoch_rebind": "update-only-current-session-binding-and-reissue-current-session-receipt-without-business-side-effects",
+            "committed_exact_delivery_after_expiry": "replay-or-higher-epoch-rebind-permitted-without-business-side-effects",
+            "same_epoch_different_session_id": "AUTHENTICATION_INVALID",
+            "session_epoch_rollback": "AUTHENTICATION_INVALID",
+            "credential_generation_rebind": "forbidden-in-alpha.4-use-future-stream-epoch-or-migration-contract",
+            "immutable_fields_include": [
+              "gateway_id",
+              "credential_generation",
+              "message_kind",
+              "sent_at_ms",
+              "expires_at_ms",
+              "stream_id",
+              "stream_epoch",
+              "position",
+              "batch_id",
+              "business_digest"
+            ],
+            "sent_at_source": "persistent-edge-enqueue-fact",
+            "expires_at_retry_rule": "unchanged-from-persistent-edge-enqueue-fact",
+            "raw_signature_in_replay_digest": false,
+            "conflicting_signing_projection": "AUTHENTICATION_INVALID",
+            "conflict_precedes_committed_replay_expiry": true
+          },
+          "heartbeat": {
+            "heartbeat_interval_source": "accepted-session",
+            "future_check": "observed_at_ms <= evaluation_time_ms + heartbeat_interval_ms",
+            "stale_check": "evaluation_time_ms < observed_at_ms + 3 * heartbeat_interval_ms",
+            "stale_equality_failure": "MESSAGE_EXPIRED",
+            "excessive_future_failure": "AUTHENTICATION_INVALID",
+            "arithmetic_overflow": "AUTHENTICATION_INVALID",
+            "replay_state": [
+              "highest_accepted_observed_at_ms",
+              "exact_signing_object_digest"
+            ],
+            "exact_replay": "idempotent-and-never-refreshes-server-liveness",
+            "same_time_conflicting_projection": "AUTHENTICATION_INVALID",
+            "lower_observed_at_ms": "AUTHENTICATION_INVALID-without-liveness-refresh",
+            "higher_fresh_observed_at_ms": "advance-replay-state-and-refresh-server-liveness"
+          }
+        }
+      }
+    },
+    "trusted-connector-broker-attestation": {
+      "attestation_location": "outside-payload-ingress-metadata",
+      "required_for_every_publish": true,
+      "required_bindings": [
+        "trusted_ingress_adapter_id",
+        "broker_connection_id",
+        "publisher_principal",
+        "topic",
+        "payload_sha256",
+        "observed_at_ms"
+      ],
+      "payload_sha256_definition": "SHA-256 over the exact MQTT PUBLISH payload bytes received by the trusted adapter, encoded as 64 lowercase hexadecimal characters",
+      "acceptance_boundary": "the application boundary validates the configured adapter identity, connection identity, observation time, payload digest, and uniqueness before decoding a Gateway identity claim",
+      "payload_attestation_permitted": false,
+      "adapter_trust_configuration": "operator-reviewed external configuration"
+    }
+  },
+  "insufficient_origin_evidence": [
+    "topic",
+    "payload-identity",
+    "mqtt-credential-alone"
+  ],
+  "payload_supplied_attestation": "reject",
+  "production_blockers": {
+    "session_accepted_response": "alpha.4 is unsigned and carries neither challenge_id nor client_nonce, so protocol-level correlation cannot exclude a delayed or replayed response from another handshake; a signed correlated response is planned for the next protocol version",
+    "durable_ack": "alpha.4 application durable ACK is unsigned; its signing projection and production fact/outbox transaction remain planned"
+  },
+  "production_key_lifecycle": "planned",
+  "rotation": "planned",
+  "revocation": "planned",
+  "production_verification": "planned",
+  "logs_and_evidence": "signatures, nonces, credential identifiers, and raw authentication transcripts are excluded from ordinary logs and public evidence"
+}

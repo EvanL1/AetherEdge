@@ -1,0 +1,14 @@
+{
+  "schema": "aether.cloudlink.session-challenge-request.v1",
+  "protocol": "aether.cloudlink",
+  "message_kind": "session-challenge-request",
+  "gateway_id": "33333333-3333-4333-8333-333333333333",
+  "credential_binding": {
+    "credential_id": "development-binding-17",
+    "generation": "3"
+  },
+  "offered_protocol_versions": ["1.0"],
+  "client_nonce": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+  "resume": [],
+  "unexpected": true
+}

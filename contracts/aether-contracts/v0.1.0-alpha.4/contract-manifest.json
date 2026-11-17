@@ -1,0 +1,718 @@
+{
+  "contract": "aether.contracts",
+  "release_version": "0.1.0-alpha.4",
+  "source_authority": "spec-schema-fixtures-tck",
+  "production_release": false,
+  "legacy_default": true,
+  "physical_control": false,
+  "optional_physical_control_extensions": {
+    "integration_control": {
+      "protocol": "aether.cloudlink.integration-control.v1alpha1",
+      "default_enabled": false,
+      "capabilities": [
+        "device.power.set.v1"
+      ],
+      "edge_final_decision": true
+    }
+  },
+  "formats": {
+    "logical_model": "JSON",
+    "wire_encoding": "UTF-8 JSON",
+    "schema": "JSON Schema Draft 2020-12",
+    "canonicalization": "RFC 8785 when an exact signing projection is frozen",
+    "tck": "JSON scenarios and black-box runner contract"
+  },
+  "modules": {
+    "thing_model": {
+      "version": "v1alpha1",
+      "status": "experimental"
+    },
+    "integration": {
+      "version": "v1alpha1",
+      "status": "experimental-contract"
+    },
+    "integration_control": {
+      "version": "v1alpha1",
+      "status": "experimental-default-off"
+    },
+    "cloudlink": {
+      "version": "v1alpha1",
+      "status": "experimental-auth-proposal",
+      "authentication": {
+        "default_enabled": false,
+        "challenge_request_schema": "session-challenge-request.schema.json",
+        "challenge_request_mqtt_route": "up_session"
+      }
+    },
+    "tck": {
+      "version": "v1alpha1",
+      "status": "experimental-fixture-manifest"
+    },
+    "distribution": {
+      "version": "v1alpha1",
+      "status": "experimental-fixture-manifest"
+    }
+  },
+  "bindings": {
+    "typescript": {
+      "status": "experimental-fixture-manifest",
+      "integration_v1alpha1": "planned",
+      "cloudlink_integration_v1alpha1": "planned",
+      "integration_control_v1alpha1": "planned"
+    },
+    "rust": {
+      "status": "experimental-fixture-manifest",
+      "integration_v1alpha1": "planned",
+      "cloudlink_integration_v1alpha1": "planned",
+      "integration_control_v1alpha1": "planned"
+    },
+    "c": {
+      "status": "experimental-fixture-manifest",
+      "integration_v1alpha1": "planned",
+      "cloudlink_integration_v1alpha1": "planned",
+      "integration_control_v1alpha1": "planned"
+    },
+    "cpp": {
+      "status": "experimental-fixture-manifest",
+      "implementation": "c-core-wrapper",
+      "integration_v1alpha1": "planned",
+      "cloudlink_integration_v1alpha1": "planned",
+      "integration_control_v1alpha1": "planned"
+    },
+    "go": {
+      "status": "planned"
+    },
+    "java": {
+      "status": "planned"
+    },
+    "python": {
+      "status": "planned"
+    }
+  },
+  "unresolved": [
+    "product adoption and real-Broker evidence for the CloudLink Integration extension",
+    "language binding conformance for the CloudLink Integration extension",
+    "product implementation and end-to-end evidence for the default-off Integration Control extension",
+    "production Cloud offer key provisioning, rotation, revocation, and Edge verifier ownership",
+    "product adapter, projection, and end-to-end reconnect, rename, deletion, and restart evidence",
+    "production key provisioning, rotation, revocation, and verifier ownership for the experimental authentication transcript",
+    "product persistence and restart evidence for exact challenge retry and atomic one-time consumption with session acceptance",
+    "Cloud signature projection and key lifecycle for durable ACK",
+    "production crash-durable ACK evidence",
+    "consumer-owned real-Broker dual-harness and fault-matrix evidence"
+  ],
+  "artifacts": [
+    {
+      "path": ".github/actions/verify-consumer/action.yml",
+      "sha256": "e14f5f538f6aa95ba32ec9e336eb07b5bb64ca6a46cc2f2468655004afabe6ec"
+    },
+    {
+      "path": ".node-version",
+      "sha256": "55075b5ec4e8b31936cbbc282b8829116d1fd48f2f2f1856dee592a6650700ce"
+    },
+    {
+      "path": "AGENTS.md",
+      "sha256": "3e84a361947b20165af3930bc258652a779fac7d2a7d29f77fb93e1a2922658a"
+    },
+    {
+      "path": "CONTRIBUTING.md",
+      "sha256": "d04cb4e57430b71d88fbea1e8f6efb80bc372290bb57b9c13438be65a9156824"
+    },
+    {
+      "path": "GOVERNANCE.md",
+      "sha256": "abc2752e13aedd45476043f0d8b567ce9bbeb03dfdac04765b906b1b91ff67b2"
+    },
+    {
+      "path": "LICENSE",
+      "sha256": "5022d9302e36a722ded81da7dfbfc5b703ec3e6340d9b52be5d12e9a966b8996"
+    },
+    {
+      "path": "README.md",
+      "sha256": "19bc2e853489f2ac93abe417e45bdc3d78313772a0ed13fb79e2299c6ca23751"
+    },
+    {
+      "path": "SECURITY.md",
+      "sha256": "6c8eb0ed83f5807c601f6a98b71c01c88f8c77c878ddd8259d1fcaff1c842d7d"
+    },
+    {
+      "path": "ai/docs-manifest.json",
+      "sha256": "c884de26378e69d84051743935a30fc5f7a66738bdc6974577ae2114e198a836"
+    },
+    {
+      "path": "ai/docs-manifest.schema.json",
+      "sha256": "e3cdc99b4f2d568b42a637342cb7eb42104a7fd76a7f5b46821904548ac7d3b7"
+    },
+    {
+      "path": "ai/invariants.md",
+      "sha256": "f1f61fc9aad78056fa10f346458929d065ca915d0f7d18d7981fc5ef081dd023"
+    },
+    {
+      "path": "compatibility/cloudlink-joint-core-provenance.json",
+      "sha256": "f1d5f768e02c2bf27f834389d1f0ee693eceefb5761db4d2aae1082c5fd94832"
+    },
+    {
+      "path": "compatibility/cloudlink-v1alpha1-gates.json",
+      "sha256": "2fb9410401b75b5f02d2c01c6f7eb584877dcbbc55c4023a8b31711e45af0db6"
+    },
+    {
+      "path": "compatibility/failure-codes.json",
+      "sha256": "9ba86b029501519df703c8f8267ad21f15849aaa9615199b42869a2804620913"
+    },
+    {
+      "path": "compatibility/integration-control-v1alpha1.json",
+      "sha256": "67ed0711aa02d603c351ebb019748704ab658d8af2da09732aec5addf623c2f0"
+    },
+    {
+      "path": "compatibility/integration-v1alpha1.json",
+      "sha256": "485d2cbc27c93d27cdf0f13a1eba75c43fb367f8841a5c85abacc772b65693b6"
+    },
+    {
+      "path": "compatibility/product-matrix.json",
+      "sha256": "647da8440db57a632339607deb16c831572e57d46f3d9c4327ee183b44e1d93a"
+    },
+    {
+      "path": "compatibility/thing-model-v1alpha1.json",
+      "sha256": "002297347e3742bffa0aa67f284ff55d94603c2243329b57ec61f34e511f0945"
+    },
+    {
+      "path": "fixtures/cloudlink-integration/v1alpha1/fixture-manifest.json",
+      "sha256": "8d474f65319988fa9211ebfec54a23c6ea617daf474b1609252c78091e2c3627"
+    },
+    {
+      "path": "fixtures/cloudlink-integration/v1alpha1/integration-observations-ack.valid.json",
+      "sha256": "e628b6206ca64f6e747c10cb0802ea71f80a17ce4b09e676da80e3ec213e80c2"
+    },
+    {
+      "path": "fixtures/cloudlink-integration/v1alpha1/integration-observations.valid.json",
+      "sha256": "6bafd4b69a81c313bfcc621e858f36914847cf04c684ff96824a27920fdc2411"
+    },
+    {
+      "path": "fixtures/cloudlink-integration/v1alpha1/integration-topology-ack.valid.json",
+      "sha256": "88703e45e94f975cb46ed03877c1425ee31cf54cef4fac50ffb4c9f7270a4ff6"
+    },
+    {
+      "path": "fixtures/cloudlink-integration/v1alpha1/integration-topology-secret.invalid.json",
+      "sha256": "d3ce57d185235d00c883e1b7f1b32f4941c111ac8db030dcd1d824caae7f9443"
+    },
+    {
+      "path": "fixtures/cloudlink-integration/v1alpha1/integration-topology.valid.json",
+      "sha256": "fd19f49bb2e62f0860be21fa35bda31c8612b3c96fe309d1f7319dc33d5ce743"
+    },
+    {
+      "path": "fixtures/cloudlink/v1alpha1/conflicting-replay.json",
+      "sha256": "08285e9f5eb1575823b9f7f3cec8e802d2db004f8b79cd21006220c5ea9f9bac"
+    },
+    {
+      "path": "fixtures/cloudlink/v1alpha1/conflicting-replay.valid-digest.json",
+      "sha256": "4aead88da076ffab693897623e09365fa06956f33b6de4b131f817437f1dfdf2"
+    },
+    {
+      "path": "fixtures/cloudlink/v1alpha1/data-loss.valid.json",
+      "sha256": "a9a1f36c1a93d826f3414f3b161d55f52b6f65ac0661bc3c1b574106938ba358"
+    },
+    {
+      "path": "fixtures/cloudlink/v1alpha1/durable-ack.valid.json",
+      "sha256": "46bde2887299f3924308812d50045001fefc3c7242421bfa4d57892c8c90d7c7"
+    },
+    {
+      "path": "fixtures/cloudlink/v1alpha1/fixture-manifest.json",
+      "sha256": "ef1ca54d52c88e518a9c981bc2f344cf838732844f78ac186a37aa93af7217d3"
+    },
+    {
+      "path": "fixtures/cloudlink/v1alpha1/heartbeat-ack.valid.json",
+      "sha256": "1de47595b2c909e2bbc2df31200824331d038a42aaf1e146ad8d7fb43900ba0b"
+    },
+    {
+      "path": "fixtures/cloudlink/v1alpha1/heartbeat.valid.json",
+      "sha256": "f6bf99148da328e94c39d1e5e2be7104f450aff2c6a15fdfc506d8e2a768dca6"
+    },
+    {
+      "path": "fixtures/cloudlink/v1alpha1/invalid-digest.json",
+      "sha256": "a757baace924824e9c17c7f635270dca8369b74ce803acbdbdc9fa2c8c6a383d"
+    },
+    {
+      "path": "fixtures/cloudlink/v1alpha1/overflow-uint64.json",
+      "sha256": "8a7f8e8f54efe52a3b4269dc3c63ee3ee9f35c5a1b9da141f21098df3f0a1174"
+    },
+    {
+      "path": "fixtures/cloudlink/v1alpha1/oversized-payload.json",
+      "sha256": "475d3f6afa5aa1532f025a75f04566aa4ae8af0da64e18baeae204abaaba7061"
+    },
+    {
+      "path": "fixtures/cloudlink/v1alpha1/payload-broker-attestation.json",
+      "sha256": "367ec35d7129c189615a43785ce8490229391510847fb476720a305dd1d29be9"
+    },
+    {
+      "path": "fixtures/cloudlink/v1alpha1/replay-request.valid.json",
+      "sha256": "7b2493328a3b7afec9a75b54736eb2610ce5d668bfb59185ce117db4f2f7880f"
+    },
+    {
+      "path": "fixtures/cloudlink/v1alpha1/runtime-manifest-invalid-semver.json",
+      "sha256": "92444aa861e10e1aebbba839824bd8619338b28b7cb08405f82e9c133486f8fc"
+    },
+    {
+      "path": "fixtures/cloudlink/v1alpha1/runtime-manifest-report.valid.json",
+      "sha256": "eb5a3c5a437392d245eea9560cc7b28d40c8a85b06b27fa8911b15393b024ff9"
+    },
+    {
+      "path": "fixtures/cloudlink/v1alpha1/session-accepted-duplicate-cursor.json",
+      "sha256": "7afdf51e19b499ef58c358c81325004d807c0ba81389028eea3aa162cc15cdc2"
+    },
+    {
+      "path": "fixtures/cloudlink/v1alpha1/session-accepted.valid.json",
+      "sha256": "580113f3a7a0bacaa4d83f6f20a13144dcf41db15baba997fd8a9a3dc4f19a26"
+    },
+    {
+      "path": "fixtures/cloudlink/v1alpha1/session-challenge-request-unknown-field.json",
+      "sha256": "6915da2d26bc8b8dd36a738be84905dc1f293b30f87c20b10aca12f30f0b326e"
+    },
+    {
+      "path": "fixtures/cloudlink/v1alpha1/session-challenge-request.valid.json",
+      "sha256": "d5a8883bcdd40cb07a9a0c5ede1f0c79919dc645f7357e9503730ad3338c58d5"
+    },
+    {
+      "path": "fixtures/cloudlink/v1alpha1/session-challenge.valid.json",
+      "sha256": "9adf970a7a0f25f8c03bd14b3b95f180e143dc1c2ab6ff3cf1a51e6de8b2335e"
+    },
+    {
+      "path": "fixtures/cloudlink/v1alpha1/session-hello-auth-invalid.json",
+      "sha256": "1010b57b8f3b335256b88a8375d3b3bcc34e8bb622225de8dcd910b319edbad4"
+    },
+    {
+      "path": "fixtures/cloudlink/v1alpha1/session-hello-auth-required.json",
+      "sha256": "b6694adeaf56dc71742104dd7e36a8a3a155e0c66c25daf064a42c06d2aeec51"
+    },
+    {
+      "path": "fixtures/cloudlink/v1alpha1/session-hello.valid.json",
+      "sha256": "122cb9340405ace75c090ea284564ca584324b7a7d380b4c7c630e6e97d2918d"
+    },
+    {
+      "path": "fixtures/cloudlink/v1alpha1/stale-ack.json",
+      "sha256": "59c4c2c35ca6fc3ec623cd79b5976758114e15d930887673dbcd6733b834405d"
+    },
+    {
+      "path": "fixtures/cloudlink/v1alpha1/telemetry-batch.valid.json",
+      "sha256": "8d472ef492123b479376060c1a6bf46e682bdde18d94d1d7126695e0fbacba49"
+    },
+    {
+      "path": "fixtures/cloudlink/v1alpha1/unknown-field.json",
+      "sha256": "b2e295229acb43fed82fdae590aa2782e27e65c5123df40f522728294d4ac35e"
+    },
+    {
+      "path": "fixtures/cloudlink/v1alpha1/unsafe-uint64.json",
+      "sha256": "f50ba201d748b356a20f04453e5403612b5abd684bed37580a5749043abbe691"
+    },
+    {
+      "path": "fixtures/cloudlink/v1alpha1/unsupported-version.json",
+      "sha256": "4338824e50571ad7c6afbaae0a41c463a59d5adec8590d4aa05197764e1c860d"
+    },
+    {
+      "path": "fixtures/cloudlink/v1alpha1/wrong-session-epoch.json",
+      "sha256": "d33413b8508a2a36c4eb7bee59fd589a4c64966e054fa9af2b2274c2f52f759a"
+    },
+    {
+      "path": "fixtures/integration-control/v1alpha1/action-offer.valid.json",
+      "sha256": "b5c1aa0253e9175b51a3628734561fcfb69e26c87377f5cb69d78685d917a659"
+    },
+    {
+      "path": "fixtures/integration-control/v1alpha1/action-receipt-provider-accepted.valid.json",
+      "sha256": "f69736c32102df136ccffbff8f6ce7716ea19c06b9477ec8f8682fe0f5ebab83"
+    },
+    {
+      "path": "fixtures/integration-control/v1alpha1/fixture-manifest.json",
+      "sha256": "c15208bd258e7057bd7e311a426787cf6ffc6dc5a2cae2674b2086579379855a"
+    },
+    {
+      "path": "fixtures/integration-control/v1alpha1/invalid/action-offer-missing-confirmation.json",
+      "sha256": "0d3f2336b18a06b81e5d6c83dfe2f502c7ab4a6e45d7bee3d68d453c1710e7bc"
+    },
+    {
+      "path": "fixtures/integration-control/v1alpha1/invalid/action-offer-provider-material.json",
+      "sha256": "c6f34b081f56f8373215330a84a6d33b8e7118a313e6db6e054aba12290d58ad"
+    },
+    {
+      "path": "fixtures/integration-control/v1alpha1/invalid/action-offer-unknown-capability.json",
+      "sha256": "61399656eb9a072ef738865976c1c80907a173b0a0ecc74b7604f28d252d84ef"
+    },
+    {
+      "path": "fixtures/integration-control/v1alpha1/invalid/action-receipt-overlong-failure-code.json",
+      "sha256": "68e76c2294f6caba2541388dbb83387309c81fbaa1753839bf36c4c0e8e00d39"
+    },
+    {
+      "path": "fixtures/integration-control/v1alpha1/invalid/action-receipt-physical-completion.json",
+      "sha256": "fb75bf0ef216d6959e814bdaa29084faf9549107660557a7dae5661fd026eb80"
+    },
+    {
+      "path": "fixtures/integration/v1alpha1/fixture-manifest.json",
+      "sha256": "8b8e13327fa1c07a0281f051d99fd0a996bfbd6cf5132f189b351603e9ccef06"
+    },
+    {
+      "path": "fixtures/integration/v1alpha1/invalid/observation-dangling-point.json",
+      "sha256": "9950798b24fc9e0f4b626120bfd7a6c419ed5ac59d5d584e7790d431d2b30692"
+    },
+    {
+      "path": "fixtures/integration/v1alpha1/invalid/observation-diagnostic-text-invalid.json",
+      "sha256": "9e07894e2d6579e06fd74a57eab3fbfdfd5ef8dd324845b48e20f614c96ade8b"
+    },
+    {
+      "path": "fixtures/integration/v1alpha1/invalid/observation-good-without-value.json",
+      "sha256": "32a255c88935352a3daf6ad13a3c96c9609eafdfbeebb938f54f4a665b25639e"
+    },
+    {
+      "path": "fixtures/integration/v1alpha1/invalid/observation-type-mismatch.json",
+      "sha256": "d8eb3ded3f02c902e1f2033fa9d88f06d6eb2fb6d1cb592ac1717b3cd332083f"
+    },
+    {
+      "path": "fixtures/integration/v1alpha1/invalid/observation-unavailable-with-value.json",
+      "sha256": "a1c351813db59bc0e3d78c053a8341af57168db46e0e10e09f7de824199715db"
+    },
+    {
+      "path": "fixtures/integration/v1alpha1/invalid/topology-dangling-device-area.json",
+      "sha256": "0315cab47a087291e85d75cb7e2fc9fbedabb5a9788594d4e4091134b45fe7e2"
+    },
+    {
+      "path": "fixtures/integration/v1alpha1/invalid/topology-display-text-invalid.json",
+      "sha256": "752de89af37991d6dbde8a4ebfd6b6839b89967039b71361cc377d6f7b76c496"
+    },
+    {
+      "path": "fixtures/integration/v1alpha1/invalid/topology-duplicate-entity.json",
+      "sha256": "e60d1688c35844178440e867e3929e46c74189ee7be06628ee2c492040c82de5"
+    },
+    {
+      "path": "fixtures/integration/v1alpha1/invalid/topology-unknown-field.json",
+      "sha256": "0d6e012b9ebbc8e2caedc27406098eff11edc669aac1646a3675ccd53277ea89"
+    },
+    {
+      "path": "fixtures/integration/v1alpha1/invalid/value-bytes-noncanonical.json",
+      "sha256": "907c601cff1872f8c1b1421ad91c1bb9631db52ff30d3569f1cfae04281c7b90"
+    },
+    {
+      "path": "fixtures/integration/v1alpha1/invalid/value-decimal-noncanonical.json",
+      "sha256": "30a5ce138242980b9c45ebbf56a94a14ec15c9440b7faffb20c9eed8a7b31f26"
+    },
+    {
+      "path": "fixtures/integration/v1alpha1/invalid/value-int64-overflow.json",
+      "sha256": "a09a9b126ae4171886342596af8b5b79f1be6242d122153c446eb307316d6cb0"
+    },
+    {
+      "path": "fixtures/integration/v1alpha1/invalid/value-uint64-overflow.json",
+      "sha256": "91bb1b4767050b1fe82bd889fd6aee0cbdd5df5f5244550d44666235f603df7a"
+    },
+    {
+      "path": "fixtures/integration/v1alpha1/valid/home-assistant-observations.json",
+      "sha256": "3ad49c54acf6a9e4956e94bb311f5d59e6803f8f846239f0ca424322c0751fbb"
+    },
+    {
+      "path": "fixtures/integration/v1alpha1/valid/home-assistant-topology.json",
+      "sha256": "465907921d147b26e7441e20a1a28c07dbde95c12a8cdb9e2f4270dd53d5c6a2"
+    },
+    {
+      "path": "fixtures/thing-model/v1alpha1/fixture-manifest.json",
+      "sha256": "baaac8955239ba008794530c4ce0441d3902b1c1de0aa6b483900eaa5ae91a2a"
+    },
+    {
+      "path": "fixtures/thing-model/v1alpha1/invalid/direct-action-execution.json",
+      "sha256": "b6edfaf43e332acb775d81feb3968062044e7f13139aac5c51dc90d7cf602394"
+    },
+    {
+      "path": "fixtures/thing-model/v1alpha1/invalid/duplicate-capability-parameter.json",
+      "sha256": "c6bd88792e028eaddbcd6a5f96dbdb356fa30425b061b9316a576f2cdc3b98f8"
+    },
+    {
+      "path": "fixtures/thing-model/v1alpha1/invalid/duplicate-cross-namespace-key.json",
+      "sha256": "9d7d4a18bcabff03b5dc8c5958e1aeb50220167e6d59e9ef76c24dca083cd90e"
+    },
+    {
+      "path": "fixtures/thing-model/v1alpha1/invalid/noncanonical-revision.json",
+      "sha256": "1c9db6a93ca8dec4bd9e682f4eae68d5d5444cc45297c674525d0fbf1252de08"
+    },
+    {
+      "path": "fixtures/thing-model/v1alpha1/invalid/unknown-core-field.json",
+      "sha256": "dc1c921796c71165143767550a1e2a6e0de20f5d7a7f870a04d070017230e209"
+    },
+    {
+      "path": "fixtures/thing-model/v1alpha1/valid/voltage-battery.golden.json",
+      "sha256": "34323feb2dea16416fe2208ca805b078981e33d8417406b72617e7aa40fed58e"
+    },
+    {
+      "path": "fixtures/thing-model/v1alpha1/voltage/battery-minimal.legacy.json",
+      "sha256": "ff44ace510b5863d880ec7963f52f039e5e16cc2df49f6a5420e0243d64d03d8"
+    },
+    {
+      "path": "fixtures/thing-model/v1alpha1/voltage/provenance.json",
+      "sha256": "9fadbb70b5cfa99ecf9a8395af2ba7f5a3e37afb9bd4217b71ea2f03f6a78452"
+    },
+    {
+      "path": "llms.txt",
+      "sha256": "2eef802b165e40121b10ad41d169172db4d9cadfc576918b2ae5e45acbfee1a7"
+    },
+    {
+      "path": "profiles/cloudlink/v1alpha1/authentication.json",
+      "sha256": "5ebdd92710d9e218d1113bd072e75d4d8965d4d238dcfb2c4111b31f723b6e73"
+    },
+    {
+      "path": "profiles/cloudlink/v1alpha1/core.json",
+      "sha256": "1ab40c2ecbc738ec3f0bcd2a912ab78ac4a8c8bfba8f2d5a3aacbcdb0fa025bc"
+    },
+    {
+      "path": "profiles/cloudlink/v1alpha1/integration-control.json",
+      "sha256": "25ea6f8bc88eb6a28b094e7c3122c7c5b2ffe415aa0fd000a706721e55adc8c9"
+    },
+    {
+      "path": "profiles/cloudlink/v1alpha1/integration.json",
+      "sha256": "93e3b9d0772066be98e344b39debbef3d8204511e91d17e8d8eaf45bdc1147ab"
+    },
+    {
+      "path": "profiles/integration-control/v1alpha1/home-assistant.json",
+      "sha256": "2c42ce67a154985f9f0be0fb239b710ba199eb739674c98fece469287d6724a0"
+    },
+    {
+      "path": "profiles/integration/v1alpha1/home-assistant.json",
+      "sha256": "4b7339b237e7f9b82d632f9faeb09e71df0166101c539da9d4d6f2b0d6df7b23"
+    },
+    {
+      "path": "profiles/mqtt/v1alpha1/profile.json",
+      "sha256": "35647367b8710458342760ae9beedc4c2d2a6c4f61ae6f449a965390a472e781"
+    },
+    {
+      "path": "profiles/thing-model/v1alpha1/publication.json",
+      "sha256": "b35b5ac1799f5f11e568a2d32df82e7d331b714eeaddfa2d9e45198ef4aa6234"
+    },
+    {
+      "path": "profiles/wot/v1alpha1/profile.json",
+      "sha256": "040b90e928f6a39cf6c585a02da7d8331b4d7e7896233045575df7f1478f04ba"
+    },
+    {
+      "path": "schemas/cloudlink/v1alpha1/data-loss.schema.json",
+      "sha256": "2a2f53f1932d53d46785571d0d1353e737748b9ee5c216e3f6468fde820f6829"
+    },
+    {
+      "path": "schemas/cloudlink/v1alpha1/durable-ack.schema.json",
+      "sha256": "9c75e350004f45ab7cec79e2270cfdc4391975a08444ec11ae1d97802f383baa"
+    },
+    {
+      "path": "schemas/cloudlink/v1alpha1/envelope.schema.json",
+      "sha256": "3259e790195bdb44531f66833e1de4435cb3209b51f79910332c97c8ab7e4eb1"
+    },
+    {
+      "path": "schemas/cloudlink/v1alpha1/heartbeat.schema.json",
+      "sha256": "ecdc567ca1064eb43fae2674737f0d39b0f6b651f0fac8e8b231fbcd6917b309"
+    },
+    {
+      "path": "schemas/cloudlink/v1alpha1/integration-action-offer.schema.json",
+      "sha256": "5a46666c1413a8cc6d96a6acfaf13309955e2ea14ebb043380bd6349026489b1"
+    },
+    {
+      "path": "schemas/cloudlink/v1alpha1/integration-action-receipt.schema.json",
+      "sha256": "147515c9550974864137b85bdd9dd06c76d46c8f0c393e3ce174481dde3d5977"
+    },
+    {
+      "path": "schemas/cloudlink/v1alpha1/integration-observation-batch.schema.json",
+      "sha256": "9511235cf74e7662ba200a2c8aab393c3b386e5f0951d60b4093c25bb9362e7d"
+    },
+    {
+      "path": "schemas/cloudlink/v1alpha1/integration-topology-snapshot.schema.json",
+      "sha256": "7b6d0f5440a4abc30c7fe3dc23fb0c22dfba09de3307e484f970285ae5cedbd3"
+    },
+    {
+      "path": "schemas/cloudlink/v1alpha1/replay-request.schema.json",
+      "sha256": "a02aba3c8adcafd259549aa869d6d605df739ab58b3b071b987c1b214732e7ab"
+    },
+    {
+      "path": "schemas/cloudlink/v1alpha1/runtime-manifest-report.schema.json",
+      "sha256": "0d97fff9ab55eff0042e31d531408b42bb7b93bfa868d0e06851a0a34c67efc0"
+    },
+    {
+      "path": "schemas/cloudlink/v1alpha1/runtime-manifest.v1.schema.json",
+      "sha256": "631a62d0568d2d51fe09ea73b398f4a2974c324cc3bbc31f2a5a89675831191b"
+    },
+    {
+      "path": "schemas/cloudlink/v1alpha1/session-accepted.schema.json",
+      "sha256": "92561df5d2ebe73e82a6641774cdd0cdc1b2edbcb08527e22262816bb090dd73"
+    },
+    {
+      "path": "schemas/cloudlink/v1alpha1/session-challenge-request.schema.json",
+      "sha256": "541dad81eb764d92e1c8084e9052797988bd8dbb52660767e71a5a7b03154e43"
+    },
+    {
+      "path": "schemas/cloudlink/v1alpha1/session-challenge.schema.json",
+      "sha256": "e9b408a65efa64c53a3789aef7650c283c4aaede546b7c4e1ed97db734fa1d74"
+    },
+    {
+      "path": "schemas/cloudlink/v1alpha1/session-hello.schema.json",
+      "sha256": "bf6808a6ecfb5c7d77cda7731c0fff5bc3df1c3b909a2f99e28fd37e4664366b"
+    },
+    {
+      "path": "schemas/cloudlink/v1alpha1/telemetry-batch.schema.json",
+      "sha256": "3c80349f4f3ef60a17fcc0ed27cf2dd7a1dea36df909f96b488c0cc6b58a2bc0"
+    },
+    {
+      "path": "schemas/distribution/v1alpha1/consumer-lock.schema.json",
+      "sha256": "39bfc21d6d6908b2e3091b4b84fbfcd0769f545cf27bb0a0fe3b60186d04c8d3"
+    },
+    {
+      "path": "schemas/integration-control/v1alpha1/integration-action-intent.schema.json",
+      "sha256": "9c05a9974226571031e517cb99bb2f2e21bf8f7f353a1567c7f5ee44232f12a8"
+    },
+    {
+      "path": "schemas/integration-control/v1alpha1/integration-action-receipt-payload.schema.json",
+      "sha256": "aea205df6b6fdbd6b166a03fe9ac116fb8dc50a72326cd580b6b84599751332c"
+    },
+    {
+      "path": "schemas/integration/v1alpha1/integration-observation-batch.schema.json",
+      "sha256": "db51ace3e7866540dd7812b731f46b2d541a3f0ea1ece443f5979b083b0f0f1c"
+    },
+    {
+      "path": "schemas/integration/v1alpha1/integration-topology-snapshot.schema.json",
+      "sha256": "e8fd51278424dd6fb5a6f13d770de68f862e7118f70ad76ff20fbddb8e2f32c6"
+    },
+    {
+      "path": "schemas/integration/v1alpha1/observed-value.schema.json",
+      "sha256": "a1e501bad36c60744c7d28867511418954c190a0a5a77e219914d19ccc8608ce"
+    },
+    {
+      "path": "schemas/tck/v1alpha1/fixture-manifest.schema.json",
+      "sha256": "ff18167abf7a780cf9e0fb63b333a5d40e198e58e5ef414c34530edb8caeb915"
+    },
+    {
+      "path": "schemas/tck/v1alpha1/scenario.schema.json",
+      "sha256": "37ad1076ecedf5dbad44a35cb44643f4d1c3f932b8b3015e6d2bc9bfb73411f6"
+    },
+    {
+      "path": "schemas/thing-model/v1alpha1/deployment-observation.schema.json",
+      "sha256": "d5f567346f0a63fd9a19b47df90ead401a9b96cdd0d2cbdce8195a1b40eb40c2"
+    },
+    {
+      "path": "schemas/thing-model/v1alpha1/thing-model.schema.json",
+      "sha256": "e60d9b50bf2ef37ce530b55979b7e5b9c0ff5c30fe1f69ef608ef4e70a2772d3"
+    },
+    {
+      "path": "scripts/update-agent-docs.mjs",
+      "sha256": "671b87f741ef07291e4249d4d2146333ccb7d46c62bcfa5dafd3d81bc139fb4e"
+    },
+    {
+      "path": "scripts/verify-consumer-lock.mjs",
+      "sha256": "614e4919dc91816c4d4c27bd7d34fc281356775b9d77cf7cf6c3a660649931be"
+    },
+    {
+      "path": "spec/cloudlink-v1alpha1.md",
+      "sha256": "1c59298e4fdba96deb13884f846421174c2d83a94cf88c8c8ae3b15c1c36dd3f"
+    },
+    {
+      "path": "spec/distribution-v1alpha1.md",
+      "sha256": "70676dc87b829ecd69536eb32b0ed32978c1ed5799862da6e09f61647bd8b552"
+    },
+    {
+      "path": "spec/foundation.md",
+      "sha256": "107de5b2d0151985a215d6cd8cafb9d7cd4557fc70fceecdb16ebba552b4c93e"
+    },
+    {
+      "path": "spec/integration-control-v1alpha1.md",
+      "sha256": "b00e5be5e9a25c562ec7c2e523d863f3137402cff18337ce853f5587a6570c22"
+    },
+    {
+      "path": "spec/integration-v1alpha1.md",
+      "sha256": "129a779ee6a4842713f50124d91b559d3eff2e2fe353bc4280799f4bcd5e80a5"
+    },
+    {
+      "path": "spec/tck-v1alpha1.md",
+      "sha256": "e5f71d92a1e09644dba20b3616a803e3d768e0e92e4797d205bdba823d5cbd21"
+    },
+    {
+      "path": "spec/thing-model-v1alpha1.md",
+      "sha256": "dc9eb4a0b30a39f3cf0a7f1a193e5f418506519c2864d1ab3f3a31f07bf6abc1"
+    },
+    {
+      "path": "tck/lib/cloudlink-authentication-context.mjs",
+      "sha256": "6774203e544e6ce2d057e2a17746faf121f0142962fabf0d65db91e14fdc525b"
+    },
+    {
+      "path": "tck/lib/cloudlink-integration-context.mjs",
+      "sha256": "74495d64da32e467e3f8676d1e5757fb7310c3e69d8e589d052e1d6f71b4c838"
+    },
+    {
+      "path": "tck/lib/integration-context.mjs",
+      "sha256": "4fd9becb97f23f28dbf503986e4f2f02d8557fb42a073a2d1f61b527adebb748"
+    },
+    {
+      "path": "tck/lib/integration-control-context.mjs",
+      "sha256": "254160f9b95c34b37eb339c30d21e07e77c9624fe81a3de85dd655b04ff48ecd"
+    },
+    {
+      "path": "tck/lib/scenario-runner.mjs",
+      "sha256": "55deba8b4fc235f5159e988c745b1680b8da6f042733fefc6bbc2741572bce6f"
+    },
+    {
+      "path": "tck/lib/strict-json.mjs",
+      "sha256": "003394acc331121856b448c61a0c0f925063f9c863b350be898568c6cf2d9241"
+    },
+    {
+      "path": "tck/scenarios/core.json",
+      "sha256": "6a64f354de38c61951d4ebdd825179da8665805955447b465d35d3809ad3b917"
+    },
+    {
+      "path": "tck/test/agent-docs-manifest.test.mjs",
+      "sha256": "4f0560242bd1f8c816611134bf876fe6bbb7cc6c000e1a4e0f3e9a1f1f907685"
+    },
+    {
+      "path": "tck/test/cloudlink-authentication-contract.test.mjs",
+      "sha256": "a60ee8718f9a0c2d7c481927045dd0edb8901006ab91a11d010ed86a75414867"
+    },
+    {
+      "path": "tck/test/cloudlink-integration-contract.test.mjs",
+      "sha256": "318cea9aaf52d794748e26ec0f975224ab74aba6cdacd74178b0d660578d62f3"
+    },
+    {
+      "path": "tck/test/consumer-lock.test.mjs",
+      "sha256": "ea18be75854361c0a1e33054094e037ed75743d94ce9dd392a609ef2b4124c1b"
+    },
+    {
+      "path": "tck/test/contract-manifest.test.mjs",
+      "sha256": "0d66682afb2f5d1ca07ee475b0ec50d1e320aac270e3fcd6ca3a329b00020419"
+    },
+    {
+      "path": "tck/test/core-scenarios.test.mjs",
+      "sha256": "35e9f95dc895262a3409eb0b73148acb1a2a14b68b2a07078ff1c8b5bfb0cc47"
+    },
+    {
+      "path": "tck/test/fixture-integrity.test.mjs",
+      "sha256": "45acb1259837106d3417be5eb78f6e41c25995d58ba238fa8ea93d14c8c9a022"
+    },
+    {
+      "path": "tck/test/fixture-manifest-exactness.test.mjs",
+      "sha256": "7692818a7fe15e75ca3a84fe76bbbec09e80c83ad9613bb2106b2398ddee4d88"
+    },
+    {
+      "path": "tck/test/integration-contract.test.mjs",
+      "sha256": "a1a90d2c71e3d948080bfe6537e2591eed23f0e45e9c0bf97ce0521bea81ee8c"
+    },
+    {
+      "path": "tck/test/integration-control-contract.test.mjs",
+      "sha256": "e25b9b2542b3f0a073222e1314427ded6ea6175830c55b34138d90be47fca2d9"
+    },
+    {
+      "path": "tck/test/portable-contract-gaps.test.mjs",
+      "sha256": "2e4e6f7c83d989f6c42d8bb7a7068abcfa3e92f3ffbced5067c6eeaa1c6593c3"
+    },
+    {
+      "path": "tck/test/release-version.test.mjs",
+      "sha256": "d5ed3359d6ee4910906f8407169c8ffd7598e81db2d66b56dd2bc095722fb163"
+    },
+    {
+      "path": "tck/test/safety-contract.test.mjs",
+      "sha256": "9768e1780f7994f9149d4f9bf1e7540bca421ec7ab6719dd993fca63af58c1d6"
+    },
+    {
+      "path": "tck/test/schema-conformance.test.mjs",
+      "sha256": "44d7b5e2acb8a9890eb3f6154f08aa6fe66d0a69234c5811cb71d0c67c8a8377"
+    },
+    {
+      "path": "tck/test/strict-json.test.mjs",
+      "sha256": "6b2a6bfa0ebe0dc53a0236b9e52f812e9fe059b7819d3a0d6efa6f431c52b4fa"
+    },
+    {
+      "path": "tck/test/strict-repository-json.test.mjs",
+      "sha256": "75e4d457c69d03a2e14ada707b32aecaeee5636cf4aacf38f9b1a084e45370fe"
+    }
+  ]
+}

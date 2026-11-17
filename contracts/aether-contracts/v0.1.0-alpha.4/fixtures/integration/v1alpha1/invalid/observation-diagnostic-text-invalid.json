@@ -1,0 +1,16 @@
+{
+  "schema": "aether.integration.observation-batch.v1alpha1",
+  "integration_id": "home-assistant.home",
+  "snapshot_generation": "1",
+  "batch_id": "batch-invalid-diagnostic",
+  "observed_at_ms": "1784217600100",
+  "observations": [
+    {
+      "entity_id": "entity-registry-light-bedroom",
+      "point_key": "brightness",
+      "observed_at_ms": "1784217600005",
+      "quality": "unavailable",
+      "diagnostic": "\u0007"
+    }
+  ]
+}

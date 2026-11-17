@@ -20,7 +20,7 @@ and Rust SDK formerly published from the AetherIot repository name.
 
 - Broker-neutral CloudLink MQTT v1 sessions, telemetry, replay, and application
   acknowledgement spooling.
-- Digest-pinned AetherContracts `v0.1.0-alpha.3` consumption and public fixture
+- Digest-pinned AetherContracts `v0.1.0-alpha.4` consumption and public fixture
   execution.
 
 Experimental CloudLink evidence does not establish production authentication,

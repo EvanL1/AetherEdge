@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "integration-action-receipt.schema.json",
+  "title": "Experimental Aether CloudLink governed Integration action receipt v1 alpha 1",
+  "allOf": [
+    { "$ref": "envelope.schema.json#/$defs/uplinkEnvelope" },
+    {
+      "properties": {
+        "message_kind": { "const": "integration-action-receipt" },
+        "payload": {
+          "$ref": "https://contracts.aether.dev/schemas/integration-control/v1alpha1/integration-action-receipt-payload.schema.json"
+        }
+      }
+    }
+  ]
+}

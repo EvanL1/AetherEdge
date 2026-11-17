@@ -1,0 +1,108 @@
+{
+  "schema": "aether.integration.topology-snapshot.v1alpha1",
+  "integration_id": "home-assistant.home",
+  "integration_kind": "home-assistant",
+  "snapshot_generation": "1",
+  "observed_at_ms": "1784217600000",
+  "areas": [
+    {
+      "area_id": "living-room",
+      "name": "Living room"
+    },
+    {
+      "area_id": "bedroom",
+      "name": "Bedroom"
+    }
+  ],
+  "devices": [
+    {
+      "device_id": "device-thermostat-living",
+      "name": "Living room thermostat",
+      "area_id": "living-room",
+      "manufacturer": "Example Climate",
+      "model": "Thermostat One",
+      "software_version": "3.2.1"
+    },
+    {
+      "device_id": "device-light-bedroom",
+      "name": "Bedroom light",
+      "area_id": "bedroom",
+      "manufacturer": "Example Light",
+      "model": "Bulb One"
+    }
+  ],
+  "entities": [
+    {
+      "entity_id": "entity-registry-climate-living",
+      "source_address": "climate.living_room",
+      "name": "Living room climate",
+      "entity_kind": "climate",
+      "device_id": "device-thermostat-living",
+      "area_id": "living-room",
+      "points": [
+        {
+          "point_key": "current_temperature",
+          "title": "Current temperature",
+          "kind": "telemetry",
+          "value_type": "float64",
+          "unit": "Cel"
+        },
+        {
+          "point_key": "target_temperature",
+          "title": "Target temperature",
+          "kind": "status",
+          "value_type": "decimal",
+          "unit": "Cel"
+        },
+        {
+          "point_key": "hvac_mode",
+          "title": "HVAC mode",
+          "kind": "status",
+          "value_type": "string"
+        }
+      ]
+    },
+    {
+      "entity_id": "entity-registry-light-bedroom",
+      "source_address": "light.bedroom",
+      "name": "Bedroom light",
+      "entity_kind": "light",
+      "device_id": "device-light-bedroom",
+      "area_id": "bedroom",
+      "points": [
+        {
+          "point_key": "is_on",
+          "title": "Power",
+          "kind": "status",
+          "value_type": "boolean"
+        },
+        {
+          "point_key": "brightness",
+          "title": "Brightness",
+          "kind": "status",
+          "value_type": "uint64"
+        }
+      ]
+    },
+    {
+      "entity_id": "entity-registry-diagnostic",
+      "source_address": "sensor.integration_diagnostic",
+      "name": "Integration diagnostic",
+      "entity_kind": "sensor",
+      "points": [
+        {
+          "point_key": "signed_counter",
+          "title": "Signed counter",
+          "kind": "telemetry",
+          "value_type": "int64"
+        },
+        {
+          "point_key": "raw_payload",
+          "title": "Raw payload",
+          "kind": "event",
+          "value_type": "bytes"
+        }
+      ]
+    }
+  ]
+}
