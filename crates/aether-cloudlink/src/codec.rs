@@ -152,10 +152,7 @@ impl CloudLinkCodec {
         identifier(&batch_id, "batch_id", 128)?;
         validate_integration_batch_binding(message_kind, &batch_id, &payload)?;
         if expires_at.is_some_and(|expires| expires.get() < created_at.get()) {
-            return Err(CloudLinkCodecError::InvalidField {
-                field: "expires_at_ms",
-                message: "must be after created_at_ms",
-            });
+            return Err(CloudLinkCodecError::InvalidExpiryWindow);
         }
         let payload_bytes = serde_json_canonicalizer::to_vec(&payload)
             .map_err(|source| CloudLinkCodecError::CanonicalJson { source })?;
@@ -189,10 +186,7 @@ impl CloudLinkCodec {
             .expires_at()
             .is_some_and(|expires| expires.get() < sent_at.get())
         {
-            return Err(CloudLinkCodecError::InvalidField {
-                field: "expires_at_ms",
-                message: "expired business content cannot be offered",
-            });
+            return Err(CloudLinkCodecError::InvalidExpiryWindow);
         }
         let payload: Value = serde_json::from_slice(record.payload())?;
         validate_business_payload(record.message_kind(), &payload)?;
@@ -497,10 +491,7 @@ impl DeliveryEnvelope {
         if let Some(expires) = &self.expires_at_ms
             && canonical_u64(expires, "expires_at_ms")? < sent_at
         {
-            return Err(CloudLinkCodecError::InvalidField {
-                field: "expires_at_ms",
-                message: "must be after sent_at_ms",
-            });
+            return Err(CloudLinkCodecError::InvalidExpiryWindow);
         }
         self.delivery.validate()?;
         if let Some(authentication) = &self.message_authentication {

@@ -92,6 +92,8 @@ pub enum CloudLinkCodecError {
     /// A response belongs to another or stale session.
     #[error("CloudLink session epoch or identity does not match the current verified session")]
     SessionMismatch,
+    #[error("CloudLink message expires before it is sent")]
+    InvalidExpiryWindow,
     /// An explicit protocol deadline has been reached or passed.
     #[error("CloudLink message deadline has expired")]
     MessageExpired,
@@ -130,11 +132,12 @@ pub enum CloudLinkFailureCode {
     IntegerOutOfRange,
     DigestMismatch,
     StaleSession,
+    InvalidExpiryWindow,
     MessageExpired,
 }
 
 impl CloudLinkFailureCode {
-    pub const ALL: [Self; 19] = [
+    pub const ALL: [Self; 20] = [
         Self::FieldBound,
         Self::UnsupportedVersion,
         Self::StreamBindingConflict,
@@ -153,6 +156,7 @@ impl CloudLinkFailureCode {
         Self::IntegerOutOfRange,
         Self::DigestMismatch,
         Self::StaleSession,
+        Self::InvalidExpiryWindow,
         Self::MessageExpired,
     ];
 
@@ -177,6 +181,7 @@ impl CloudLinkFailureCode {
             Self::IntegerOutOfRange => "INTEGER_OUT_OF_RANGE",
             Self::DigestMismatch => "DIGEST_MISMATCH",
             Self::StaleSession => "STALE_SESSION",
+            Self::InvalidExpiryWindow => "INVALID_EXPIRY_WINDOW",
             Self::MessageExpired => "MESSAGE_EXPIRED",
         }
     }
@@ -248,6 +253,7 @@ impl CloudLinkCodecError {
             Self::IntegerOutOfRange { .. } => Code::IntegerOutOfRange,
             Self::DigestMismatch => Code::DigestMismatch,
             Self::SessionMismatch => Code::StaleSession,
+            Self::InvalidExpiryWindow => Code::InvalidExpiryWindow,
             Self::MessageExpired => Code::MessageExpired,
             Self::RuntimeManifestChecksum => Code::DigestMismatch,
         };

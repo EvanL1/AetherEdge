@@ -58,10 +58,6 @@ const KNOWN_DIVERGENCES: &[(&str, Outcome<'static>)] = &[
         Outcome::Rejected("INTEGER_NON_CANONICAL"),
     ),
     (
-        "cloudlink-invalid-expiry-window",
-        Outcome::Rejected("FIELD_BOUND"),
-    ),
-    (
         "cloudlink-data-loss-invalid-range",
         Outcome::Rejected("FIELD_BOUND"),
     ),
