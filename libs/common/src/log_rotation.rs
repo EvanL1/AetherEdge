@@ -22,7 +22,7 @@ pub fn spawn_compression_task(
         // Initial delay to let service fully start
         tokio::time::sleep(Duration::from_secs(60)).await;
 
-        let mut interval = tokio::time::interval(Duration::from_secs(6 * 3600));
+        let mut interval = crate::time::ticker(Duration::from_secs(6 * 3600));
         loop {
             interval.tick().await;
             if let Err(e) = compress_service_logs(&log_dir, &service_name, max_log_files).await {

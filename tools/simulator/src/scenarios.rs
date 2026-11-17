@@ -2,6 +2,7 @@
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use std::num::NonZeroU64;
 use std::path::Path;
 
 /// Root scenario configuration.
@@ -242,9 +243,8 @@ fn default_initial_state() -> String {
 pub struct CanLynkConfig {
     /// vcan interface name (e.g., "vcan0")
     pub interface: String,
-    /// Send interval in milliseconds
     #[serde(default = "default_can_interval")]
-    pub interval_ms: u64,
+    pub interval_ms: NonZeroU64,
 }
 
 /// J1939 sender configuration.
@@ -255,13 +255,12 @@ pub struct J1939SenderConfig {
     /// ECU source address (default 0x00)
     #[serde(default)]
     pub source_address: u8,
-    /// Send interval in milliseconds
     #[serde(default = "default_can_interval")]
-    pub interval_ms: u64,
+    pub interval_ms: NonZeroU64,
 }
 
-fn default_can_interval() -> u64 {
-    1000
+fn default_can_interval() -> NonZeroU64 {
+    NonZeroU64::new(1000).unwrap_or(NonZeroU64::MIN)
 }
 
 /// Load scenario from YAML file.
@@ -330,5 +329,47 @@ faults:
         let scenario: Scenario = serde_yml::from_str(yaml).unwrap();
         assert!(scenario.faults.enabled);
         assert_eq!(scenario.faults.scenarios.len(), 2);
+    }
+
+    fn can_scenario(sender: &str, interval: &str) -> String {
+        format!(
+            r#"
+name: "Bus Test"
+devices:
+  - type: pcs
+    unit_id: 1
+    registers: []
+    {sender}:
+      interface: vcan0
+{interval}
+faults:
+  enabled: false
+"#
+        )
+    }
+
+    #[test]
+    fn a_zero_bus_send_interval_is_rejected_when_the_scenario_is_parsed() {
+        for sender in ["can_lynk", "j1939"] {
+            let yaml = can_scenario(sender, "      interval_ms: 0");
+            let error = serde_yml::from_str::<Scenario>(&yaml)
+                .expect_err("a zero send interval must not parse");
+            assert!(
+                error.to_string().contains("interval_ms") || error.to_string().contains("nonzero"),
+                "{sender}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_bus_send_interval_defaults_to_one_second_and_keeps_an_explicit_value() {
+        let defaulted: Scenario = serde_yml::from_str(&can_scenario("can_lynk", "")).unwrap();
+        let explicit: Scenario =
+            serde_yml::from_str(&can_scenario("j1939", "      interval_ms: 20")).unwrap();
+
+        let can = defaulted.devices[0].can_lynk.as_ref().unwrap();
+        let j1939 = explicit.devices[0].j1939.as_ref().unwrap();
+        assert_eq!(can.interval_ms.get(), 1000);
+        assert_eq!(j1939.interval_ms.get(), 20);
     }
 }

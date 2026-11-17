@@ -21,9 +21,6 @@ use crate::state::AppState;
 
 /// Turn the configured poll interval into a tick period.
 ///
-/// `tokio::time::interval` panics on a zero period and the workspace release
-/// profile sets `panic = "abort"`, so an unclamped `DATA_FETCH_INTERVAL=0` would
-/// take the whole alarm service down at startup.
 fn monitor_interval(configured_secs: u64) -> Duration {
     Duration::from_secs(configured_secs.max(1))
 }
@@ -50,7 +47,7 @@ pub async fn run_monitor(state: Arc<AppState>, shutdown: CancellationToken) {
             );
         }
     });
-    let mut ticker = tokio::time::interval(interval);
+    let mut ticker = common::time::ticker(interval);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut events_open = true;
 

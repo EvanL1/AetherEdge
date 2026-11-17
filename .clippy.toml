@@ -19,3 +19,8 @@ too-many-lines-threshold = 200
 
 # Avoid breaking exported API
 avoid-breaking-exported-api = true
+
+disallowed-methods = [
+    { path = "tokio::time::interval", reason = "panics on a zero period and release builds abort on panic; build the timer with `common::time::ticker`, which clamps a zero period and logs it" },
+    { path = "tokio::time::interval_at", reason = "panics on a zero period and release builds abort on panic; build the timer with `common::time::ticker_at`, which clamps a zero period and logs it" },
+]

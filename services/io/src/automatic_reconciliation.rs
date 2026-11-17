@@ -274,7 +274,7 @@ pub async fn run_periodic_io_reconciliation(
     shutdown: CancellationToken,
 ) {
     let interval = interval.max(MIN_RECONCILIATION_INTERVAL);
-    let mut ticker = tokio::time::interval_at(tokio::time::Instant::now() + interval, interval);
+    let mut ticker = common::time::ticker_at(tokio::time::Instant::now() + interval, interval);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         tokio::select! {

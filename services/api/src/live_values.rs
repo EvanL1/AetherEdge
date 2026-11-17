@@ -558,7 +558,7 @@ pub async fn run_gateway_topology_refresh(
     config: GatewayConfig,
     shutdown: CancellationToken,
 ) {
-    let mut interval = tokio::time::interval(Duration::from_millis(
+    let mut interval = common::time::ticker(Duration::from_millis(
         config.shm_topology_refresh_interval_ms.max(100),
     ));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
