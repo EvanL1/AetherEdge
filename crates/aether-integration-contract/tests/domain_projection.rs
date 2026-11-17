@@ -295,7 +295,7 @@ fn boundary_rejects_non_contract_identifiers_and_foundation_unsafe_floats() {
     .expect("runtime topology");
     let error = IntegrationContractCodec::topology_from_domain(&topology, &FixtureProfile)
         .expect_err("wire identifier must be strict");
-    assert_eq!(error.code().as_str(), "IDENTIFIER_INVALID");
+    assert_eq!(error.code().as_str(), "FIELD_BOUND");
 }
 
 #[test]
