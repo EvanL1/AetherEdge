@@ -199,7 +199,7 @@ pub async fn run_topology_refresher(
     shutdown: CancellationToken,
 ) {
     let interval = Duration::from_millis(config.shm_topology_refresh_interval_ms.max(100));
-    let mut ticker = tokio::time::interval(interval);
+    let mut ticker = common::time::ticker(interval);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         tokio::select! {

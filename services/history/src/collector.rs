@@ -272,7 +272,7 @@ pub async fn run_history_topology_refresh(
     shutdown: tokio_util::sync::CancellationToken,
 ) {
     let refresh_interval = Duration::from_millis(config.shm_topology_refresh_interval_ms.max(100));
-    let mut ticker = tokio::time::interval(refresh_interval);
+    let mut ticker = common::time::ticker(refresh_interval);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     loop {

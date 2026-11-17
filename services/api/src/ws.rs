@@ -364,7 +364,7 @@ const WS_PING_SENTINEL: &str = "\x00__ping__\x00";
 /// The browser responds automatically with a Pong; no application-level
 /// handler is needed on the frontend.
 pub async fn run_heartbeat(hub: Arc<WsHub>, shutdown: CancellationToken) {
-    let mut interval = tokio::time::interval(Duration::from_secs(30));
+    let mut interval = common::time::ticker(Duration::from_secs(30));
     loop {
         tokio::select! {
             _ = shutdown.cancelled() => break,
@@ -397,7 +397,7 @@ pub async fn run_data_push(
         }
     });
     let bitmap_path = bitmap_path_for_consumer(Path::new(shm_path), "api");
-    let mut interval = tokio::time::interval(Duration::from_secs(interval_secs.max(1)));
+    let mut interval = common::time::ticker(Duration::from_secs(interval_secs.max(1)));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut events_open = true;
     loop {

@@ -433,7 +433,7 @@ async fn main() -> Result<()> {
         let refresh_pool = sqlite_pool.clone();
         let refresh_token = shutdown_token.clone();
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(topology_refresh_interval);
+            let mut interval = common::time::ticker(topology_refresh_interval);
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             // Startup already attempted one refresh; avoid an immediate duplicate tick.
             interval.tick().await;
