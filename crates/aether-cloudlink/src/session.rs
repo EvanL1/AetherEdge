@@ -318,7 +318,7 @@ impl SessionChallengeRequest {
         )?;
         validate_offered_versions(&self.offered_protocol_versions)?;
         validate_nonce(&self.client_nonce, "client_nonce")?;
-        validate_cursors(&self.resume)
+        validate_cursors(&self.resume, "resume")
     }
 
     /// Returns the Gateway identity bound to the request.
@@ -517,7 +517,7 @@ impl SessionHello {
         }
         validate_offered_versions(&self.offered_protocol_versions)?;
         validate_nonce(&self.client_nonce, "client_nonce")?;
-        validate_cursors(&self.resume)?;
+        validate_cursors(&self.resume, "resume")?;
         Ok(())
     }
 
@@ -560,7 +560,7 @@ impl SessionAccepted {
         positive_u64(&self.credential_generation, "credential_generation")?;
         canonical_u64(&self.server_time_ms, "server_time_ms")?;
         positive_u64(&self.heartbeat_interval_ms, "heartbeat_interval_ms")?;
-        validate_cursors(&self.resume)?;
+        validate_cursors(&self.resume, "resume")?;
         Ok(())
     }
 
@@ -679,10 +679,13 @@ impl SessionBinding {
     }
 }
 
-fn validate_cursors(cursors: &[ResumeCursor]) -> Result<(), CloudLinkCodecError> {
+pub(crate) fn validate_cursors(
+    cursors: &[ResumeCursor],
+    field: &'static str,
+) -> Result<(), CloudLinkCodecError> {
     if cursors.len() > 32 {
         return Err(CloudLinkCodecError::InvalidField {
-            field: "resume",
+            field,
             message: "contains more than 32 stream cursors",
         });
     }

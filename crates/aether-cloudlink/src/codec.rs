@@ -12,7 +12,7 @@ use sha2::{Digest, Sha256};
 
 use crate::session::{
     MessageAuthentication, SessionAccepted, SessionBinding, SessionChallenge,
-    SessionChallengeRequest, SessionHello,
+    SessionChallengeRequest, SessionHello, validate_cursors,
 };
 use crate::session_authentication::{UplinkAuthentication, UplinkSigningProjection};
 use crate::telemetry::{TelemetryBatch, TopologyBinding};
@@ -366,16 +366,7 @@ impl HeartbeatMessage {
         if let Some(authentication) = &self.message_authentication {
             authentication.validate()?;
         }
-        if self.cursors.len() > 32 {
-            return Err(CloudLinkCodecError::InvalidField {
-                field: "cursors",
-                message: "contains more than 32 stream cursors",
-            });
-        }
-        for cursor in &self.cursors {
-            cursor.validate()?;
-        }
-        Ok(())
+        validate_cursors(&self.cursors, "cursors")
     }
 
     /// Validates that this request belongs to the current verified session.

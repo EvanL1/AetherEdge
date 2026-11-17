@@ -39,20 +39,37 @@ fn distinct_cursors(count: u64) -> Value {
         .collect()
 }
 
-#[test]
-fn more_resume_cursors_than_the_schema_allows_exceed_a_field_bound() {
-    for name in [
-        "session-challenge-request.valid.json",
-        "session-hello.valid.json",
-        "session-accepted.valid.json",
-    ] {
-        let mut document = fixture(name);
-        document["resume"] = distinct_cursors(32);
-        CloudLinkCodec::decode(&serde_json::to_vec(&document).expect("document JSON"))
-            .unwrap_or_else(|error| panic!("{name} allows 32 resume cursors: {error}"));
+const CURSOR_ARRAYS: [(&str, &str); 5] = [
+    ("session-challenge-request.valid.json", "resume"),
+    ("session-hello.valid.json", "resume"),
+    ("session-accepted.valid.json", "resume"),
+    ("heartbeat.valid.json", "cursors"),
+    ("heartbeat-ack.valid.json", "cursors"),
+];
 
-        document["resume"] = distinct_cursors(33);
+#[test]
+fn more_cursors_than_the_schema_allows_exceed_a_field_bound() {
+    for (name, array) in CURSOR_ARRAYS {
+        let mut document = fixture(name);
+        document[array] = distinct_cursors(32);
+        CloudLinkCodec::decode(&serde_json::to_vec(&document).expect("document JSON"))
+            .unwrap_or_else(|error| panic!("{name} allows 32 cursors: {error}"));
+
+        document[array] = distinct_cursors(33);
         assert_eq!(decode_failure(&document), "FIELD_BOUND", "{name}");
+    }
+}
+
+#[test]
+fn a_repeated_stream_and_epoch_conflicts_in_every_cursor_array() {
+    for (name, array) in CURSOR_ARRAYS {
+        let mut document = fixture(name);
+        let cursors = document[array].as_array_mut().expect("cursor array");
+        let mut repeated = cursors[0].clone();
+        repeated["acknowledged_position"] = json!("19");
+        cursors.push(repeated);
+
+        assert_eq!(decode_failure(&document), "CURSOR_CONFLICT", "{name}");
     }
 }
 
