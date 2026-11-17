@@ -61,12 +61,13 @@ pub(crate) fn require_admin(
     headers: &HeaderMap,
 ) -> Result<crate::auth::Claims, (StatusCode, Json<Value>)> {
     let claims = require_auth(state, headers)?;
-    let role = claims.role.as_deref().unwrap_or("");
-    if role != "Admin" {
+    // The role alone is not enough: a token narrowed to reads keeps the Admin
+    // role in its claims and must not manage users, configuration, or upgrades.
+    if !claims.may_administer() {
         warn!(
             user_id = claims.user_id,
             username = %claims.username,
-            role,
+            role = claims.role.as_deref().unwrap_or(""),
             "Admin authorization denied"
         );
         return Err((
@@ -505,8 +506,7 @@ pub async fn update_me(
         Err(e) => return e.into_response(),
     };
 
-    let is_admin = claims.role.as_deref() == Some("Admin");
-    if !is_admin && (body.role_id.is_some() || body.is_active.is_some()) {
+    if !claims.may_administer() && (body.role_id.is_some() || body.is_active.is_some()) {
         return (
             StatusCode::FORBIDDEN,
             Json(json!({"success": false, "message": "Only admins can modify roles and activation status"})),

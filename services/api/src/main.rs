@@ -369,9 +369,17 @@ fn build_router(state: Arc<AppState>) -> Router {
 
     let homepage_routes = Router::new()
         .route("/", get(routes_homepage::list_points))
-        .route("/reset", post(routes_homepage::reset_points))
+        .route(
+            "/reset",
+            post(routes_homepage::reset_points)
+                .layer(axum::middleware::from_fn(middleware_auth::require_operator)),
+        )
         .route("/{id}", get(routes_homepage::get_point))
-        .route("/{id}", put(routes_homepage::update_point));
+        .route(
+            "/{id}",
+            put(routes_homepage::update_point)
+                .layer(axum::middleware::from_fn(middleware_auth::require_operator)),
+        );
 
     let network_routes = Router::new()
         .route("/", get(routes_network::get_network_config))
@@ -401,7 +409,12 @@ fn build_router(state: Arc<AppState>) -> Router {
     // public surface (register/login/refresh) and is mounted below
     // without the layer.
     let protected_v1 = Router::new()
-        .route("/broadcast", post(routes_broadcast::broadcast_message))
+        .route(
+            "/broadcast",
+            post(routes_broadcast::broadcast_message).layer(axum::middleware::from_fn(
+                middleware_auth::require_administrator,
+            )),
+        )
         .route("/broadcast/status", get(routes_broadcast::broadcast_status))
         .nest("/homepage", homepage_routes)
         .nest("/network", network_routes)
@@ -418,10 +431,12 @@ fn build_router(state: Arc<AppState>) -> Router {
 
     let api_v1 = Router::new().merge(protected_v1).nest("/auth", auth_routes);
 
-    // /api/admin/* — runtime log control. Must require auth: leaving these
-    // open lets an attacker quietly escalate log verbosity or read log
-    // files. Grouped into its own Router so the require_jwt layer covers
-    // any future admin route added inside.
+    // /api/admin/* — runtime log control. Administrators only: any other
+    // caller could switch logging off, which also hides the record of refused
+    // requests, raise it until the disk fills, or read every log file.
+    // Grouped into its own Router so both layers cover any future admin route
+    // added inside. The last layer added runs first, so the JWT layer
+    // authenticates before the administrator check reads the claims.
     let admin_routes = Router::new()
         .route(
             "/logs/level",
@@ -429,6 +444,9 @@ fn build_router(state: Arc<AppState>) -> Router {
         )
         .route("/logs/files", get(common::admin_api::list_log_files))
         .route("/logs/view", get(common::admin_api::view_log_file))
+        .layer(axum::middleware::from_fn(
+            middleware_auth::require_administrator,
+        ))
         .layer(axum::middleware::from_fn_with_state(
             Arc::clone(&state),
             middleware_auth::require_jwt,
@@ -775,7 +793,7 @@ mod local_route_authorization_tests {
     use tower::ServiceExt;
 
     use crate::db;
-    use crate::test_support::{app_state, authorization_headers};
+    use crate::test_support::{app_state, authorization_headers, narrowed_authorization_headers};
 
     use super::build_router;
 
@@ -800,6 +818,84 @@ mod local_route_authorization_tests {
             .await
             .expect("seed homepage point")
             .last_insert_rowid()
+    }
+
+    fn narrowed_request(method: &str, uri: &str, role: &str) -> Request<Body> {
+        let mut request = Request::builder()
+            .method(method)
+            .uri(uri)
+            .body(Body::empty())
+            .expect("valid request");
+        request.headers_mut().extend(narrowed_authorization_headers(
+            role,
+            &["data_processing.read"],
+        ));
+        request
+    }
+
+    #[tokio::test]
+    async fn log_administration_requires_an_administrator() {
+        // Any logged-in user could switch logging off, which also silences
+        // the record of refused requests, or read every log file.
+        let app = build_router(app_state().await);
+
+        for role in ["Viewer", "Engineer"] {
+            for (method, uri, body) in [
+                ("POST", "/api/admin/logs/level", Some(r#"{"level":"off"}"#)),
+                ("GET", "/api/admin/logs/level", None),
+                ("GET", "/api/admin/logs/files", None),
+                ("GET", "/api/admin/logs/view?file=aether-api.log", None),
+            ] {
+                let response = app
+                    .clone()
+                    .oneshot(request(method, uri, role, body))
+                    .await
+                    .expect("log administration response");
+                assert_eq!(
+                    response.status(),
+                    StatusCode::FORBIDDEN,
+                    "{role} {method} {uri}"
+                );
+            }
+        }
+
+        let response = app
+            .oneshot(request("GET", "/api/admin/logs/level", "Admin", None))
+            .await
+            .expect("log administration response");
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn a_token_narrowed_to_reads_cannot_administer_whatever_its_role() {
+        // The role is necessary but not sufficient: a credential that was
+        // narrowed to reads must not manage users, logs, broadcasts, or
+        // homepage points just because the role in it says Admin.
+        let state = app_state().await;
+        let point_id = seed_homepage_point(&state.db).await;
+        let app = build_router(state.clone());
+
+        for (method, uri) in [
+            ("GET", "/api/v1/auth/users"),
+            ("GET", "/api/admin/logs/level"),
+            ("POST", "/api/v1/broadcast"),
+            ("POST", "/api/v1/homepage/reset"),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(narrowed_request(method, uri, "Admin"))
+                .await
+                .expect("narrowed token response");
+            assert_eq!(response.status(), StatusCode::FORBIDDEN, "{method} {uri}");
+        }
+
+        assert!(
+            db::get_calculated_point_by_id(&state.db, point_id)
+                .await
+                .expect("query homepage point")
+                .is_some(),
+            "a refused reset must leave the point in place"
+        );
     }
 
     #[tokio::test]

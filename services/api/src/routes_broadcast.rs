@@ -1,11 +1,9 @@
 use std::sync::Arc;
 
-use axum::{Extension, Json, extract::State, response::IntoResponse};
+use axum::{Json, extract::State, response::IntoResponse};
 use serde_json::json;
 use tracing::error;
 
-use crate::auth::Claims;
-use crate::routes_auth::authority_denied;
 use crate::state::AppState;
 
 // ── POST /api/v1/broadcast ────────────────────────────────────────────────────
@@ -26,13 +24,8 @@ use crate::state::AppState;
     responses((status = 200, description = "Broadcast delivered", body = crate::models::GatewayDataResponse<serde_json::Value>), (status = 403, description = "Administrator privileges required")))]
 pub async fn broadcast_message(
     State(state): State<Arc<AppState>>,
-    Extension(claims): Extension<Claims>,
     Json(body): Json<serde_json::Value>,
 ) -> impl IntoResponse {
-    if !claims.may_administer() {
-        return authority_denied(&claims, "Administrator");
-    }
-
     let msg = match serde_json::to_string(&body) {
         Ok(s) => s,
         Err(e) => {
