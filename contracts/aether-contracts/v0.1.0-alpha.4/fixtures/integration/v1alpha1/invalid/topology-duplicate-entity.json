@@ -1,0 +1,39 @@
+{
+  "schema": "aether.integration.topology-snapshot.v1alpha1",
+  "integration_id": "home-assistant.home",
+  "integration_kind": "home-assistant",
+  "snapshot_generation": "2",
+  "observed_at_ms": "1784217600200",
+  "areas": [],
+  "devices": [],
+  "entities": [
+    {
+      "entity_id": "entity-registry-light-bedroom",
+      "source_address": "light.bedroom",
+      "name": "Bedroom light",
+      "entity_kind": "light",
+      "points": [
+        {
+          "point_key": "is_on",
+          "title": "Power",
+          "kind": "status",
+          "value_type": "boolean"
+        }
+      ]
+    },
+    {
+      "entity_id": "entity-registry-light-bedroom",
+      "source_address": "light.bedroom_duplicate",
+      "name": "Duplicate identity",
+      "entity_kind": "light",
+      "points": [
+        {
+          "point_key": "is_on",
+          "title": "Power",
+          "kind": "status",
+          "value_type": "boolean"
+        }
+      ]
+    }
+  ]
+}

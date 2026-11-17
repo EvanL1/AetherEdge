@@ -73,41 +73,6 @@ fn authenticator(cloud: &SigningKey, gateway: &SigningKey) -> GatewaySessionAuth
 }
 
 #[test]
-fn challenge_request_matches_the_closed_contract_and_is_strictly_decoded() {
-    let request = request();
-    let encoded = CloudLinkCodec::encode(&request).expect("request JSON");
-    let actual: Value = serde_json::from_slice(&encoded).expect("request value");
-    assert_eq!(
-        actual,
-        json!({
-            "schema": "aether.cloudlink.session-challenge-request.v1",
-            "protocol": "aether.cloudlink",
-            "message_kind": "session-challenge-request",
-            "gateway_id": GATEWAY_ID,
-            "credential_binding": {
-                "credential_id": CREDENTIAL_ID,
-                "generation": "3",
-            },
-            "offered_protocol_versions": ["1.0"],
-            "client_nonce": CLIENT_NONCE,
-            "resume": [{
-                "stream_id": "telemetry",
-                "stream_epoch": "4",
-                "acknowledged_position": "18",
-            }],
-        })
-    );
-    assert!(matches!(
-        CloudLinkCodec::decode(&encoded).expect("decode request"),
-        CandidateMessage::SessionChallengeRequest(_)
-    ));
-
-    let mut unknown = actual;
-    unknown["unexpected"] = json!(true);
-    assert!(CloudLinkCodec::decode(&serde_json::to_vec(&unknown).expect("unknown JSON")).is_err());
-}
-
-#[test]
 fn cloud_challenge_verification_uses_the_exact_jcs_projection_and_strict_expiry() {
     let cloud = SigningKey::from_bytes(&[7_u8; 32]);
     let gateway = SigningKey::from_bytes(&[9_u8; 32]);

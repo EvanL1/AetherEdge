@@ -17,7 +17,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 const CONTRACT_MANIFEST_SHA256: &str =
-    "a8209d02077b1abe8b34d8b89328452d4b0b561830453276a4f6485c28d7b827";
+    "6d5207c79d7e4e9317a11366d17d5cc3927fc35ca66a7737aed2512fc7a3691b";
 const INTEGRATION_FIXTURE_MANIFEST_SHA256: &str =
     "8b8e13327fa1c07a0281f051d99fd0a996bfbd6cf5132f189b351603e9ccef06";
 const CLOUDLINK_INTEGRATION_FIXTURE_MANIFEST_SHA256: &str =
@@ -25,8 +25,17 @@ const CLOUDLINK_INTEGRATION_FIXTURE_MANIFEST_SHA256: &str =
 const CLOUDLINK_INTEGRATION_PROFILE_SHA256: &str =
     "93e3b9d0772066be98e344b39debbef3d8204511e91d17e8d8eaf45bdc1147ab";
 
+fn repository_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
+/// The published release bytes imported by the root consumer lock.
+fn release_root() -> PathBuf {
+    repository_root().join("contracts/aether-contracts/v0.1.0-alpha.4")
+}
+
 fn extension_fixture_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cloudlink-integration/v1alpha1")
+    release_root().join("fixtures/cloudlink-integration/v1alpha1")
 }
 
 fn extension_fixture(name: &str) -> Vec<u8> {
@@ -74,42 +83,69 @@ fn session() -> SessionBinding {
 }
 
 #[test]
-fn candidate_lock_pins_the_exact_alpha4_extension_artifacts_without_claiming_full_adoption() {
-    let root = extension_fixture_root();
+fn consumer_lock_pins_the_exact_published_alpha4_extension_artifacts() {
+    let repository_root = repository_root();
     let lock: Value = serde_json::from_slice(
-        &fs::read(root.join("candidate-lock.json")).expect("candidate lock"),
+        &fs::read(repository_root.join("aether-contracts.lock.json")).expect("consumer lock"),
     )
-    .expect("candidate lock JSON");
-    assert_eq!(lock["status"], "experimental-extension-only");
-    assert_eq!(lock["complete_alpha4_adoption"], false);
+    .expect("consumer lock JSON");
+    assert_eq!(lock["status"], "complete-consumer");
+    assert_eq!(lock["release"]["version"], "0.1.0-alpha.4");
+    assert_eq!(lock["pending_imports"], serde_json::json!([]));
+    assert_eq!(lock["policy"]["physical_control"], false);
+    assert_eq!(lock["manifest"]["sha256"], CONTRACT_MANIFEST_SHA256);
     assert_eq!(
-        lock["upstream_hashes"]["contract_manifest_sha256"],
+        digest(&fs::read(release_root().join("contract-manifest.json")).expect("release manifest")),
         CONTRACT_MANIFEST_SHA256
     );
-    assert_eq!(
-        lock["upstream_hashes"]["integration_fixture_manifest_sha256"],
-        INTEGRATION_FIXTURE_MANIFEST_SHA256
-    );
-    assert_eq!(
-        lock["upstream_hashes"]["cloudlink_integration_fixture_manifest_sha256"],
-        CLOUDLINK_INTEGRATION_FIXTURE_MANIFEST_SHA256
-    );
-    assert_eq!(
-        lock["upstream_hashes"]["cloudlink_integration_profile_sha256"],
-        CLOUDLINK_INTEGRATION_PROFILE_SHA256
-    );
-    assert_eq!(
-        digest(&fs::read(root.join("fixture-manifest.json")).expect("fixture manifest")),
-        CLOUDLINK_INTEGRATION_FIXTURE_MANIFEST_SHA256
-    );
-    assert_eq!(
-        digest(&fs::read(root.join("profile.json")).expect("extension profile")),
-        CLOUDLINK_INTEGRATION_PROFILE_SHA256
-    );
+
+    let imports = lock["imports"].as_array().expect("consumer imports");
+    for (source, expected) in [
+        (
+            "fixtures/integration/v1alpha1/fixture-manifest.json",
+            INTEGRATION_FIXTURE_MANIFEST_SHA256,
+        ),
+        (
+            "fixtures/cloudlink-integration/v1alpha1/fixture-manifest.json",
+            CLOUDLINK_INTEGRATION_FIXTURE_MANIFEST_SHA256,
+        ),
+        (
+            "profiles/cloudlink/v1alpha1/integration.json",
+            CLOUDLINK_INTEGRATION_PROFILE_SHA256,
+        ),
+    ] {
+        let import = imports
+            .iter()
+            .find(|import| import["source"] == source)
+            .unwrap_or_else(|| panic!("{source} is not imported by the consumer lock"));
+        assert_eq!(import["sha256"], expected, "{source} lock hash");
+        let destination = import["destination"].as_str().expect("import destination");
+        assert_eq!(
+            digest(&fs::read(repository_root.join(destination)).expect("imported artifact")),
+            expected,
+            "{destination} drifted from the published release"
+        );
+    }
+
+    // The Integration binding crate keeps a self-contained fixture copy; it
+    // must stay byte-identical to the release the consumer lock imports.
     assert_eq!(
         digest(&integration_fixture("fixture-manifest.json")),
         INTEGRATION_FIXTURE_MANIFEST_SHA256
     );
+
+    let profile: Value = serde_json::from_slice(
+        &fs::read(release_root().join("profiles/cloudlink/v1alpha1/integration.json"))
+            .expect("published extension profile"),
+    )
+    .expect("extension profile JSON");
+    assert_eq!(profile["schema"], CLOUDLINK_INTEGRATION_EXTENSION);
+    assert_eq!(profile["activation"]["cloud_first_rollout"], true);
+    assert_eq!(
+        profile["activation"]["base_protocol_negotiation_alone_is_sufficient"],
+        false
+    );
+    assert_eq!(profile["security"]["physical_control"], "forbidden");
 }
 
 #[test]
@@ -128,7 +164,7 @@ fn fixture_manifest_pins_every_checked_in_public_extension_fixture() {
             assert_eq!(
                 digest(&bytes),
                 entry["sha256"].as_str().expect("fixture hash"),
-                "{name} drifted from the public candidate"
+                "{name} drifted from the published release"
             );
             name.to_string()
         })

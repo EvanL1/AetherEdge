@@ -2,46 +2,59 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "envelope.schema.json",
   "title": "Experimental Aether CloudLink delivery envelope v1",
-  "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "schema",
-    "protocol",
-    "protocol_version",
-    "message_kind",
-    "gateway_id",
-    "session_id",
-    "session_epoch",
-    "credential_generation",
-    "sent_at_ms",
-    "delivery",
-    "payload"
-  ],
-  "properties": {
-    "schema": { "const": "aether.cloudlink.envelope.v1" },
-    "protocol": { "const": "aether.cloudlink" },
-    "protocol_version": { "const": "1.0" },
-    "message_kind": {
-      "enum": ["runtime-manifest-report", "telemetry-batch", "data-loss"]
-    },
-    "gateway_id": { "$ref": "#/$defs/uuid" },
-    "session_id": { "$ref": "#/$defs/uuid" },
-    "session_epoch": { "$ref": "#/$defs/positiveUint64" },
-    "credential_generation": { "$ref": "#/$defs/positiveUint64" },
-    "sent_at_ms": { "$ref": "#/$defs/uint64" },
-    "expires_at_ms": { "$ref": "#/$defs/uint64" },
-    "delivery": { "$ref": "#/$defs/delivery" },
-    "message_authentication": { "$ref": "#/$defs/messageAuthentication" },
-    "traceparent": { "$ref": "#/$defs/traceparent" },
-    "payload": {
-      "oneOf": [
-        { "$ref": "#/$defs/runtimeManifestPayload" },
-        { "$ref": "#/$defs/telemetryPayload" },
-        { "$ref": "#/$defs/dataLossPayload" }
-      ]
+  "allOf": [
+    { "$ref": "#/$defs/uplinkEnvelope" },
+    {
+      "properties": {
+        "message_kind": {
+          "enum": ["runtime-manifest-report", "telemetry-batch", "data-loss"]
+        },
+        "payload": {
+          "oneOf": [
+            { "$ref": "#/$defs/runtimeManifestPayload" },
+            { "$ref": "#/$defs/telemetryPayload" },
+            { "$ref": "#/$defs/dataLossPayload" }
+          ]
+        }
+      }
     }
-  },
+  ],
   "$defs": {
+    "uplinkEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "protocol",
+        "protocol_version",
+        "message_kind",
+        "gateway_id",
+        "session_id",
+        "session_epoch",
+        "credential_generation",
+        "sent_at_ms",
+        "delivery",
+        "payload"
+      ],
+      "properties": {
+        "schema": { "const": "aether.cloudlink.envelope.v1" },
+        "protocol": { "const": "aether.cloudlink" },
+        "protocol_version": { "const": "1.0" },
+        "message_kind": { "$ref": "#/$defs/identifier" },
+        "gateway_id": { "$ref": "#/$defs/uuid" },
+        "session_id": { "$ref": "#/$defs/uuid" },
+        "session_epoch": { "$ref": "#/$defs/positiveUint64" },
+        "credential_generation": { "$ref": "#/$defs/positiveUint64" },
+        "sent_at_ms": { "$ref": "#/$defs/uint64" },
+        "expires_at_ms": { "$ref": "#/$defs/uint64" },
+        "delivery": { "$ref": "#/$defs/delivery" },
+        "message_authentication": {
+          "$ref": "#/$defs/messageAuthentication"
+        },
+        "traceparent": { "$ref": "#/$defs/traceparent" },
+        "payload": {}
+      }
+    },
     "identifier": {
       "type": "string",
       "minLength": 1,

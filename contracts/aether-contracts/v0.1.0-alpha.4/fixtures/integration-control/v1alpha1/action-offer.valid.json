@@ -1,0 +1,55 @@
+{
+  "schema": "aether.cloudlink.integration-action-offer.v1alpha1",
+  "protocol": "aether.cloudlink",
+  "protocol_version": "1.0",
+  "extension": "aether.cloudlink.integration-control.v1alpha1",
+  "message_kind": "integration-action-offer",
+  "gateway_id": "33333333-3333-4333-8333-333333333333",
+  "session_id": "44444444-4444-4444-8444-444444444444",
+  "session_epoch": "7",
+  "credential_generation": "3",
+  "job_id": "55555555-5555-4555-8555-555555555555",
+  "issued_at_ms": "1784217600000",
+  "expires_at_ms": "1784217660000",
+  "intent_digest": "sha256:40108827ca617c95f9d9c48c357fdd94b2b5f019d8ccf8a23842642e934c7327",
+  "intent": {
+    "schema": "aether.integration-control.action-intent.v1alpha1",
+    "capability_id": "device.power.set.v1",
+    "target": {
+      "integration_id": "home-assistant.home",
+      "snapshot_generation": "1",
+      "entity_id": "entity-registry-light-bedroom",
+      "point_key": "is_on"
+    },
+    "arguments": {
+      "value": true
+    },
+    "governance": {
+      "execution": "governed-job",
+      "default_authorization": "deny",
+      "permission": "integration.device.control",
+      "risk": "high",
+      "confirmation": "required",
+      "idempotency": "required",
+      "expiry": "required",
+      "audit": "required",
+      "edge_final_decision": true
+    },
+    "authorization": {
+      "policy_decision_id": "policy-decision-1",
+      "subject_id": "user-homeowner",
+      "permission": "integration.device.control",
+      "authorized_at_ms": "1784217599000"
+    },
+    "confirmation": {
+      "confirmation_id": "66666666-6666-4666-8666-666666666666",
+      "subject_id": "user-homeowner",
+      "confirmed_at_ms": "1784217599500"
+    }
+  },
+  "cloud_authentication": {
+    "key_id": "development-cloud-key-1",
+    "algorithm": "Ed25519",
+    "signature": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD"
+  }
+}

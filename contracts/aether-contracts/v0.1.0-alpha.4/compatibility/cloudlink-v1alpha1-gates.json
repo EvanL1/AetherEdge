@@ -1,0 +1,94 @@
+{
+  "schema": "aether.cloudlink.interoperability-gates.v1alpha1",
+  "contract_version": "0.1.0-alpha.4",
+  "status": "experimental-auth-proposal",
+  "default_mode": "legacy",
+  "physical_control": "forbidden",
+  "gates": [
+    {
+      "id": "shared-broker-authentication",
+      "status": "proposal",
+      "exit_criteria": [
+        "the alpha.4 request, persisted-challenge retry, hello, atomic one-time consumption transcript and signing objects remain byte stable",
+        "challenge requests stay rate-limited, limited to active commissioned Gateway credential bindings, non-authenticating, and disabled by default",
+        "delivery and heartbeat uplinks use their frozen wire-to-signing projections, explicit freshness input, and conflict-safe replay state",
+        "a committed delivery stores one session-independent immutable digest and one current-session binding; only an exact same-session replay or strictly higher active session epoch may recover a receipt without repeating the business effect",
+        "the business effect and initial replay record commit atomically, a pending authentication record never bypasses first-acceptance expiry, and a rebind is durable before its current-session receipt",
+        "the four-field wire replay identity is looked up only inside the validated authorization-namespace partition, and cross-namespace or global unpartitioned record reuse is rejected",
+        "each MQTT prefix is an authorization namespace with one unique Gateway identity and exact principal topic scope",
+        "production key provisioning, rotation, revocation, and verifier ownership are implemented",
+        "generic shared-Broker deliveries prove publisher identity per accepted publish through one declared origin model",
+        "topic, payload identity, and MQTT credentials are never sufficient authentication",
+        "valid and invalid fixtures pass every conformant binding"
+      ]
+    },
+    {
+      "id": "signed-correlated-session-accepted",
+      "status": "planned-next-protocol-version",
+      "depends_on": "shared-broker-authentication",
+      "exit_criteria": [
+        "the Cloud session-accepted response has a frozen signing projection and Cloud key lifecycle",
+        "the response cryptographically binds the accepted challenge and client request so delayed or replayed responses from another handshake are rejected",
+        "valid, invalid, delayed, replayed, and cross-handshake fixtures pass every conformant binding"
+      ]
+    },
+    {
+      "id": "single-wire-contract",
+      "status": "experimental",
+      "depends_on": "signed-correlated-session-accepted",
+      "exit_criteria": [
+        "envelope, time, identity, digest, and ACK schemas have one authority",
+        "the explicitly activated Integration extension reuses the same session, position, replay, digest, data-loss, and ACK semantics",
+        "a cumulative ACK advances only across a contiguous persisted or declared-lost prefix",
+        "all language bindings report the same failure classes"
+      ]
+    },
+    {
+      "id": "cross-language-fixtures",
+      "status": "passed-experimental",
+      "depends_on": "single-wire-contract",
+      "exit_criteria": [
+        "TypeScript, Rust, C, and C++ execute the same fixture manifest",
+        "canonical bytes and digests are byte identical"
+      ]
+    },
+    {
+      "id": "real-broker-dual-harness",
+      "status": "consumer-evidence-required",
+      "depends_on": "cross-language-fixtures",
+      "exit_criteria": [
+        "one real Broker runs an edge harness and Cloud ingress concurrently",
+        "session resume, Runtime Manifest, and telemetry traverse application use cases"
+      ]
+    },
+    {
+      "id": "fault-injection",
+      "status": "consumer-evidence-required",
+      "depends_on": "real-broker-dual-harness",
+      "exit_criteria": [
+        "disconnect, ACK loss, out-of-order persistence, prefix gaps, late gap fill, process restart, duplicate delivery, digest conflict, and data-loss pass",
+        "no successful receipt is produced for a conflict or uncommitted fact"
+      ]
+    },
+    {
+      "id": "signed-durable-ack",
+      "status": "planned",
+      "depends_on": "fault-injection",
+      "exit_criteria": [
+        "the signed ACK schema and Cloud signing transcript are frozen",
+        "successful ACK creation and outbox insertion share the production fact transaction",
+        "post-commit crash recovery republishes the identical ACK"
+      ]
+    },
+    {
+      "id": "legacy-cutover",
+      "status": "blocked",
+      "depends_on": "signed-durable-ack",
+      "exit_criteria": [
+        "every preceding gate passes",
+        "legacy remains available for rollback",
+        "core CloudLink contains no physical-control operation and every optional physical-effect extension remains independently gated"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,54 @@
+{
+  "schema": "aether.integration.profile.v1alpha1",
+  "profile_id": "home-assistant",
+  "contract_version": "0.1.0-alpha.4",
+  "status": "experimental-mapping",
+  "authority": {
+    "connection_owner": "aether-edge",
+    "live_state": "delegated-provider-evidence",
+    "physical_execution": "aether-edge-final-decision",
+    "cloud": "projection-only"
+  },
+  "topology_mapping": {
+    "integration_id": "edge-local configured Home Assistant instance identity",
+    "integration_kind": "home-assistant",
+    "area_id": "Home Assistant area registry id",
+    "device_id": "Home Assistant device registry id",
+    "entity_id": "Home Assistant entity registry entry id",
+    "source_address": "current Home Assistant entity_id address",
+    "entity_kind": "Home Assistant entity domain",
+    "point_key": "adapter-defined stable normalized point key"
+  },
+  "rename_rule": "a source_address rename preserves entity_id",
+  "snapshot_rule": "full registry snapshot with monotonically increasing generation",
+  "observation_rule": "state and selected bounded attributes are normalized into declared entity points",
+  "quality_mapping": {
+    "available-typed-state": "good",
+    "temporarily-stale-retained-state": "uncertain",
+    "provider-error-without-value": "bad",
+    "unknown-or-unavailable-without-value": "unavailable"
+  },
+  "secret_boundary": {
+    "home_assistant_url": "edge-local-configuration-only",
+    "access_and_refresh_tokens": "edge-local-secret-store-only",
+    "forbidden_contract_locations": [
+      "topology",
+      "observations",
+      "cloudlink-envelope",
+      "audit-payload",
+      "prompt",
+      "cloud-projection"
+    ]
+  },
+  "control": {
+    "included": false,
+    "reason": "this topology and observation profile remains read-only",
+    "separate_profile": "../../integration-control/v1alpha1/home-assistant.json"
+  },
+  "cloudlink_wrapper": {
+    "included": true,
+    "profile": "../../cloudlink/v1alpha1/integration.json",
+    "payload_mapping": "unchanged-provider-neutral-topology-and-observation-objects",
+    "activation": "explicit-cloud-first-rollout"
+  }
+}

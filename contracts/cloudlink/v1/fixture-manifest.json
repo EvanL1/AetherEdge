@@ -113,6 +113,19 @@
       "sha256": "580113f3a7a0bacaa4d83f6f20a13144dcf41db15baba997fd8a9a3dc4f19a26"
     },
     {
+      "file": "session-challenge-request-unknown-field.json",
+      "schema_id": "session-challenge-request.schema.json",
+      "expectation": "wire-invalid",
+      "failure_code": "UNKNOWN_FIELD",
+      "sha256": "6915da2d26bc8b8dd36a738be84905dc1f293b30f87c20b10aca12f30f0b326e"
+    },
+    {
+      "file": "session-challenge-request.valid.json",
+      "schema_id": "session-challenge-request.schema.json",
+      "expectation": "valid",
+      "sha256": "d5a8883bcdd40cb07a9a0c5ede1f0c79919dc645f7357e9503730ad3338c58d5"
+    },
+    {
       "file": "session-challenge.valid.json",
       "schema_id": "session-challenge.schema.json",
       "expectation": "valid",

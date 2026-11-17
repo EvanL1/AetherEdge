@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "contract": "aether.cloudlink",
-  "contracts_release": "0.1.0-alpha.3",
+  "contracts_release": "0.1.0-alpha.4",
   "status": "non-authoritative-aetheriot-readiness-overlay",
   "authoritative_gate_definition": "AetherContracts compatibility/cloudlink-v1alpha1-gates.json",
   "default_mode": "legacy",
@@ -17,7 +17,7 @@
     },
     "cross-language-fixtures": {
       "status": "implemented-alpha3",
-      "evidence": ["fixture-manifest.json", "25 Rust fixture outcomes"]
+      "evidence": ["fixture-manifest.json", "27 Rust fixture outcomes"]
     },
     "real-broker-dual-harness": {
       "status": "implemented-alpha3",

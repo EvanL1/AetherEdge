@@ -41,7 +41,7 @@ not a repository-wide certification claim. The
 adapter's current evidence tier.
 
 **Experimental:** the Uplink-owned CloudLink MQTT v1 foundation,
-application-ACK-driven spool, AetherContracts alpha.3 consumption, and
+application-ACK-driven spool, AetherContracts alpha.4 consumption, and
 real-Broker development evidence. The Edge real-Broker harness now requires a
 Cloud-signed challenge and a Gateway-signed hello; legacy direct hello is
 rejected. Legacy MQTT remains the runtime default.
