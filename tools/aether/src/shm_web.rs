@@ -58,7 +58,7 @@ pub async fn serve_dashboard(
 }
 
 async fn refresh_observation(observer: ShmObserver, sender: watch::Sender<ShmTopologyObservation>) {
-    let mut interval = tokio::time::interval(REFRESH_INTERVAL);
+    let mut interval = common::time::ticker(REFRESH_INTERVAL);
     interval.tick().await;
     loop {
         interval.tick().await;

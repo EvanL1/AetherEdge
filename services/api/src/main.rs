@@ -369,9 +369,17 @@ fn build_router(state: Arc<AppState>) -> Router {
 
     let homepage_routes = Router::new()
         .route("/", get(routes_homepage::list_points))
-        .route("/reset", post(routes_homepage::reset_points))
+        .route(
+            "/reset",
+            post(routes_homepage::reset_points)
+                .layer(axum::middleware::from_fn(middleware_auth::require_operator)),
+        )
         .route("/{id}", get(routes_homepage::get_point))
-        .route("/{id}", put(routes_homepage::update_point));
+        .route(
+            "/{id}",
+            put(routes_homepage::update_point)
+                .layer(axum::middleware::from_fn(middleware_auth::require_operator)),
+        );
 
     let network_routes = Router::new()
         .route("/", get(routes_network::get_network_config))
@@ -401,7 +409,12 @@ fn build_router(state: Arc<AppState>) -> Router {
     // public surface (register/login/refresh) and is mounted below
     // without the layer.
     let protected_v1 = Router::new()
-        .route("/broadcast", post(routes_broadcast::broadcast_message))
+        .route(
+            "/broadcast",
+            post(routes_broadcast::broadcast_message).layer(axum::middleware::from_fn(
+                middleware_auth::require_administrator,
+            )),
+        )
         .route("/broadcast/status", get(routes_broadcast::broadcast_status))
         .nest("/homepage", homepage_routes)
         .nest("/network", network_routes)
@@ -418,10 +431,6 @@ fn build_router(state: Arc<AppState>) -> Router {
 
     let api_v1 = Router::new().merge(protected_v1).nest("/auth", auth_routes);
 
-    // /api/admin/* — runtime log control. Must require auth: leaving these
-    // open lets an attacker quietly escalate log verbosity or read log
-    // files. Grouped into its own Router so the require_jwt layer covers
-    // any future admin route added inside.
     let admin_routes = Router::new()
         .route(
             "/logs/level",
@@ -429,6 +438,9 @@ fn build_router(state: Arc<AppState>) -> Router {
         )
         .route("/logs/files", get(common::admin_api::list_log_files))
         .route("/logs/view", get(common::admin_api::view_log_file))
+        .layer(axum::middleware::from_fn(
+            middleware_auth::require_administrator,
+        ))
         .layer(axum::middleware::from_fn_with_state(
             Arc::clone(&state),
             middleware_auth::require_jwt,
@@ -763,6 +775,222 @@ mod service_gateway_route_tests {
             unconfirmed_response.status(),
             StatusCode::PRECONDITION_REQUIRED
         );
+    }
+}
+
+#[cfg(test)]
+mod local_route_authorization_tests {
+    use axum::{
+        body::Body,
+        http::{Request, StatusCode},
+    };
+    use tower::ServiceExt;
+
+    use crate::db;
+    use crate::test_support::{app_state, authorization_headers, narrowed_authorization_headers};
+
+    use super::build_router;
+
+    fn request(method: &str, uri: &str, role: &str, body: Option<&str>) -> Request<Body> {
+        let mut builder = Request::builder().method(method).uri(uri);
+        if body.is_some() {
+            builder = builder.header("content-type", "application/json");
+        }
+        let mut request = builder
+            .body(body.map_or_else(Body::empty, |body| Body::from(body.to_owned())))
+            .expect("valid request");
+        request.headers_mut().extend(authorization_headers(role));
+        request
+    }
+
+    async fn seed_homepage_point(pool: &sqlx::SqlitePool) -> i64 {
+        sqlx::query("INSERT INTO calculated_points (name, formula, unit) VALUES (?, ?, ?)")
+            .bind("Line throughput")
+            .bind("1 + 1")
+            .bind("units/h")
+            .execute(pool)
+            .await
+            .expect("seed homepage point")
+            .last_insert_rowid()
+    }
+
+    fn narrowed_request(method: &str, uri: &str, role: &str) -> Request<Body> {
+        let mut request = Request::builder()
+            .method(method)
+            .uri(uri)
+            .body(Body::empty())
+            .expect("valid request");
+        request.headers_mut().extend(narrowed_authorization_headers(
+            role,
+            &["data_processing.read"],
+        ));
+        request
+    }
+
+    #[tokio::test]
+    async fn log_administration_requires_an_administrator() {
+        let app = build_router(app_state().await);
+
+        for role in ["Viewer", "Engineer"] {
+            for (method, uri, body) in [
+                ("POST", "/api/admin/logs/level", Some(r#"{"level":"off"}"#)),
+                ("GET", "/api/admin/logs/level", None),
+                ("GET", "/api/admin/logs/files", None),
+                ("GET", "/api/admin/logs/view?file=aether-api.log", None),
+            ] {
+                let response = app
+                    .clone()
+                    .oneshot(request(method, uri, role, body))
+                    .await
+                    .expect("log administration response");
+                assert_eq!(
+                    response.status(),
+                    StatusCode::FORBIDDEN,
+                    "{role} {method} {uri}"
+                );
+            }
+        }
+
+        let response = app
+            .oneshot(request("GET", "/api/admin/logs/level", "Admin", None))
+            .await
+            .expect("log administration response");
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn a_token_narrowed_to_reads_cannot_administer_whatever_its_role() {
+        let state = app_state().await;
+        let point_id = seed_homepage_point(&state.db).await;
+        let app = build_router(state.clone());
+
+        for (method, uri) in [
+            ("GET", "/api/v1/auth/users"),
+            ("GET", "/api/admin/logs/level"),
+            ("POST", "/api/v1/broadcast"),
+            ("POST", "/api/v1/homepage/reset"),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(narrowed_request(method, uri, "Admin"))
+                .await
+                .expect("narrowed token response");
+            assert_eq!(response.status(), StatusCode::FORBIDDEN, "{method} {uri}");
+        }
+
+        assert!(
+            db::get_calculated_point_by_id(&state.db, point_id)
+                .await
+                .expect("query homepage point")
+                .is_some(),
+            "a refused reset must leave the point in place"
+        );
+    }
+
+    #[tokio::test]
+    async fn pushing_to_every_websocket_client_requires_an_administrator() {
+        let app = build_router(app_state().await);
+
+        for role in ["Viewer", "Engineer"] {
+            let response = app
+                .clone()
+                .oneshot(request(
+                    "POST",
+                    "/api/v1/broadcast",
+                    role,
+                    Some(r#"{"type":"alarm","data":{"message":"forged"}}"#),
+                ))
+                .await
+                .expect("broadcast response");
+            assert_eq!(response.status(), StatusCode::FORBIDDEN, "{role}");
+        }
+
+        let response = app
+            .oneshot(request(
+                "POST",
+                "/api/v1/broadcast",
+                "Admin",
+                Some(r#"{"type":"notice"}"#),
+            ))
+            .await
+            .expect("broadcast response");
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn a_viewer_cannot_edit_or_delete_homepage_points() {
+        let state = app_state().await;
+        let point_id = seed_homepage_point(&state.db).await;
+        let app = build_router(state.clone());
+
+        let edit = app
+            .clone()
+            .oneshot(request(
+                "PUT",
+                &format!("/api/v1/homepage/{point_id}"),
+                "Viewer",
+                Some(r#"{"formula":"0"}"#),
+            ))
+            .await
+            .expect("update response");
+        assert_eq!(edit.status(), StatusCode::FORBIDDEN);
+
+        let reset = app
+            .clone()
+            .oneshot(request("POST", "/api/v1/homepage/reset", "Viewer", None))
+            .await
+            .expect("reset response");
+        assert_eq!(reset.status(), StatusCode::FORBIDDEN);
+
+        let point = db::get_calculated_point_by_id(&state.db, point_id)
+            .await
+            .expect("query homepage point")
+            .expect("a refused request must leave the point in place");
+        assert_eq!(point.formula.as_deref(), Some("1 + 1"));
+
+        let read = app
+            .oneshot(request("GET", "/api/v1/homepage", "Viewer", None))
+            .await
+            .expect("list response");
+        assert_eq!(
+            read.status(),
+            StatusCode::OK,
+            "reading stays open to a Viewer"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_operator_can_edit_and_reset_homepage_points() {
+        for role in ["Engineer", "Admin"] {
+            let state = app_state().await;
+            let point_id = seed_homepage_point(&state.db).await;
+            let app = build_router(state.clone());
+
+            let edit = app
+                .clone()
+                .oneshot(request(
+                    "PUT",
+                    &format!("/api/v1/homepage/{point_id}"),
+                    role,
+                    Some(r#"{"unit":"units/min"}"#),
+                ))
+                .await
+                .expect("update response");
+            assert_eq!(edit.status(), StatusCode::OK, "{role}");
+
+            let reset = app
+                .oneshot(request("POST", "/api/v1/homepage/reset", role, None))
+                .await
+                .expect("reset response");
+            assert_eq!(reset.status(), StatusCode::OK, "{role}");
+            assert!(
+                db::get_calculated_point_by_id(&state.db, point_id)
+                    .await
+                    .expect("query homepage point")
+                    .is_none(),
+                "{role}"
+            );
+        }
     }
 }
 

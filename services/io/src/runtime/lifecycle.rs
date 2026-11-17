@@ -112,7 +112,7 @@ pub fn start_cleanup_task(
     let task_token = token.clone();
 
     let handle = tokio::spawn(async move {
-        let mut interval = tokio::time::interval(CLEANUP_INTERVAL);
+        let mut interval = common::time::ticker(CLEANUP_INTERVAL);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         loop {

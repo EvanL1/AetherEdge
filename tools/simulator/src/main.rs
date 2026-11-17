@@ -165,7 +165,7 @@ async fn main() -> Result<()> {
         if let Some(ref can_cfg) = device.can_lynk {
             let sm_clone = Arc::clone(&sm_store);
             let iface = can_cfg.interface.clone();
-            let interval = can_cfg.interval_ms;
+            let interval = can_cfg.interval_ms.get();
             let uid = device.unit_id;
             tokio::spawn(async move {
                 if let Err(e) = can_sender::run_can_sender(&iface, interval, sm_clone, uid).await {
@@ -181,7 +181,7 @@ async fn main() -> Result<()> {
         if let Some(ref j1939_cfg) = device.j1939 {
             let sm_clone = Arc::clone(&sm_store);
             let iface = j1939_cfg.interface.clone();
-            let interval = j1939_cfg.interval_ms;
+            let interval = j1939_cfg.interval_ms.get();
             let sa = j1939_cfg.source_address;
             let uid = device.unit_id;
             tokio::spawn(async move {
