@@ -77,6 +77,29 @@ pub(crate) fn require_admin(
     Ok(claims)
 }
 
+/// Refuses a request whose credential lacks the authority a route requires.
+///
+/// The caller decides with [`crate::auth::Claims::may_administer`] or
+/// [`crate::auth::Claims::may_mutate_application_state`]; this only reports
+/// the refusal the same way everywhere and leaves a trace of who was refused.
+pub(crate) fn authority_denied(
+    claims: &crate::auth::Claims,
+    required: &'static str,
+) -> axum::response::Response {
+    warn!(
+        user_id = claims.user_id,
+        username = %claims.username,
+        role = claims.role.as_deref().unwrap_or(""),
+        required,
+        "authorization denied"
+    );
+    (
+        StatusCode::FORBIDDEN,
+        Json(json!({"success": false, "message": format!("{required} privileges required")})),
+    )
+        .into_response()
+}
+
 // ── POST /api/v1/auth/register ────────────────────────────────────────────────
 
 /// Register a new user account.

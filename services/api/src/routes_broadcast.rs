@@ -1,9 +1,11 @@
 use std::sync::Arc;
 
-use axum::{Json, extract::State, response::IntoResponse};
+use axum::{Extension, Json, extract::State, response::IntoResponse};
 use serde_json::json;
 use tracing::error;
 
+use crate::auth::Claims;
+use crate::routes_auth::authority_denied;
 use crate::state::AppState;
 
 // ── POST /api/v1/broadcast ────────────────────────────────────────────────────
@@ -15,14 +17,22 @@ use crate::state::AppState;
 /// specific channel will receive the message. Returns the number of clients
 /// reached and their metadata. Useful for pushing system notifications, forcing
 /// a frontend cache refresh, or debugging the WebSocket pipeline.
+///
+/// **Admin only.** The payload reaches every operator's screen unfiltered, so
+/// a caller who can send it can forge any event a console displays.
 #[utoipa::path(post, path = "/api/v1/broadcast", tag = "WebSocket",
     security(("bearer_auth" = [])),
     request_body(content = serde_json::Value, description = "Arbitrary JSON payload to broadcast to all connected WebSocket clients"),
-    responses((status = 200, description = "Broadcast delivered", body = crate::models::GatewayDataResponse<serde_json::Value>)))]
+    responses((status = 200, description = "Broadcast delivered", body = crate::models::GatewayDataResponse<serde_json::Value>), (status = 403, description = "Administrator privileges required")))]
 pub async fn broadcast_message(
     State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
     Json(body): Json<serde_json::Value>,
 ) -> impl IntoResponse {
+    if !claims.may_administer() {
+        return authority_denied(&claims, "Administrator");
+    }
+
     let msg = match serde_json::to_string(&body) {
         Ok(s) => s,
         Err(e) => {

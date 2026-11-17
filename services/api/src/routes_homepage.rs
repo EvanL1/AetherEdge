@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use axum::{
-    Json,
+    Extension, Json,
     extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
@@ -11,8 +11,10 @@ use serde_json::json;
 use tracing::error;
 
 use crate::{
+    auth::Claims,
     db,
     models::{CalculatedPoint, CalculatedPointUpdate},
+    routes_auth::authority_denied,
     state::AppState,
 };
 
@@ -127,12 +129,17 @@ pub async fn get_point(
     security(("bearer_auth" = [])),
     params(("id" = i64, Path, description = "Point ID")),
     request_body = CalculatedPointUpdate,
-    responses((status = 200, description = "Point updated", body = crate::models::GatewayDataResponse<CalculatedPoint>), (status = 404, description = "Not found")))]
+    responses((status = 200, description = "Point updated", body = crate::models::GatewayDataResponse<CalculatedPoint>), (status = 403, description = "Engineer or Admin privileges required"), (status = 404, description = "Not found")))]
 pub async fn update_point(
     State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
     Path(point_id): Path<i64>,
     Json(body): Json<CalculatedPointUpdate>,
 ) -> impl IntoResponse {
+    if !claims.may_mutate_application_state() {
+        return authority_denied(&claims, "Engineer or Admin");
+    }
+
     // Check existence
     match db::get_calculated_point_by_id(&state.db, point_id).await {
         Ok(None) => {
@@ -201,8 +208,15 @@ pub async fn update_point(
 /// **Destructive operation** — deleted definitions cannot be recovered.
 #[utoipa::path(post, path = "/api/v1/homepage/reset", tag = "Homepage",
     security(("bearer_auth" = [])),
-    responses((status = 200, description = "Homepage points cleared to the safe empty state", body = crate::models::GatewayDataResponse<crate::models::HomepageResetData>)))]
-pub async fn reset_points(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    responses((status = 200, description = "Homepage points cleared to the safe empty state", body = crate::models::GatewayDataResponse<crate::models::HomepageResetData>), (status = 403, description = "Engineer or Admin privileges required")))]
+pub async fn reset_points(
+    State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
+) -> impl IntoResponse {
+    if !claims.may_mutate_application_state() {
+        return authority_denied(&claims, "Engineer or Admin");
+    }
+
     match db::reset_calculated_points(&state.db).await {
         Ok(count) => Json(json!({
             "success": true,

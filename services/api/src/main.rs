@@ -766,6 +766,151 @@ mod service_gateway_route_tests {
     }
 }
 
+#[cfg(test)]
+mod local_route_authorization_tests {
+    use axum::{
+        body::Body,
+        http::{Request, StatusCode},
+    };
+    use tower::ServiceExt;
+
+    use crate::db;
+    use crate::test_support::{app_state, authorization_headers};
+
+    use super::build_router;
+
+    fn request(method: &str, uri: &str, role: &str, body: Option<&str>) -> Request<Body> {
+        let mut builder = Request::builder().method(method).uri(uri);
+        if body.is_some() {
+            builder = builder.header("content-type", "application/json");
+        }
+        let mut request = builder
+            .body(body.map_or_else(Body::empty, |body| Body::from(body.to_owned())))
+            .expect("valid request");
+        request.headers_mut().extend(authorization_headers(role));
+        request
+    }
+
+    async fn seed_homepage_point(pool: &sqlx::SqlitePool) -> i64 {
+        sqlx::query("INSERT INTO calculated_points (name, formula, unit) VALUES (?, ?, ?)")
+            .bind("Line throughput")
+            .bind("1 + 1")
+            .bind("units/h")
+            .execute(pool)
+            .await
+            .expect("seed homepage point")
+            .last_insert_rowid()
+    }
+
+    #[tokio::test]
+    async fn pushing_to_every_websocket_client_requires_an_administrator() {
+        // Any logged-in user could push arbitrary JSON, including a forged
+        // alarm, to every connected console.
+        let app = build_router(app_state().await);
+
+        for role in ["Viewer", "Engineer"] {
+            let response = app
+                .clone()
+                .oneshot(request(
+                    "POST",
+                    "/api/v1/broadcast",
+                    role,
+                    Some(r#"{"type":"alarm","data":{"message":"forged"}}"#),
+                ))
+                .await
+                .expect("broadcast response");
+            assert_eq!(response.status(), StatusCode::FORBIDDEN, "{role}");
+        }
+
+        let response = app
+            .oneshot(request(
+                "POST",
+                "/api/v1/broadcast",
+                "Admin",
+                Some(r#"{"type":"notice"}"#),
+            ))
+            .await
+            .expect("broadcast response");
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn a_viewer_cannot_edit_or_delete_homepage_points() {
+        let state = app_state().await;
+        let point_id = seed_homepage_point(&state.db).await;
+        let app = build_router(state.clone());
+
+        let edit = app
+            .clone()
+            .oneshot(request(
+                "PUT",
+                &format!("/api/v1/homepage/{point_id}"),
+                "Viewer",
+                Some(r#"{"formula":"0"}"#),
+            ))
+            .await
+            .expect("update response");
+        assert_eq!(edit.status(), StatusCode::FORBIDDEN);
+
+        let reset = app
+            .clone()
+            .oneshot(request("POST", "/api/v1/homepage/reset", "Viewer", None))
+            .await
+            .expect("reset response");
+        assert_eq!(reset.status(), StatusCode::FORBIDDEN);
+
+        let point = db::get_calculated_point_by_id(&state.db, point_id)
+            .await
+            .expect("query homepage point")
+            .expect("a refused request must leave the point in place");
+        assert_eq!(point.formula.as_deref(), Some("1 + 1"));
+
+        let read = app
+            .oneshot(request("GET", "/api/v1/homepage", "Viewer", None))
+            .await
+            .expect("list response");
+        assert_eq!(
+            read.status(),
+            StatusCode::OK,
+            "reading stays open to a Viewer"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_operator_can_edit_and_reset_homepage_points() {
+        for role in ["Engineer", "Admin"] {
+            let state = app_state().await;
+            let point_id = seed_homepage_point(&state.db).await;
+            let app = build_router(state.clone());
+
+            let edit = app
+                .clone()
+                .oneshot(request(
+                    "PUT",
+                    &format!("/api/v1/homepage/{point_id}"),
+                    role,
+                    Some(r#"{"unit":"units/min"}"#),
+                ))
+                .await
+                .expect("update response");
+            assert_eq!(edit.status(), StatusCode::OK, "{role}");
+
+            let reset = app
+                .oneshot(request("POST", "/api/v1/homepage/reset", role, None))
+                .await
+                .expect("reset response");
+            assert_eq!(reset.status(), StatusCode::OK, "{role}");
+            assert!(
+                db::get_calculated_point_by_id(&state.db, point_id)
+                    .await
+                    .expect("query homepage point")
+                    .is_none(),
+                "{role}"
+            );
+        }
+    }
+}
+
 #[cfg(all(test, feature = "openapi"))]
 mod openapi_tests {
     use super::*;
