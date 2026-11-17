@@ -14,6 +14,9 @@ pub(crate) fn protocol_version(value: &str) -> Result<(), CloudLinkCodecError> {
 }
 
 pub(crate) fn canonical_u64(value: &str, field: &'static str) -> Result<u64, CloudLinkCodecError> {
+    if value.len() > 20 {
+        return Err(CloudLinkCodecError::IntegerOutOfRange { field });
+    }
     let canonical = value == "0"
         || (!value.starts_with('0')
             && !value.is_empty()
