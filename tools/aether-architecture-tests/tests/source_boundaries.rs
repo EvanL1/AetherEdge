@@ -289,11 +289,10 @@ impl BoundaryVisitor<'_> {
         if SERVICE_PACKAGES.contains(&self.package_name) {
             self.record(
                 "service names the confirmation header itself; read it only through \
-                 aether_auth_jwt::Confirmation::from_headers (reject a malformed header) or \
-                 Confirmation::from_headers_or_decline (let the application refuse it), and \
-                 list it with Confirmation::header_name(), so every transport agrees on what \
-                 counts as confirmed (a local parser is how alarm/io came to accept ` TRUE ` \
-                 while the gateway required the exact `true`)",
+                 aether_auth_jwt::Confirmation::from_headers, answer its error with 400, and \
+                 list the header with Confirmation::header_name(), so every transport agrees \
+                 on what counts as confirmed (a local parser is how alarm/io came to accept \
+                 ` TRUE ` while the gateway required the exact `true`)",
             );
         }
     }
@@ -908,8 +907,10 @@ fn services_read_the_confirmation_header_only_through_the_shared_parser() {
         "aether-alarm",
         &[],
         r#"
-        fn confirmation(headers: &HeaderMap) -> aether_auth_jwt::Confirmation {
-            aether_auth_jwt::Confirmation::from_headers_or_decline(headers)
+        fn confirmation(
+            headers: &HeaderMap,
+        ) -> Result<aether_auth_jwt::Confirmation, aether_auth_jwt::MalformedConfirmation> {
+            aether_auth_jwt::Confirmation::from_headers(headers)
         }
 
         fn allowed_headers() -> [HeaderName; 1] {

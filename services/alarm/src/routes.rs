@@ -1281,7 +1281,8 @@ async fn apply_alarm_mutation(
     let request_id = headers
         .get("x-request-id")
         .and_then(|value| value.to_str().ok());
-    let confirmation = aether_auth_jwt::Confirmation::from_headers_or_decline(headers);
+    let confirmation = aether_auth_jwt::Confirmation::from_headers(headers)
+        .map_err(|error| error_response(StatusCode::BAD_REQUEST, &error.to_string()))?;
     let timestamp = chrono::Utc::now().timestamp_millis().max(0) as u64;
     let invocation = state.access_authenticator.invocation(
         authorization,
@@ -1307,7 +1308,8 @@ async fn apply_alert_resolution(
     let request_id = headers
         .get("x-request-id")
         .and_then(|value| value.to_str().ok());
-    let confirmation = aether_auth_jwt::Confirmation::from_headers_or_decline(headers);
+    let confirmation = aether_auth_jwt::Confirmation::from_headers(headers)
+        .map_err(|error| error_response(StatusCode::BAD_REQUEST, &error.to_string()))?;
     let timestamp = chrono::Utc::now().timestamp_millis().max(0) as u64;
     let invocation = state.access_authenticator.invocation(
         authorization,
@@ -1664,11 +1666,7 @@ mod tests {
                 .await
                 .expect("response");
 
-            assert_eq!(
-                response.status(),
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "{values:?}"
-            );
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{values:?}");
             assert!(
                 db::find_rule_by_name(&state.db, name)
                     .await

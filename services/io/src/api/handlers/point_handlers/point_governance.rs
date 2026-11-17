@@ -57,7 +57,7 @@ impl PointTopologyHttpBoundary {
         let governed = self.inner.as_ref().ok_or_else(|| {
             AppError::service_unavailable("Point-topology application boundary is unavailable")
         })?;
-        let context = request_context(governed, headers);
+        let context = request_context(governed, headers)?;
         let expected_revision = expected_revision(headers)?;
         governed
             .application
@@ -70,16 +70,17 @@ impl PointTopologyHttpBoundary {
 fn request_context(
     governed: &GovernedPointTopology,
     headers: &HeaderMap,
-) -> aether_application::RequestContext {
+) -> Result<aether_application::RequestContext, AppError> {
     let authorization = headers
         .get(header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok());
     let request_id = headers
         .get(REQUEST_ID_HEADER)
         .and_then(|value| value.to_str().ok());
-    let confirmation = Confirmation::from_headers_or_decline(headers);
+    let confirmation = Confirmation::from_headers(headers)
+        .map_err(|error| AppError::bad_request(error.to_string()))?;
     let timestamp = chrono::Utc::now().timestamp_millis().max(0) as u64;
-    governed
+    Ok(governed
         .access_authenticator
         .invocation(
             authorization,
@@ -88,7 +89,7 @@ fn request_context(
             aether_domain::TimestampMs::new(timestamp),
         )
         .context()
-        .clone()
+        .clone())
 }
 
 /// Converts terminal application audit state into the stable HTTP DTO.

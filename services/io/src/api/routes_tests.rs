@@ -4142,11 +4142,7 @@ async fn a_repeated_or_inexact_confirmation_header_never_reaches_the_channel_mut
             .await
             .unwrap();
 
-        assert_eq!(
-            response.status(),
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "{values:?}"
-        );
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{values:?}");
         assert!(mutator.mutations().is_empty(), "{values:?}");
     }
 }

@@ -104,24 +104,14 @@ fn an_http_header_map_is_read_with_the_same_rule() {
 }
 
 #[test]
-fn the_declining_reader_never_turns_malformed_input_into_confirmation() {
-    assert_eq!(
-        Confirmation::from_headers_or_decline(&headers(&["true"])),
-        Confirmation::Confirmed
+fn the_malformed_error_tells_the_caller_which_header_and_what_is_accepted() {
+    let message = MalformedConfirmation.to_string();
+
+    assert!(message.contains(CONFIRMATION_HEADER), "{message}");
+    assert!(
+        message.contains("`true`") && message.contains("`false`"),
+        "{message}"
     );
-    for declined in [
-        &[][..],
-        &["false"],
-        &[" TRUE "],
-        &["true", "true"],
-        &["true", "anything"],
-    ] {
-        assert_eq!(
-            Confirmation::from_headers_or_decline(&headers(declined)),
-            Confirmation::NotConfirmed,
-            "{declined:?}"
-        );
-    }
 }
 
 #[test]

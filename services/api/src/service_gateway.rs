@@ -181,6 +181,7 @@ fn is_governed_mutation(service: ServiceName, path: &str, method: &Method) -> bo
 enum GatewayAuthorizationError {
     MutationForbidden,
     ConfirmationRequired,
+    ConfirmationMalformed,
 }
 
 impl IntoResponse for GatewayAuthorizationError {
@@ -195,6 +196,11 @@ impl IntoResponse for GatewayAuthorizationError {
                 StatusCode::PRECONDITION_REQUIRED,
                 "EXPLICIT_CONFIRMATION_REQUIRED",
                 "application mutations require x-aether-confirmed: true",
+            ),
+            Self::ConfirmationMalformed => gateway_error(
+                StatusCode::BAD_REQUEST,
+                "CONFIRMATION_HEADER_MALFORMED",
+                "x-aether-confirmed must carry exactly one value, `true` or `false`",
             ),
         }
     }
@@ -223,7 +229,8 @@ fn authorize_service_request(
     {
         return Err(GatewayAuthorizationError::MutationForbidden);
     }
-    let confirmation = Confirmation::from_headers_or_decline(headers);
+    let confirmation = Confirmation::from_headers(headers)
+        .map_err(|_| GatewayAuthorizationError::ConfirmationMalformed)?;
     if !confirmation.is_confirmed() {
         return Err(GatewayAuthorizationError::ConfirmationRequired);
     }
@@ -521,6 +528,38 @@ mod tests {
                 &headers,
             )
             .expect_err("only one exact `true` confirms a mutation");
+            assert_eq!(
+                error,
+                GatewayAuthorizationError::ConfirmationMalformed,
+                "{values:?}"
+            );
+            assert_eq!(
+                error.into_response().status(),
+                StatusCode::BAD_REQUEST,
+                "{values:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_missing_or_declined_confirmation_is_still_reported_as_required() {
+        for values in [&[][..], &["false"]] {
+            let mut headers = HeaderMap::new();
+            for value in values {
+                headers.append(
+                    aether_auth_jwt::CONFIRMATION_HEADER,
+                    value.parse().expect("valid header"),
+                );
+            }
+
+            let error = authorize_service_request(
+                &claims("Admin"),
+                ServiceName::Uplink,
+                "mqtt/config",
+                &Method::POST,
+                &headers,
+            )
+            .expect_err("an unconfirmed mutation must fail");
             assert_eq!(
                 error,
                 GatewayAuthorizationError::ConfirmationRequired,
