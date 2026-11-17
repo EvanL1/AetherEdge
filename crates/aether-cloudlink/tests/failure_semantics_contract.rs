@@ -8,7 +8,7 @@ use aether_domain::TimestampMs;
 use aether_ports::{
     CloudLinkEnqueue, CloudLinkMessageKind, CloudLinkRecord, CloudLinkRecordIdentity,
 };
-use serde_json::Value;
+use serde_json::{Value, json};
 
 const GATEWAY_ID: &str = "33333333-3333-4333-8333-333333333333";
 const SESSION_ID: &str = "44444444-4444-4444-8444-444444444444";
@@ -19,6 +19,41 @@ fn fixture(name: &str) -> Value {
         .join(name);
     serde_json::from_slice(&fs::read(path).expect("checked-in CloudLink fixture"))
         .expect("CloudLink fixture JSON")
+}
+
+fn decode_failure(document: &Value) -> &'static str {
+    CloudLinkCodec::decode(&serde_json::to_vec(document).expect("document JSON"))
+        .expect_err("the document must not decode")
+        .failure_code()
+}
+
+fn distinct_cursors(count: u64) -> Value {
+    (1..=count)
+        .map(|epoch| {
+            json!({
+                "stream_id": "telemetry",
+                "stream_epoch": epoch.to_string(),
+                "acknowledged_position": "18",
+            })
+        })
+        .collect()
+}
+
+#[test]
+fn more_resume_cursors_than_the_schema_allows_exceed_a_field_bound() {
+    for name in [
+        "session-challenge-request.valid.json",
+        "session-hello.valid.json",
+        "session-accepted.valid.json",
+    ] {
+        let mut document = fixture(name);
+        document["resume"] = distinct_cursors(32);
+        CloudLinkCodec::decode(&serde_json::to_vec(&document).expect("document JSON"))
+            .unwrap_or_else(|error| panic!("{name} allows 32 resume cursors: {error}"));
+
+        document["resume"] = distinct_cursors(33);
+        assert_eq!(decode_failure(&document), "FIELD_BOUND", "{name}");
+    }
 }
 
 #[test]

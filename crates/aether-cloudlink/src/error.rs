@@ -96,6 +96,8 @@ pub enum CloudLinkCodecError {
     InvalidExpiryWindow,
     #[error("CloudLink data-loss range is unordered or reaches the earliest retained position")]
     DataLossRangeInvalid,
+    #[error("CloudLink cursor array repeats a stream and epoch identity")]
+    CursorConflict,
     /// An explicit protocol deadline has been reached or passed.
     #[error("CloudLink message deadline has expired")]
     MessageExpired,
@@ -250,7 +252,7 @@ impl CloudLinkCodecError {
             Self::InvalidField { field, .. } if matches!(*field, "delivery.digest" | "digest") => {
                 Code::InvalidDigest
             },
-            Self::InvalidField { field, .. } if *field == "resume" => Code::CursorConflict,
+            Self::CursorConflict => Code::CursorConflict,
             Self::InvalidField { .. } | Self::NonFinitePointValue | Self::ControlPointForbidden => {
                 Code::FieldBound
             },

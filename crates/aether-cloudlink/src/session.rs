@@ -690,10 +690,7 @@ fn validate_cursors(cursors: &[ResumeCursor]) -> Result<(), CloudLinkCodecError>
     for cursor in cursors {
         cursor.validate()?;
         if !identities.insert((&cursor.stream_id, &cursor.stream_epoch)) {
-            return Err(CloudLinkCodecError::InvalidField {
-                field: "resume",
-                message: "must contain unique stream and epoch identities",
-            });
+            return Err(CloudLinkCodecError::CursorConflict);
         }
     }
     Ok(())
