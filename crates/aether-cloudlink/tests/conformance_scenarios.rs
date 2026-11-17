@@ -57,10 +57,6 @@ const KNOWN_DIVERGENCES: &[(&str, Outcome<'static>)] = &[
         "uint64-arabic-indic-byte-overflow",
         Outcome::Rejected("INTEGER_NON_CANONICAL"),
     ),
-    (
-        "cloudlink-data-loss-invalid-range",
-        Outcome::Rejected("FIELD_BOUND"),
-    ),
     ("cloudlink-duplicate-cursor", Outcome::Accepted),
     ("raw-json-duplicate-key", Outcome::Accepted),
     ("raw-json-escaped-duplicate-key", Outcome::Accepted),

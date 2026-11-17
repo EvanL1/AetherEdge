@@ -94,6 +94,8 @@ pub enum CloudLinkCodecError {
     SessionMismatch,
     #[error("CloudLink message expires before it is sent")]
     InvalidExpiryWindow,
+    #[error("CloudLink data-loss range is unordered or reaches the earliest retained position")]
+    DataLossRangeInvalid,
     /// An explicit protocol deadline has been reached or passed.
     #[error("CloudLink message deadline has expired")]
     MessageExpired,
@@ -134,10 +136,11 @@ pub enum CloudLinkFailureCode {
     StaleSession,
     InvalidExpiryWindow,
     MessageExpired,
+    DataLossRangeInvalid,
 }
 
 impl CloudLinkFailureCode {
-    pub const ALL: [Self; 20] = [
+    pub const ALL: [Self; 21] = [
         Self::FieldBound,
         Self::UnsupportedVersion,
         Self::StreamBindingConflict,
@@ -158,6 +161,7 @@ impl CloudLinkFailureCode {
         Self::StaleSession,
         Self::InvalidExpiryWindow,
         Self::MessageExpired,
+        Self::DataLossRangeInvalid,
     ];
 
     #[must_use]
@@ -183,6 +187,7 @@ impl CloudLinkFailureCode {
             Self::StaleSession => "STALE_SESSION",
             Self::InvalidExpiryWindow => "INVALID_EXPIRY_WINDOW",
             Self::MessageExpired => "MESSAGE_EXPIRED",
+            Self::DataLossRangeInvalid => "DATA_LOSS_RANGE_INVALID",
         }
     }
 }
@@ -255,6 +260,7 @@ impl CloudLinkCodecError {
             Self::SessionMismatch => Code::StaleSession,
             Self::InvalidExpiryWindow => Code::InvalidExpiryWindow,
             Self::MessageExpired => Code::MessageExpired,
+            Self::DataLossRangeInvalid => Code::DataLossRangeInvalid,
             Self::RuntimeManifestChecksum => Code::DigestMismatch,
         };
         CloudLinkFailure::Codec(code)

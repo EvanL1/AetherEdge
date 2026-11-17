@@ -675,10 +675,7 @@ impl DataLossPayload {
             "payload.earliest_retained_position",
         )?;
         if first > last || earliest <= last {
-            return Err(CloudLinkCodecError::InvalidField {
-                field: "payload.data_loss_range",
-                message: "must be ordered and precede earliest retained position",
-            });
+            return Err(CloudLinkCodecError::DataLossRangeInvalid);
         }
         identifier(&self.reason, "payload.reason", 64)?;
         canonical_u64(&self.recorded_at_ms, "payload.recorded_at_ms")?;

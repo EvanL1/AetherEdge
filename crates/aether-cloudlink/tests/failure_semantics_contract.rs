@@ -77,3 +77,25 @@ fn an_inverted_expiry_window_is_reported_wherever_one_is_sealed_offered_or_signe
     .expect_err("an inverted window must not be signed");
     assert_eq!(signing.failure_code(), "INVALID_EXPIRY_WINDOW");
 }
+
+#[test]
+fn a_data_loss_range_that_is_unordered_or_reaches_retained_data_is_reported_when_sealed() {
+    for (member, position) in [
+        ("first_lost_position", "4"),
+        ("earliest_retained_position", "3"),
+    ] {
+        let mut payload = fixture("data-loss.valid.json")["payload"].clone();
+        payload[member] = Value::String(position.to_owned());
+
+        let error = CloudLinkCodec::prepare_value(
+            CloudLinkMessageKind::DataLoss,
+            "loss-telemetry-2-1-3",
+            payload,
+            TimestampMs::new(20),
+            None,
+        )
+        .expect_err("an invalid data-loss range must not be sealed");
+
+        assert_eq!(error.failure_code(), "DATA_LOSS_RANGE_INVALID", "{member}");
+    }
+}
