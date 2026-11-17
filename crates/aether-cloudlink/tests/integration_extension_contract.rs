@@ -29,7 +29,6 @@ fn repository_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-/// The published release bytes imported by the root consumer lock.
 fn release_root() -> PathBuf {
     repository_root().join("contracts/aether-contracts/v0.1.0-alpha.4")
 }
@@ -127,8 +126,6 @@ fn consumer_lock_pins_the_exact_published_alpha4_extension_artifacts() {
         );
     }
 
-    // The Integration binding crate keeps a self-contained fixture copy; it
-    // must stay byte-identical to the release the consumer lock imports.
     assert_eq!(
         digest(&integration_fixture("fixture-manifest.json")),
         INTEGRATION_FIXTURE_MANIFEST_SHA256
