@@ -18,7 +18,7 @@ pub use codec::{
     CandidateMessage, CloudLinkCodec, DataLossPayload, DeliveryDescriptor, DeliveryEnvelope,
     DurableAckMessage, HeartbeatMessage, ReplayRequest, RuntimeManifestReport,
 };
-pub use error::CloudLinkCodecError;
+pub use error::{CloudLinkCodecError, CloudLinkFailure, CloudLinkFailureCode};
 pub use integration::CloudLinkIntegrationExtension;
 pub use integration_publisher::{CloudLinkIntegrationPublishEvent, CloudLinkIntegrationPublisher};
 pub use session::{

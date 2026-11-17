@@ -40,6 +40,25 @@ pub enum IntegrationContractErrorCode {
 }
 
 impl IntegrationContractErrorCode {
+    /// Every code this crate can report.
+    pub const ALL: [Self; 15] = [
+        Self::JsonSyntaxError,
+        Self::UnknownField,
+        Self::UnsupportedSchema,
+        Self::FieldBound,
+        Self::TextInvalid,
+        Self::IdentifierInvalid,
+        Self::IntegerNonCanonical,
+        Self::IntegerOutOfRange,
+        Self::ValueEncodingInvalid,
+        Self::JsonUnsafeNumber,
+        Self::JsonNonFiniteNumber,
+        Self::IdentityConflict,
+        Self::ReferenceNotFound,
+        Self::ValueTypeMismatch,
+        Self::ObservationValueInvalid,
+    ];
+
     /// Returns the AetherContracts failure spelling.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
@@ -49,7 +68,10 @@ impl IntegrationContractErrorCode {
             Self::UnsupportedSchema => "UNSUPPORTED_VERSION",
             Self::FieldBound => "FIELD_BOUND",
             Self::TextInvalid => "TEXT_INVALID",
-            Self::IdentifierInvalid => "IDENTIFIER_INVALID",
+            // The taxonomy has no identifier-specific failure: an identifier
+            // that is empty, too long, or outside its alphabet exceeds a
+            // declared string bound.
+            Self::IdentifierInvalid => "FIELD_BOUND",
             Self::IntegerNonCanonical => "INTEGER_NON_CANONICAL",
             Self::IntegerOutOfRange => "INTEGER_OUT_OF_RANGE",
             Self::ValueEncodingInvalid => "VALUE_ENCODING_INVALID",
