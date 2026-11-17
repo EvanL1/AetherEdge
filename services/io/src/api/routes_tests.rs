@@ -4113,6 +4113,38 @@ async fn channel_management_requires_authentication_and_confirmation_before_side
 }
 
 #[tokio::test]
+async fn a_repeated_or_inexact_confirmation_header_never_reaches_the_channel_mutator() {
+    for values in [&["true", "true"][..], &["true", "false"], &[" TRUE "]] {
+        let mutator = RecordingChannelMutator::successful(Some(
+            aether_ports::ChannelRuntimeProjection::Stopped,
+        ));
+        let app = recording_channel_router(Arc::clone(&mutator)).await;
+        let mut request = Request::builder()
+            .method("POST")
+            .uri("/api/channels")
+            .header("content-type", "application/json")
+            .header("authorization", format!("Bearer {}", admin_access_token()));
+        for value in values {
+            request = request.header("x-aether-confirmed", *value);
+        }
+        let body = json!({
+            "channel_id": 7,
+            "name": "Packaging PLC",
+            "protocol": "modbus_tcp",
+            "parameters": {}
+        });
+
+        let response = app
+            .oneshot(request.body(Body::from(body.to_string())).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{values:?}");
+        assert!(mutator.mutations().is_empty(), "{values:?}");
+    }
+}
+
+#[tokio::test]
 async fn invalid_channel_http_inputs_never_reach_the_mutator() {
     let mutator =
         RecordingChannelMutator::successful(Some(aether_ports::ChannelRuntimeProjection::Stopped));

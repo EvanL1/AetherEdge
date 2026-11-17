@@ -1,6 +1,10 @@
 //! JWT authentication adapter for application-facing transports.
 
+mod confirmation;
+
 use std::sync::Arc;
+
+pub use confirmation::{CONFIRMATION_HEADER, Confirmation, MalformedConfirmation};
 
 use aether_application::{Actor, RequestContext};
 use aether_domain::TimestampMs;
@@ -138,7 +142,7 @@ impl AccessTokenAuthenticator {
         &self,
         authorization: Option<&str>,
         request_id: Option<&str>,
-        confirmed: bool,
+        confirmation: Confirmation,
         timestamp: TimestampMs,
     ) -> AuthenticatedInvocation {
         let actor = authorization
@@ -148,7 +152,12 @@ impl AccessTokenAuthenticator {
             .and_then(|value| uuid::Uuid::parse_str(value).ok())
             .unwrap_or_else(uuid::Uuid::new_v4);
         AuthenticatedInvocation {
-            context: RequestContext::new(request_id.to_string(), actor, confirmed, timestamp),
+            context: RequestContext::new(
+                request_id.to_string(),
+                actor,
+                confirmation.is_confirmed(),
+                timestamp,
+            ),
         }
     }
 }

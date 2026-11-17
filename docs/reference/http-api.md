@@ -151,6 +151,13 @@ the request body. Supply `x-request-id` when documented so retries and audit
 records share a stable correlation ID. Never assume that confirmation or
 identity may be forwarded in an undeclared header.
 
+Every interface reads `x-aether-confirmed` the same way: it must carry exactly
+one value, the literal `true` or `false`. Other spellings or casing,
+surrounding whitespace, and a repeated header are rejected with
+`400 Bad Request` before the command is evaluated. A missing header or `false`
+is an unconfirmed command, reported by the gateway as
+`EXPLICIT_CONFIRMATION_REQUIRED`.
+
 An accepted governed command includes its `request_id` and audit outcome in the
 response described by OpenAPI. If dispatch or persistence succeeded but the
 terminal audit append failed, the operation is still accepted and its audit

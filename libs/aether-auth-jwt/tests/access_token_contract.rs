@@ -1,4 +1,4 @@
-use aether_auth_jwt::{AccessTokenAuthenticator, AuthenticationError};
+use aether_auth_jwt::{AccessTokenAuthenticator, AuthenticationError, Confirmation};
 use aether_domain::TimestampMs;
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use serde::Serialize;
@@ -192,7 +192,7 @@ fn unauthenticated_invocations_still_have_auditable_context_and_confirmation() {
     let invocation = authenticator.invocation(
         None,
         Some(request_id),
-        true,
+        Confirmation::Confirmed,
         TimestampMs::new(1_720_000_000_000),
     );
 

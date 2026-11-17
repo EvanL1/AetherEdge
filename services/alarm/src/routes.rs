@@ -1281,15 +1281,13 @@ async fn apply_alarm_mutation(
     let request_id = headers
         .get("x-request-id")
         .and_then(|value| value.to_str().ok());
-    let confirmed = headers
-        .get("x-aether-confirmed")
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| value.trim().eq_ignore_ascii_case("true"));
+    let confirmation = aether_auth_jwt::Confirmation::from_headers(headers)
+        .map_err(|error| error_response(StatusCode::BAD_REQUEST, &error.to_string()))?;
     let timestamp = chrono::Utc::now().timestamp_millis().max(0) as u64;
     let invocation = state.access_authenticator.invocation(
         authorization,
         request_id,
-        confirmed,
+        confirmation,
         aether_domain::TimestampMs::new(timestamp),
     );
     state
@@ -1310,15 +1308,13 @@ async fn apply_alert_resolution(
     let request_id = headers
         .get("x-request-id")
         .and_then(|value| value.to_str().ok());
-    let confirmed = headers
-        .get("x-aether-confirmed")
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| value.trim().eq_ignore_ascii_case("true"));
+    let confirmation = aether_auth_jwt::Confirmation::from_headers(headers)
+        .map_err(|error| error_response(StatusCode::BAD_REQUEST, &error.to_string()))?;
     let timestamp = chrono::Utc::now().timestamp_millis().max(0) as u64;
     let invocation = state.access_authenticator.invocation(
         authorization,
         request_id,
-        confirmed,
+        confirmation,
         aether_domain::TimestampMs::new(timestamp),
     );
     let acceptance = state
@@ -1641,6 +1637,41 @@ mod tests {
                 .is_none(),
             "unconfirmed command must not reach alarm storage"
         );
+    }
+
+    #[tokio::test]
+    async fn a_repeated_or_inexact_confirmation_header_does_not_create_a_rule() {
+        for (name, values) in [
+            ("repeated", &["true", "true"][..]),
+            ("contradictory", &["true", "false"]),
+            ("padded", &[" TRUE "]),
+        ] {
+            let state = test_state().await;
+            let mut request = Request::post("/alarmApi/rules")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {}", access_token()));
+            for value in values {
+                request = request.header("x-aether-confirmed", *value);
+            }
+
+            let response = create_routes(Arc::clone(&state))
+                .oneshot(
+                    request
+                        .body(Body::from(create_rule_request(name).to_string()))
+                        .expect("request"),
+                )
+                .await
+                .expect("response");
+
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{values:?}");
+            assert!(
+                db::find_rule_by_name(&state.db, name)
+                    .await
+                    .expect("query rule")
+                    .is_none(),
+                "{values:?} must not reach alarm storage"
+            );
+        }
     }
 
     #[tokio::test]

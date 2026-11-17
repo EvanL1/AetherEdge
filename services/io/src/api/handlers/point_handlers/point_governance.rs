@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use aether_application::{ApplicationError, CompletionAuditStatus};
-use aether_auth_jwt::AccessTokenAuthenticator;
+use aether_auth_jwt::{AccessTokenAuthenticator, Confirmation};
 use aether_ports::{ChannelRevision, PortErrorKind};
 use axum::http::{HeaderMap, StatusCode, header};
 
@@ -12,7 +12,6 @@ use crate::point_topology::{
     PointTopologyAcceptance, PointTopologyApplication, PointTopologyMutation,
 };
 
-const CONFIRMATION_HEADER: &str = "x-aether-confirmed";
 const REQUEST_ID_HEADER: &str = "x-request-id";
 const EXPECTED_REVISION_HEADER: &str = "x-aether-expected-revision";
 
@@ -58,7 +57,7 @@ impl PointTopologyHttpBoundary {
         let governed = self.inner.as_ref().ok_or_else(|| {
             AppError::service_unavailable("Point-topology application boundary is unavailable")
         })?;
-        let context = request_context(governed, headers);
+        let context = request_context(governed, headers)?;
         let expected_revision = expected_revision(headers)?;
         governed
             .application
@@ -71,28 +70,26 @@ impl PointTopologyHttpBoundary {
 fn request_context(
     governed: &GovernedPointTopology,
     headers: &HeaderMap,
-) -> aether_application::RequestContext {
+) -> Result<aether_application::RequestContext, AppError> {
     let authorization = headers
         .get(header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok());
     let request_id = headers
         .get(REQUEST_ID_HEADER)
         .and_then(|value| value.to_str().ok());
-    let confirmed = headers
-        .get(CONFIRMATION_HEADER)
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| value.trim().eq_ignore_ascii_case("true"));
+    let confirmation = Confirmation::from_headers(headers)
+        .map_err(|error| AppError::bad_request(error.to_string()))?;
     let timestamp = chrono::Utc::now().timestamp_millis().max(0) as u64;
-    governed
+    Ok(governed
         .access_authenticator
         .invocation(
             authorization,
             request_id,
-            confirmed,
+            confirmation,
             aether_domain::TimestampMs::new(timestamp),
         )
         .context()
-        .clone()
+        .clone())
 }
 
 /// Converts terminal application audit state into the stable HTTP DTO.

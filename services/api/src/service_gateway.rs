@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use aether_auth_jwt::Confirmation;
 use axum::{
     Json, Router,
     body::{Body, to_bytes},
@@ -180,6 +181,7 @@ fn is_governed_mutation(service: ServiceName, path: &str, method: &Method) -> bo
 enum GatewayAuthorizationError {
     MutationForbidden,
     ConfirmationRequired,
+    ConfirmationMalformed,
 }
 
 impl IntoResponse for GatewayAuthorizationError {
@@ -194,6 +196,11 @@ impl IntoResponse for GatewayAuthorizationError {
                 StatusCode::PRECONDITION_REQUIRED,
                 "EXPLICIT_CONFIRMATION_REQUIRED",
                 "application mutations require x-aether-confirmed: true",
+            ),
+            Self::ConfirmationMalformed => gateway_error(
+                StatusCode::BAD_REQUEST,
+                "CONFIRMATION_HEADER_MALFORMED",
+                "x-aether-confirmed must carry exactly one value, `true` or `false`",
             ),
         }
     }
@@ -212,11 +219,9 @@ fn authorize_service_request(
     if !claims.may_mutate_application_state() {
         return Err(GatewayAuthorizationError::MutationForbidden);
     }
-    if headers
-        .get("x-aether-confirmed")
-        .and_then(|value| value.to_str().ok())
-        != Some("true")
-    {
+    let confirmation = Confirmation::from_headers(headers)
+        .map_err(|_| GatewayAuthorizationError::ConfirmationMalformed)?;
+    if !confirmation.is_confirmed() {
         return Err(GatewayAuthorizationError::ConfirmationRequired);
     }
     Ok(())
@@ -326,7 +331,7 @@ fn request_header_allowlist() -> [header::HeaderName; 9] {
         header::IF_MATCH,
         header::IF_NONE_MATCH,
         header::HeaderName::from_static("x-request-id"),
-        header::HeaderName::from_static("x-aether-confirmed"),
+        Confirmation::header_name(),
         header::HeaderName::from_static("x-aether-expected-revision"),
         header::HeaderName::from_static("idempotency-key"),
     ]
@@ -492,6 +497,65 @@ mod tests {
             &headers,
         )
         .expect("read-only batch query must pass");
+    }
+
+    #[test]
+    fn a_repeated_or_inexact_confirmation_header_does_not_authorize_a_mutation() {
+        for values in [&["true", "true"][..], &[" true"], &["TRUE"], &["yes"]] {
+            let mut headers = HeaderMap::new();
+            for value in values {
+                headers.append(
+                    aether_auth_jwt::CONFIRMATION_HEADER,
+                    value.parse().expect("valid header"),
+                );
+            }
+
+            let error = authorize_service_request(
+                &claims("Admin"),
+                ServiceName::Uplink,
+                "mqtt/config",
+                &Method::POST,
+                &headers,
+            )
+            .expect_err("only one exact `true` confirms a mutation");
+            assert_eq!(
+                error,
+                GatewayAuthorizationError::ConfirmationMalformed,
+                "{values:?}"
+            );
+            assert_eq!(
+                error.into_response().status(),
+                StatusCode::BAD_REQUEST,
+                "{values:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_missing_or_declined_confirmation_is_still_reported_as_required() {
+        for values in [&[][..], &["false"]] {
+            let mut headers = HeaderMap::new();
+            for value in values {
+                headers.append(
+                    aether_auth_jwt::CONFIRMATION_HEADER,
+                    value.parse().expect("valid header"),
+                );
+            }
+
+            let error = authorize_service_request(
+                &claims("Admin"),
+                ServiceName::Uplink,
+                "mqtt/config",
+                &Method::POST,
+                &headers,
+            )
+            .expect_err("an unconfirmed mutation must fail");
+            assert_eq!(
+                error,
+                GatewayAuthorizationError::ConfirmationRequired,
+                "{values:?}"
+            );
+        }
     }
 
     fn scoped_claims(role: &str, scope: Vec<&str>) -> Claims {
