@@ -30,12 +30,6 @@ use tracing::{debug, error, info, warn};
 /// Default scheduler tick interval (100ms)
 pub const DEFAULT_TICK_MS: u64 = 100;
 
-/// Returns the tick the scheduler actually runs at.
-///
-/// Zero is a configuration error rather than a request for the fastest
-/// possible loop: it would panic the timer, and clamping it to the smallest
-/// period would run a full tick a thousand times a second. It falls back to
-/// [`DEFAULT_TICK_MS`], and the status reports the value in effect.
 fn effective_tick_ms(configured: u64) -> u64 {
     if configured == 0 {
         warn!(
@@ -2473,9 +2467,6 @@ mod tests {
 
     #[tokio::test]
     async fn regression_zero_tick_falls_back_to_the_default_instead_of_panicking_or_spinning() {
-        // `rules.tick_ms` is read from configuration with no floor. Zero made
-        // `tokio::time::interval` panic, which aborts a release build; merely
-        // clamping it would run a full tick a thousand times a second.
         let rule = create_test_rule(84, "zero-tick", 0);
         let logs = tempfile::tempdir().expect("rule logs");
         let scheduler = Arc::new(RuleScheduler::new(

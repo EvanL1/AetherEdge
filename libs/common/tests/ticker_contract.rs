@@ -1,10 +1,3 @@
-//! A periodic timer must not be able to take a service down.
-//!
-//! `tokio::time::interval` panics on a zero period, and the release profile
-//! aborts on panic. A configured interval of `0` has killed a process four
-//! separate times (alarm fetch, SHM snapshot, and two CAN timers), each fixed
-//! with a local clamp. These tests pin the one constructor that cannot panic.
-
 use std::time::Duration;
 
 use common::time::{MIN_TICK_PERIOD, ticker, ticker_at};
@@ -40,7 +33,6 @@ async fn a_delayed_ticker_clamps_a_zero_period_and_waits_for_its_start() {
 
     assert_eq!(timer.period(), MIN_TICK_PERIOD);
     timer.tick().await;
-    // `tick()` returns the scheduled deadline, so compare against the clock.
     assert!(
         tokio::time::Instant::now() >= start,
         "a delayed ticker must not fire before its start"

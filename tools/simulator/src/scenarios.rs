@@ -243,7 +243,6 @@ fn default_initial_state() -> String {
 pub struct CanLynkConfig {
     /// vcan interface name (e.g., "vcan0")
     pub interface: String,
-    /// Send interval in milliseconds; zero is rejected when the scenario is parsed
     #[serde(default = "default_can_interval")]
     pub interval_ms: NonZeroU64,
 }
@@ -256,7 +255,6 @@ pub struct J1939SenderConfig {
     /// ECU source address (default 0x00)
     #[serde(default)]
     pub source_address: u8,
-    /// Send interval in milliseconds; zero is rejected when the scenario is parsed
     #[serde(default = "default_can_interval")]
     pub interval_ms: NonZeroU64,
 }
@@ -352,8 +350,6 @@ faults:
 
     #[test]
     fn a_zero_bus_send_interval_is_rejected_when_the_scenario_is_parsed() {
-        // A sender ticking every 0 ms either panics the timer or, once
-        // clamped, floods the bus with a frame every millisecond.
         for sender in ["can_lynk", "j1939"] {
             let yaml = can_scenario(sender, "      interval_ms: 0");
             let error = serde_yml::from_str::<Scenario>(&yaml)
