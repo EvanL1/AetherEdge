@@ -21,6 +21,7 @@ pub mod serde_helpers;
 pub mod service_bootstrap;
 pub mod shutdown;
 pub mod system_metrics;
+pub mod time;
 pub mod validation;
 
 // Re-export commonly used csv types (previously in csv.rs module)
