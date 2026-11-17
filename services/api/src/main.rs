@@ -431,12 +431,6 @@ fn build_router(state: Arc<AppState>) -> Router {
 
     let api_v1 = Router::new().merge(protected_v1).nest("/auth", auth_routes);
 
-    // /api/admin/* — runtime log control. Administrators only: any other
-    // caller could switch logging off, which also hides the record of refused
-    // requests, raise it until the disk fills, or read every log file.
-    // Grouped into its own Router so both layers cover any future admin route
-    // added inside. The last layer added runs first, so the JWT layer
-    // authenticates before the administrator check reads the claims.
     let admin_routes = Router::new()
         .route(
             "/logs/level",
@@ -835,8 +829,6 @@ mod local_route_authorization_tests {
 
     #[tokio::test]
     async fn log_administration_requires_an_administrator() {
-        // Any logged-in user could switch logging off, which also silences
-        // the record of refused requests, or read every log file.
         let app = build_router(app_state().await);
 
         for role in ["Viewer", "Engineer"] {
@@ -868,9 +860,6 @@ mod local_route_authorization_tests {
 
     #[tokio::test]
     async fn a_token_narrowed_to_reads_cannot_administer_whatever_its_role() {
-        // The role is necessary but not sufficient: a credential that was
-        // narrowed to reads must not manage users, logs, broadcasts, or
-        // homepage points just because the role in it says Admin.
         let state = app_state().await;
         let point_id = seed_homepage_point(&state.db).await;
         let app = build_router(state.clone());
@@ -900,8 +889,6 @@ mod local_route_authorization_tests {
 
     #[tokio::test]
     async fn pushing_to_every_websocket_client_requires_an_administrator() {
-        // Any logged-in user could push arbitrary JSON, including a forged
-        // alarm, to every connected console.
         let app = build_router(app_state().await);
 
         for role in ["Viewer", "Engineer"] {

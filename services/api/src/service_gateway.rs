@@ -209,10 +209,6 @@ fn authorize_service_request(
     if !is_governed_mutation(service, path, method) {
         return Ok(());
     }
-    // An operator role, and a scope that still lists at least one command
-    // permission. The downstream service remains the authority on which one
-    // applies; this gate exists so a token narrowed to reads is refused here
-    // instead of being forwarded to be rejected there.
     if !claims.may_mutate_application_state() {
         return Err(GatewayAuthorizationError::MutationForbidden);
     }

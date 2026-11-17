@@ -61,8 +61,6 @@ pub(crate) fn require_admin(
     headers: &HeaderMap,
 ) -> Result<crate::auth::Claims, (StatusCode, Json<Value>)> {
     let claims = require_auth(state, headers)?;
-    // The role alone is not enough: a token narrowed to reads keeps the Admin
-    // role in its claims and must not manage users, configuration, or upgrades.
     if !claims.may_administer() {
         warn!(
             user_id = claims.user_id,
@@ -78,11 +76,6 @@ pub(crate) fn require_admin(
     Ok(claims)
 }
 
-/// Refuses a request whose credential lacks the authority a route requires.
-///
-/// The caller decides with [`crate::auth::Claims::may_administer`] or
-/// [`crate::auth::Claims::may_mutate_application_state`]; this only reports
-/// the refusal the same way everywhere and leaves a trace of who was refused.
 pub(crate) fn authority_denied(
     claims: &crate::auth::Claims,
     required: &'static str,

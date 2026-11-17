@@ -94,10 +94,6 @@ pub(crate) async fn app_state_with_public_registration(
     })
 }
 
-/// Headers carrying a token of `role_name` whose scope was narrowed to `scope`.
-///
-/// Login always issues a role's full scope; a narrowed token is what a
-/// delegated or read-only credential looks like.
 pub(crate) fn narrowed_authorization_headers(role_name: &str, scope: &[&str]) -> HeaderMap {
     let now = chrono::Utc::now().timestamp() as usize;
     let claims = crate::auth::Claims {

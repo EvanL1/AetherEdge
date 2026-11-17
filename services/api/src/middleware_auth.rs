@@ -117,14 +117,6 @@ pub async fn require_jwt(
     next.run(req).await
 }
 
-/// Lets only a credential that may mutate application state through.
-///
-/// Authority is declared where a route is mounted, as a layer, rather than
-/// inside the handler: the check then runs before the request body is parsed,
-/// and a handler cannot be written without it. Layer it inside
-/// [`require_jwt`], which authenticates the request and attaches the claims
-/// this reads. A request that somehow arrives without claims is refused as
-/// unauthenticated rather than let through.
 pub async fn require_operator(req: Request, next: Next) -> Response {
     match req.extensions().get::<crate::auth::Claims>() {
         Some(claims) if claims.may_mutate_application_state() => next.run(req).await,
@@ -133,8 +125,6 @@ pub async fn require_operator(req: Request, next: Next) -> Response {
     }
 }
 
-/// Lets only an administrator through. See [`require_operator`] for how it
-/// is layered.
 pub async fn require_administrator(req: Request, next: Next) -> Response {
     match req.extensions().get::<crate::auth::Claims>() {
         Some(claims) if claims.may_administer() => next.run(req).await,

@@ -28,19 +28,11 @@ pub struct Claims {
 }
 
 impl Claims {
-    /// Whether this credential may change application state at all.
-    ///
-    /// An operator role is necessary but not sufficient: a token narrowed to
-    /// reads keeps its role and loses this authority. The service gateway and
-    /// the gateway's own routes both ask here, so they cannot drift apart on
-    /// who may mutate.
     #[must_use]
     pub fn may_mutate_application_state(&self) -> bool {
         matches!(self.role.as_deref(), Some("Engineer" | "Admin")) && self.holds_command_scope()
     }
 
-    /// Whether this credential may act on every connected client or on the
-    /// gateway itself, which is reserved for administrators.
     #[must_use]
     pub fn may_administer(&self) -> bool {
         self.role.as_deref() == Some("Admin") && self.holds_command_scope()
