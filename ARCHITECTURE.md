@@ -67,7 +67,7 @@ plane, and typed SHM port adapters. In particular:
   codec and truthful Runtime Manifest/`PointSample` mapping. The
   user-broker-neutral MQTT v3.1.1/QoS 1 binding is owned below
   `services/uplink`; it is not an extension and IO cannot select it. Legacy
-  MQTT remains the runtime default while public AetherContracts alpha.3 is
+  MQTT remains the runtime default while public AetherContracts alpha.4 is
   experimental and production credential and durable-store gates remain open.
 - `aether-domain` is the sole business-semantics owner. The former
   `aether-model` compatibility crate has been removed: Pack product contracts

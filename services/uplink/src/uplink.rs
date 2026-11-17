@@ -11,7 +11,7 @@ use aether_ports::{
 use async_trait::async_trait;
 use rumqttc::{AsyncClient, QoS};
 use tokio::sync::Mutex;
-use tokio::time::{self, Duration, MissedTickBehavior};
+use tokio::time::{Duration, MissedTickBehavior};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
@@ -77,7 +77,7 @@ pub async fn run_outbox_forwarder(state: Arc<AppState>, shutdown: CancellationTo
         client: Arc::clone(&state.mqtt_client),
     });
     let forwarder = OutboxForwarder::new(Arc::clone(&state.outbox), publisher);
-    let mut tick = time::interval(Duration::from_millis(500));
+    let mut tick = common::time::ticker(Duration::from_millis(500));
     tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
     loop {
@@ -113,7 +113,7 @@ pub async fn run_outbox_maintenance(
     outbox: Arc<aether_store_local::FileOutbox>,
     shutdown: CancellationToken,
 ) {
-    let mut tick = time::interval(OUTBOX_COMPACTION_INTERVAL);
+    let mut tick = common::time::ticker(OUTBOX_COMPACTION_INTERVAL);
     tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
     loop {

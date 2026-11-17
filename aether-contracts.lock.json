@@ -3,16 +3,16 @@
   "status": "complete-consumer",
   "repository": "https://github.com/EvanL1/AetherContracts",
   "release": {
-    "version": "0.1.0-alpha.3",
-    "tag": "v0.1.0-alpha.3",
-    "tag_object": "2a7539284e65d43fb3b81abf74009c63e1a28d33",
-    "commit": "c5aad674f0844138e778963118e786e430ffb365",
+    "version": "0.1.0-alpha.4",
+    "tag": "v0.1.0-alpha.4",
+    "tag_object": "166c26a3f204c9d000a4e07829bc2a67e6246657",
+    "commit": "8c858ba978aa183a3c534c34f62596f4902461ae",
     "bundle": {
-      "name": "AetherContracts-0.1.0-alpha.3.tar.gz",
-      "url": "https://github.com/EvanL1/AetherContracts/releases/download/v0.1.0-alpha.3/AetherContracts-0.1.0-alpha.3.tar.gz",
-      "root": "AetherContracts-0.1.0-alpha.3",
-      "size": 115663,
-      "sha256": "0946391d015f00579751c007a6b7925d003455a731d2f6ae295d706ddcb5dfb2",
+      "name": "AetherContracts-0.1.0-alpha.4.tar.gz",
+      "url": "https://github.com/EvanL1/AetherContracts/releases/download/v0.1.0-alpha.4/AetherContracts-0.1.0-alpha.4.tar.gz",
+      "root": "AetherContracts-0.1.0-alpha.4",
+      "size": 203186,
+      "sha256": "13d3cf0702976471e4206ac011de74733c03f97c2b263adb214df353279509b3",
       "limits": {
         "maximum_path_bytes": 512,
         "maximum_file_bytes": 8388608,
@@ -23,8 +23,8 @@
   },
   "manifest": {
     "release_path": "contract-manifest.json",
-    "local_path": "contracts/aether-contracts/v0.1.0-alpha.3/contract-manifest.json",
-    "sha256": "36a1c0cb2a6aa2a96ad8319cd1bc8ebe3cfe7784c5794a65e2008503d72ea4f3"
+    "local_path": "contracts/aether-contracts/v0.1.0-alpha.4/contract-manifest.json",
+    "sha256": "6d5207c79d7e4e9317a11366d17d5cc3927fc35ca66a7737aed2512fc7a3691b"
   },
   "policy": {
     "conformance_claim": "distribution-only",
@@ -33,7 +33,7 @@
     "physical_control": false
   },
   "adoption": {
-    "scope": "cloudlink-alpha3",
+    "scope": "cloudlink-integration-alpha4",
     "modules": [
       "cloudlink",
       "distribution",
@@ -44,6 +44,13 @@
       ".github/actions/verify-consumer/action.yml",
       "compatibility/cloudlink-v1alpha1-gates.json",
       "compatibility/failure-codes.json",
+      "compatibility/integration-control-v1alpha1.json",
+      "fixtures/cloudlink-integration/v1alpha1/fixture-manifest.json",
+      "fixtures/cloudlink-integration/v1alpha1/integration-observations-ack.valid.json",
+      "fixtures/cloudlink-integration/v1alpha1/integration-observations.valid.json",
+      "fixtures/cloudlink-integration/v1alpha1/integration-topology-ack.valid.json",
+      "fixtures/cloudlink-integration/v1alpha1/integration-topology-secret.invalid.json",
+      "fixtures/cloudlink-integration/v1alpha1/integration-topology.valid.json",
       "fixtures/cloudlink/v1alpha1/conflicting-replay.json",
       "fixtures/cloudlink/v1alpha1/conflicting-replay.valid-digest.json",
       "fixtures/cloudlink/v1alpha1/data-loss.valid.json",
@@ -60,6 +67,8 @@
       "fixtures/cloudlink/v1alpha1/runtime-manifest-report.valid.json",
       "fixtures/cloudlink/v1alpha1/session-accepted-duplicate-cursor.json",
       "fixtures/cloudlink/v1alpha1/session-accepted.valid.json",
+      "fixtures/cloudlink/v1alpha1/session-challenge-request-unknown-field.json",
+      "fixtures/cloudlink/v1alpha1/session-challenge-request.valid.json",
       "fixtures/cloudlink/v1alpha1/session-challenge.valid.json",
       "fixtures/cloudlink/v1alpha1/session-hello-auth-invalid.json",
       "fixtures/cloudlink/v1alpha1/session-hello-auth-required.json",
@@ -70,26 +79,65 @@
       "fixtures/cloudlink/v1alpha1/unsafe-uint64.json",
       "fixtures/cloudlink/v1alpha1/unsupported-version.json",
       "fixtures/cloudlink/v1alpha1/wrong-session-epoch.json",
+      "fixtures/integration-control/v1alpha1/action-offer.valid.json",
+      "fixtures/integration-control/v1alpha1/action-receipt-provider-accepted.valid.json",
+      "fixtures/integration-control/v1alpha1/fixture-manifest.json",
+      "fixtures/integration-control/v1alpha1/invalid/action-offer-missing-confirmation.json",
+      "fixtures/integration-control/v1alpha1/invalid/action-offer-provider-material.json",
+      "fixtures/integration-control/v1alpha1/invalid/action-offer-unknown-capability.json",
+      "fixtures/integration-control/v1alpha1/invalid/action-receipt-overlong-failure-code.json",
+      "fixtures/integration-control/v1alpha1/invalid/action-receipt-physical-completion.json",
+      "fixtures/integration/v1alpha1/fixture-manifest.json",
+      "fixtures/integration/v1alpha1/invalid/observation-dangling-point.json",
+      "fixtures/integration/v1alpha1/invalid/observation-diagnostic-text-invalid.json",
+      "fixtures/integration/v1alpha1/invalid/observation-good-without-value.json",
+      "fixtures/integration/v1alpha1/invalid/observation-type-mismatch.json",
+      "fixtures/integration/v1alpha1/invalid/observation-unavailable-with-value.json",
+      "fixtures/integration/v1alpha1/invalid/topology-dangling-device-area.json",
+      "fixtures/integration/v1alpha1/invalid/topology-display-text-invalid.json",
+      "fixtures/integration/v1alpha1/invalid/topology-duplicate-entity.json",
+      "fixtures/integration/v1alpha1/invalid/topology-unknown-field.json",
+      "fixtures/integration/v1alpha1/invalid/value-bytes-noncanonical.json",
+      "fixtures/integration/v1alpha1/invalid/value-decimal-noncanonical.json",
+      "fixtures/integration/v1alpha1/invalid/value-int64-overflow.json",
+      "fixtures/integration/v1alpha1/invalid/value-uint64-overflow.json",
+      "fixtures/integration/v1alpha1/valid/home-assistant-observations.json",
+      "fixtures/integration/v1alpha1/valid/home-assistant-topology.json",
       "profiles/cloudlink/v1alpha1/authentication.json",
       "profiles/cloudlink/v1alpha1/core.json",
+      "profiles/cloudlink/v1alpha1/integration-control.json",
+      "profiles/cloudlink/v1alpha1/integration.json",
+      "profiles/integration-control/v1alpha1/home-assistant.json",
+      "profiles/integration/v1alpha1/home-assistant.json",
       "profiles/mqtt/v1alpha1/profile.json",
       "schemas/cloudlink/v1alpha1/data-loss.schema.json",
       "schemas/cloudlink/v1alpha1/durable-ack.schema.json",
       "schemas/cloudlink/v1alpha1/envelope.schema.json",
       "schemas/cloudlink/v1alpha1/heartbeat.schema.json",
+      "schemas/cloudlink/v1alpha1/integration-action-offer.schema.json",
+      "schemas/cloudlink/v1alpha1/integration-action-receipt.schema.json",
+      "schemas/cloudlink/v1alpha1/integration-observation-batch.schema.json",
+      "schemas/cloudlink/v1alpha1/integration-topology-snapshot.schema.json",
       "schemas/cloudlink/v1alpha1/replay-request.schema.json",
       "schemas/cloudlink/v1alpha1/runtime-manifest-report.schema.json",
       "schemas/cloudlink/v1alpha1/runtime-manifest.v1.schema.json",
       "schemas/cloudlink/v1alpha1/session-accepted.schema.json",
+      "schemas/cloudlink/v1alpha1/session-challenge-request.schema.json",
       "schemas/cloudlink/v1alpha1/session-challenge.schema.json",
       "schemas/cloudlink/v1alpha1/session-hello.schema.json",
       "schemas/cloudlink/v1alpha1/telemetry-batch.schema.json",
       "schemas/distribution/v1alpha1/consumer-lock.schema.json",
+      "schemas/integration-control/v1alpha1/integration-action-intent.schema.json",
+      "schemas/integration-control/v1alpha1/integration-action-receipt-payload.schema.json",
+      "schemas/integration/v1alpha1/integration-observation-batch.schema.json",
+      "schemas/integration/v1alpha1/integration-topology-snapshot.schema.json",
+      "schemas/integration/v1alpha1/observed-value.schema.json",
       "schemas/tck/v1alpha1/fixture-manifest.schema.json",
       "schemas/tck/v1alpha1/scenario.schema.json",
       "scripts/verify-consumer-lock.mjs",
       "spec/cloudlink-v1alpha1.md",
       "spec/distribution-v1alpha1.md",
+      "spec/integration-control-v1alpha1.md",
       "spec/tck-v1alpha1.md",
       "tck/lib/scenario-runner.mjs",
       "tck/lib/strict-json.mjs",
@@ -99,18 +147,53 @@
   "imports": [
     {
       "source": ".github/actions/verify-consumer/action.yml",
-      "destination": "contracts/aether-contracts/v0.1.0-alpha.3/.github/actions/verify-consumer/action.yml",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/.github/actions/verify-consumer/action.yml",
       "sha256": "e14f5f538f6aa95ba32ec9e336eb07b5bb64ca6a46cc2f2468655004afabe6ec"
     },
     {
       "source": "compatibility/cloudlink-v1alpha1-gates.json",
-      "destination": "contracts/aether-contracts/v0.1.0-alpha.3/compatibility/cloudlink-v1alpha1-gates.json",
-      "sha256": "725380e0fd53029cc9e8865b98a6fab2f328393c65b4fc32de8e9dbfdf74f8de"
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/compatibility/cloudlink-v1alpha1-gates.json",
+      "sha256": "2fb9410401b75b5f02d2c01c6f7eb584877dcbbc55c4023a8b31711e45af0db6"
     },
     {
       "source": "compatibility/failure-codes.json",
-      "destination": "contracts/aether-contracts/v0.1.0-alpha.3/compatibility/failure-codes.json",
-      "sha256": "93acc147da6cf0da80b376e63b9f134e66adced26641f416151d9af66eb4f636"
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/compatibility/failure-codes.json",
+      "sha256": "9ba86b029501519df703c8f8267ad21f15849aaa9615199b42869a2804620913"
+    },
+    {
+      "source": "compatibility/integration-control-v1alpha1.json",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/compatibility/integration-control-v1alpha1.json",
+      "sha256": "67ed0711aa02d603c351ebb019748704ab658d8af2da09732aec5addf623c2f0"
+    },
+    {
+      "source": "fixtures/cloudlink-integration/v1alpha1/fixture-manifest.json",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/fixtures/cloudlink-integration/v1alpha1/fixture-manifest.json",
+      "sha256": "8d474f65319988fa9211ebfec54a23c6ea617daf474b1609252c78091e2c3627"
+    },
+    {
+      "source": "fixtures/cloudlink-integration/v1alpha1/integration-observations-ack.valid.json",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/fixtures/cloudlink-integration/v1alpha1/integration-observations-ack.valid.json",
+      "sha256": "e628b6206ca64f6e747c10cb0802ea71f80a17ce4b09e676da80e3ec213e80c2"
+    },
+    {
+      "source": "fixtures/cloudlink-integration/v1alpha1/integration-observations.valid.json",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/fixtures/cloudlink-integration/v1alpha1/integration-observations.valid.json",
+      "sha256": "6bafd4b69a81c313bfcc621e858f36914847cf04c684ff96824a27920fdc2411"
+    },
+    {
+      "source": "fixtures/cloudlink-integration/v1alpha1/integration-topology-ack.valid.json",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/fixtures/cloudlink-integration/v1alpha1/integration-topology-ack.valid.json",
+      "sha256": "88703e45e94f975cb46ed03877c1425ee31cf54cef4fac50ffb4c9f7270a4ff6"
+    },
+    {
+      "source": "fixtures/cloudlink-integration/v1alpha1/integration-topology-secret.invalid.json",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/fixtures/cloudlink-integration/v1alpha1/integration-topology-secret.invalid.json",
+      "sha256": "d3ce57d185235d00c883e1b7f1b32f4941c111ac8db030dcd1d824caae7f9443"
+    },
+    {
+      "source": "fixtures/cloudlink-integration/v1alpha1/integration-topology.valid.json",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/fixtures/cloudlink-integration/v1alpha1/integration-topology.valid.json",
+      "sha256": "fd19f49bb2e62f0860be21fa35bda31c8612b3c96fe309d1f7319dc33d5ce743"
     },
     {
       "source": "fixtures/cloudlink/v1alpha1/conflicting-replay.json",
@@ -135,7 +218,7 @@
     {
       "source": "fixtures/cloudlink/v1alpha1/fixture-manifest.json",
       "destination": "contracts/cloudlink/v1/fixture-manifest.json",
-      "sha256": "5070c3e3e53024437ba6a0ab0a677d5352037fa252749e2dbe25b036893b1d72"
+      "sha256": "ef1ca54d52c88e518a9c981bc2f344cf838732844f78ac186a37aa93af7217d3"
     },
     {
       "source": "fixtures/cloudlink/v1alpha1/heartbeat-ack.valid.json",
@@ -193,6 +276,16 @@
       "sha256": "580113f3a7a0bacaa4d83f6f20a13144dcf41db15baba997fd8a9a3dc4f19a26"
     },
     {
+      "source": "fixtures/cloudlink/v1alpha1/session-challenge-request-unknown-field.json",
+      "destination": "contracts/cloudlink/v1/fixtures/session-challenge-request-unknown-field.json",
+      "sha256": "6915da2d26bc8b8dd36a738be84905dc1f293b30f87c20b10aca12f30f0b326e"
+    },
+    {
+      "source": "fixtures/cloudlink/v1alpha1/session-challenge-request.valid.json",
+      "destination": "contracts/cloudlink/v1/fixtures/session-challenge-request.valid.json",
+      "sha256": "d5a8883bcdd40cb07a9a0c5ede1f0c79919dc645f7357e9503730ad3338c58d5"
+    },
+    {
       "source": "fixtures/cloudlink/v1alpha1/session-challenge.valid.json",
       "destination": "contracts/cloudlink/v1/fixtures/session-challenge.valid.json",
       "sha256": "9adf970a7a0f25f8c03bd14b3b95f180e143dc1c2ab6ff3cf1a51e6de8b2335e"
@@ -243,19 +336,159 @@
       "sha256": "d33413b8508a2a36c4eb7bee59fd589a4c64966e054fa9af2b2274c2f52f759a"
     },
     {
+      "source": "fixtures/integration-control/v1alpha1/action-offer.valid.json",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/fixtures/integration-control/v1alpha1/action-offer.valid.json",
+      "sha256": "b5c1aa0253e9175b51a3628734561fcfb69e26c87377f5cb69d78685d917a659"
+    },
+    {
+      "source": "fixtures/integration-control/v1alpha1/action-receipt-provider-accepted.valid.json",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/fixtures/integration-control/v1alpha1/action-receipt-provider-accepted.valid.json",
+      "sha256": "f69736c32102df136ccffbff8f6ce7716ea19c06b9477ec8f8682fe0f5ebab83"
+    },
+    {
+      "source": "fixtures/integration-control/v1alpha1/fixture-manifest.json",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/fixtures/integration-control/v1alpha1/fixture-manifest.json",
+      "sha256": "c15208bd258e7057bd7e311a426787cf6ffc6dc5a2cae2674b2086579379855a"
+    },
+    {
+      "source": "fixtures/integration-control/v1alpha1/invalid/action-offer-missing-confirmation.json",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/fixtures/integration-control/v1alpha1/invalid/action-offer-missing-confirmation.json",
+      "sha256": "0d3f2336b18a06b81e5d6c83dfe2f502c7ab4a6e45d7bee3d68d453c1710e7bc"
+    },
+    {
+      "source": "fixtures/integration-control/v1alpha1/invalid/action-offer-provider-material.json",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/fixtures/integration-control/v1alpha1/invalid/action-offer-provider-material.json",
+      "sha256": "c6f34b081f56f8373215330a84a6d33b8e7118a313e6db6e054aba12290d58ad"
+    },
+    {
+      "source": "fixtures/integration-control/v1alpha1/invalid/action-offer-unknown-capability.json",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/fixtures/integration-control/v1alpha1/invalid/action-offer-unknown-capability.json",
+      "sha256": "61399656eb9a072ef738865976c1c80907a173b0a0ecc74b7604f28d252d84ef"
+    },
+    {
+      "source": "fixtures/integration-control/v1alpha1/invalid/action-receipt-overlong-failure-code.json",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/fixtures/integration-control/v1alpha1/invalid/action-receipt-overlong-failure-code.json",
+      "sha256": "68e76c2294f6caba2541388dbb83387309c81fbaa1753839bf36c4c0e8e00d39"
+    },
+    {
+      "source": "fixtures/integration-control/v1alpha1/invalid/action-receipt-physical-completion.json",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/fixtures/integration-control/v1alpha1/invalid/action-receipt-physical-completion.json",
+      "sha256": "fb75bf0ef216d6959e814bdaa29084faf9549107660557a7dae5661fd026eb80"
+    },
+    {
+      "source": "fixtures/integration/v1alpha1/fixture-manifest.json",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/fixtures/integration/v1alpha1/fixture-manifest.json",
+      "sha256": "8b8e13327fa1c07a0281f051d99fd0a996bfbd6cf5132f189b351603e9ccef06"
+    },
+    {
+      "source": "fixtures/integration/v1alpha1/invalid/observation-dangling-point.json",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/fixtures/integration/v1alpha1/invalid/observation-dangling-point.json",
+      "sha256": "9950798b24fc9e0f4b626120bfd7a6c419ed5ac59d5d584e7790d431d2b30692"
+    },
+    {
+      "source": "fixtures/integration/v1alpha1/invalid/observation-diagnostic-text-invalid.json",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/fixtures/integration/v1alpha1/invalid/observation-diagnostic-text-invalid.json",
+      "sha256": "9e07894e2d6579e06fd74a57eab3fbfdfd5ef8dd324845b48e20f614c96ade8b"
+    },
+    {
+      "source": "fixtures/integration/v1alpha1/invalid/observation-good-without-value.json",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/fixtures/integration/v1alpha1/invalid/observation-good-without-value.json",
+      "sha256": "32a255c88935352a3daf6ad13a3c96c9609eafdfbeebb938f54f4a665b25639e"
+    },
+    {
+      "source": "fixtures/integration/v1alpha1/invalid/observation-type-mismatch.json",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/fixtures/integration/v1alpha1/invalid/observation-type-mismatch.json",
+      "sha256": "d8eb3ded3f02c902e1f2033fa9d88f06d6eb2fb6d1cb592ac1717b3cd332083f"
+    },
+    {
+      "source": "fixtures/integration/v1alpha1/invalid/observation-unavailable-with-value.json",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/fixtures/integration/v1alpha1/invalid/observation-unavailable-with-value.json",
+      "sha256": "a1c351813db59bc0e3d78c053a8341af57168db46e0e10e09f7de824199715db"
+    },
+    {
+      "source": "fixtures/integration/v1alpha1/invalid/topology-dangling-device-area.json",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/fixtures/integration/v1alpha1/invalid/topology-dangling-device-area.json",
+      "sha256": "0315cab47a087291e85d75cb7e2fc9fbedabb5a9788594d4e4091134b45fe7e2"
+    },
+    {
+      "source": "fixtures/integration/v1alpha1/invalid/topology-display-text-invalid.json",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/fixtures/integration/v1alpha1/invalid/topology-display-text-invalid.json",
+      "sha256": "752de89af37991d6dbde8a4ebfd6b6839b89967039b71361cc377d6f7b76c496"
+    },
+    {
+      "source": "fixtures/integration/v1alpha1/invalid/topology-duplicate-entity.json",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/fixtures/integration/v1alpha1/invalid/topology-duplicate-entity.json",
+      "sha256": "e60d1688c35844178440e867e3929e46c74189ee7be06628ee2c492040c82de5"
+    },
+    {
+      "source": "fixtures/integration/v1alpha1/invalid/topology-unknown-field.json",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/fixtures/integration/v1alpha1/invalid/topology-unknown-field.json",
+      "sha256": "0d6e012b9ebbc8e2caedc27406098eff11edc669aac1646a3675ccd53277ea89"
+    },
+    {
+      "source": "fixtures/integration/v1alpha1/invalid/value-bytes-noncanonical.json",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/fixtures/integration/v1alpha1/invalid/value-bytes-noncanonical.json",
+      "sha256": "907c601cff1872f8c1b1421ad91c1bb9631db52ff30d3569f1cfae04281c7b90"
+    },
+    {
+      "source": "fixtures/integration/v1alpha1/invalid/value-decimal-noncanonical.json",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/fixtures/integration/v1alpha1/invalid/value-decimal-noncanonical.json",
+      "sha256": "30a5ce138242980b9c45ebbf56a94a14ec15c9440b7faffb20c9eed8a7b31f26"
+    },
+    {
+      "source": "fixtures/integration/v1alpha1/invalid/value-int64-overflow.json",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/fixtures/integration/v1alpha1/invalid/value-int64-overflow.json",
+      "sha256": "a09a9b126ae4171886342596af8b5b79f1be6242d122153c446eb307316d6cb0"
+    },
+    {
+      "source": "fixtures/integration/v1alpha1/invalid/value-uint64-overflow.json",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/fixtures/integration/v1alpha1/invalid/value-uint64-overflow.json",
+      "sha256": "91bb1b4767050b1fe82bd889fd6aee0cbdd5df5f5244550d44666235f603df7a"
+    },
+    {
+      "source": "fixtures/integration/v1alpha1/valid/home-assistant-observations.json",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/fixtures/integration/v1alpha1/valid/home-assistant-observations.json",
+      "sha256": "3ad49c54acf6a9e4956e94bb311f5d59e6803f8f846239f0ca424322c0751fbb"
+    },
+    {
+      "source": "fixtures/integration/v1alpha1/valid/home-assistant-topology.json",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/fixtures/integration/v1alpha1/valid/home-assistant-topology.json",
+      "sha256": "465907921d147b26e7441e20a1a28c07dbde95c12a8cdb9e2f4270dd53d5c6a2"
+    },
+    {
       "source": "profiles/cloudlink/v1alpha1/authentication.json",
-      "destination": "contracts/aether-contracts/v0.1.0-alpha.3/profiles/cloudlink/v1alpha1/authentication.json",
-      "sha256": "17b23382c7fe7c84a95e6b58dd3ee3d0f1c67faf4c4f6ceeed7957c0c09f44cf"
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/profiles/cloudlink/v1alpha1/authentication.json",
+      "sha256": "5ebdd92710d9e218d1113bd072e75d4d8965d4d238dcfb2c4111b31f723b6e73"
     },
     {
       "source": "profiles/cloudlink/v1alpha1/core.json",
-      "destination": "contracts/aether-contracts/v0.1.0-alpha.3/profiles/cloudlink/v1alpha1/core.json",
-      "sha256": "d8c62035acdcac4e5786dbce350dd3af9af45f58329daf8a8110de411947f720"
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/profiles/cloudlink/v1alpha1/core.json",
+      "sha256": "1ab40c2ecbc738ec3f0bcd2a912ab78ac4a8c8bfba8f2d5a3aacbcdb0fa025bc"
+    },
+    {
+      "source": "profiles/cloudlink/v1alpha1/integration-control.json",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/profiles/cloudlink/v1alpha1/integration-control.json",
+      "sha256": "25ea6f8bc88eb6a28b094e7c3122c7c5b2ffe415aa0fd000a706721e55adc8c9"
+    },
+    {
+      "source": "profiles/cloudlink/v1alpha1/integration.json",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/profiles/cloudlink/v1alpha1/integration.json",
+      "sha256": "93e3b9d0772066be98e344b39debbef3d8204511e91d17e8d8eaf45bdc1147ab"
+    },
+    {
+      "source": "profiles/integration-control/v1alpha1/home-assistant.json",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/profiles/integration-control/v1alpha1/home-assistant.json",
+      "sha256": "2c42ce67a154985f9f0be0fb239b710ba199eb739674c98fece469287d6724a0"
+    },
+    {
+      "source": "profiles/integration/v1alpha1/home-assistant.json",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/profiles/integration/v1alpha1/home-assistant.json",
+      "sha256": "4b7339b237e7f9b82d632f9faeb09e71df0166101c539da9d4d6f2b0d6df7b23"
     },
     {
       "source": "profiles/mqtt/v1alpha1/profile.json",
-      "destination": "contracts/aether-contracts/v0.1.0-alpha.3/profiles/mqtt/v1alpha1/profile.json",
-      "sha256": "e2256add779a8a2002276049cd83042c3e0002b826431460b1a616f7f68d33ff"
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/profiles/mqtt/v1alpha1/profile.json",
+      "sha256": "35647367b8710458342760ae9beedc4c2d2a6c4f61ae6f449a965390a472e781"
     },
     {
       "source": "schemas/cloudlink/v1alpha1/data-loss.schema.json",
@@ -270,12 +503,32 @@
     {
       "source": "schemas/cloudlink/v1alpha1/envelope.schema.json",
       "destination": "contracts/cloudlink/v1/envelope.schema.json",
-      "sha256": "c22c32293bdd2aaaec10cd4fd311cd5947ac3ac435d39caacb55ca390ffda5f1"
+      "sha256": "3259e790195bdb44531f66833e1de4435cb3209b51f79910332c97c8ab7e4eb1"
     },
     {
       "source": "schemas/cloudlink/v1alpha1/heartbeat.schema.json",
       "destination": "contracts/cloudlink/v1/heartbeat.schema.json",
       "sha256": "ecdc567ca1064eb43fae2674737f0d39b0f6b651f0fac8e8b231fbcd6917b309"
+    },
+    {
+      "source": "schemas/cloudlink/v1alpha1/integration-action-offer.schema.json",
+      "destination": "contracts/cloudlink/v1/integration-action-offer.schema.json",
+      "sha256": "5a46666c1413a8cc6d96a6acfaf13309955e2ea14ebb043380bd6349026489b1"
+    },
+    {
+      "source": "schemas/cloudlink/v1alpha1/integration-action-receipt.schema.json",
+      "destination": "contracts/cloudlink/v1/integration-action-receipt.schema.json",
+      "sha256": "147515c9550974864137b85bdd9dd06c76d46c8f0c393e3ce174481dde3d5977"
+    },
+    {
+      "source": "schemas/cloudlink/v1alpha1/integration-observation-batch.schema.json",
+      "destination": "contracts/cloudlink/v1/integration-observation-batch.schema.json",
+      "sha256": "9511235cf74e7662ba200a2c8aab393c3b386e5f0951d60b4093c25bb9362e7d"
+    },
+    {
+      "source": "schemas/cloudlink/v1alpha1/integration-topology-snapshot.schema.json",
+      "destination": "contracts/cloudlink/v1/integration-topology-snapshot.schema.json",
+      "sha256": "7b6d0f5440a4abc30c7fe3dc23fb0c22dfba09de3307e484f970285ae5cedbd3"
     },
     {
       "source": "schemas/cloudlink/v1alpha1/replay-request.schema.json",
@@ -298,6 +551,11 @@
       "sha256": "92561df5d2ebe73e82a6641774cdd0cdc1b2edbcb08527e22262816bb090dd73"
     },
     {
+      "source": "schemas/cloudlink/v1alpha1/session-challenge-request.schema.json",
+      "destination": "contracts/cloudlink/v1/session-challenge-request.schema.json",
+      "sha256": "541dad81eb764d92e1c8084e9052797988bd8dbb52660767e71a5a7b03154e43"
+    },
+    {
       "source": "schemas/cloudlink/v1alpha1/session-challenge.schema.json",
       "destination": "contracts/cloudlink/v1/session-challenge.schema.json",
       "sha256": "e9b408a65efa64c53a3789aef7650c283c4aaede546b7c4e1ed97db734fa1d74"
@@ -314,53 +572,83 @@
     },
     {
       "source": "schemas/distribution/v1alpha1/consumer-lock.schema.json",
-      "destination": "contracts/aether-contracts/v0.1.0-alpha.3/schemas/distribution/v1alpha1/consumer-lock.schema.json",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/schemas/distribution/v1alpha1/consumer-lock.schema.json",
       "sha256": "39bfc21d6d6908b2e3091b4b84fbfcd0769f545cf27bb0a0fe3b60186d04c8d3"
     },
     {
+      "source": "schemas/integration-control/v1alpha1/integration-action-intent.schema.json",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/schemas/integration-control/v1alpha1/integration-action-intent.schema.json",
+      "sha256": "9c05a9974226571031e517cb99bb2f2e21bf8f7f353a1567c7f5ee44232f12a8"
+    },
+    {
+      "source": "schemas/integration-control/v1alpha1/integration-action-receipt-payload.schema.json",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/schemas/integration-control/v1alpha1/integration-action-receipt-payload.schema.json",
+      "sha256": "aea205df6b6fdbd6b166a03fe9ac116fb8dc50a72326cd580b6b84599751332c"
+    },
+    {
+      "source": "schemas/integration/v1alpha1/integration-observation-batch.schema.json",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/schemas/integration/v1alpha1/integration-observation-batch.schema.json",
+      "sha256": "db51ace3e7866540dd7812b731f46b2d541a3f0ea1ece443f5979b083b0f0f1c"
+    },
+    {
+      "source": "schemas/integration/v1alpha1/integration-topology-snapshot.schema.json",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/schemas/integration/v1alpha1/integration-topology-snapshot.schema.json",
+      "sha256": "e8fd51278424dd6fb5a6f13d770de68f862e7118f70ad76ff20fbddb8e2f32c6"
+    },
+    {
+      "source": "schemas/integration/v1alpha1/observed-value.schema.json",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/schemas/integration/v1alpha1/observed-value.schema.json",
+      "sha256": "a1e501bad36c60744c7d28867511418954c190a0a5a77e219914d19ccc8608ce"
+    },
+    {
       "source": "schemas/tck/v1alpha1/fixture-manifest.schema.json",
-      "destination": "contracts/aether-contracts/v0.1.0-alpha.3/schemas/tck/v1alpha1/fixture-manifest.schema.json",
-      "sha256": "f6cc1c3bacdc0d7fa698cd7bcd16ec27e911a407cd89b9f302a4b49f8b37acb7"
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/schemas/tck/v1alpha1/fixture-manifest.schema.json",
+      "sha256": "ff18167abf7a780cf9e0fb63b333a5d40e198e58e5ef414c34530edb8caeb915"
     },
     {
       "source": "schemas/tck/v1alpha1/scenario.schema.json",
-      "destination": "contracts/aether-contracts/v0.1.0-alpha.3/schemas/tck/v1alpha1/scenario.schema.json",
-      "sha256": "24e4670ab8b62b1e3348ad09040ca94c658ee0eb60a542324b800a8fab71ddf9"
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/schemas/tck/v1alpha1/scenario.schema.json",
+      "sha256": "37ad1076ecedf5dbad44a35cb44643f4d1c3f932b8b3015e6d2bc9bfb73411f6"
     },
     {
       "source": "scripts/verify-consumer-lock.mjs",
-      "destination": "contracts/aether-contracts/v0.1.0-alpha.3/scripts/verify-consumer-lock.mjs",
-      "sha256": "1b818dd7befd86d68a1ad96c2e07f4cc912efbe8a7d738ba2c98a960142a8669"
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/scripts/verify-consumer-lock.mjs",
+      "sha256": "614e4919dc91816c4d4c27bd7d34fc281356775b9d77cf7cf6c3a660649931be"
     },
     {
       "source": "spec/cloudlink-v1alpha1.md",
-      "destination": "contracts/aether-contracts/v0.1.0-alpha.3/spec/cloudlink-v1alpha1.md",
-      "sha256": "c12f94277c7aefcce27b4dd40bbe9e8ab1fcfc936d2ecd6c74c7de5994e5d0d1"
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/spec/cloudlink-v1alpha1.md",
+      "sha256": "1c59298e4fdba96deb13884f846421174c2d83a94cf88c8c8ae3b15c1c36dd3f"
     },
     {
       "source": "spec/distribution-v1alpha1.md",
-      "destination": "contracts/aether-contracts/v0.1.0-alpha.3/spec/distribution-v1alpha1.md",
-      "sha256": "42a3fb4f292b5dc95d9a6548b48b0656a5555a7cecb21c0beb5a2fdae6826f28"
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/spec/distribution-v1alpha1.md",
+      "sha256": "70676dc87b829ecd69536eb32b0ed32978c1ed5799862da6e09f61647bd8b552"
+    },
+    {
+      "source": "spec/integration-control-v1alpha1.md",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/spec/integration-control-v1alpha1.md",
+      "sha256": "b00e5be5e9a25c562ec7c2e523d863f3137402cff18337ce853f5587a6570c22"
     },
     {
       "source": "spec/tck-v1alpha1.md",
-      "destination": "contracts/aether-contracts/v0.1.0-alpha.3/spec/tck-v1alpha1.md",
-      "sha256": "45d831e3e69dc14e20e6e77eae7e372a6fbfc8aa34b312ce4d75d34c3980b8a0"
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/spec/tck-v1alpha1.md",
+      "sha256": "e5f71d92a1e09644dba20b3616a803e3d768e0e92e4797d205bdba823d5cbd21"
     },
     {
       "source": "tck/lib/scenario-runner.mjs",
-      "destination": "contracts/aether-contracts/v0.1.0-alpha.3/tck/lib/scenario-runner.mjs",
-      "sha256": "b1eeef77af302c76f35b826861d8a9fc3f4f035b370ed1dbc1e099237f34554f"
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/tck/lib/scenario-runner.mjs",
+      "sha256": "55deba8b4fc235f5159e988c745b1680b8da6f042733fefc6bbc2741572bce6f"
     },
     {
       "source": "tck/lib/strict-json.mjs",
-      "destination": "contracts/aether-contracts/v0.1.0-alpha.3/tck/lib/strict-json.mjs",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/tck/lib/strict-json.mjs",
       "sha256": "003394acc331121856b448c61a0c0f925063f9c863b350be898568c6cf2d9241"
     },
     {
       "source": "tck/scenarios/core.json",
-      "destination": "contracts/aether-contracts/v0.1.0-alpha.3/tck/scenarios/core.json",
-      "sha256": "b8aacdc5e4762da235a13af371b5fe0d7af3278fa208387fb97b5d9c57e3c912"
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.4/tck/scenarios/core.json",
+      "sha256": "6a64f354de38c61951d4ebdd825179da8665805955447b465d35d3809ad3b917"
     }
   ],
   "pending_imports": []

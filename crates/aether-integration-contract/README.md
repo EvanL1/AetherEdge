@@ -1,7 +1,7 @@
 # aether-integration-contract
 
 Strict product-side Rust binding for the experimental AetherContracts
-`aether.integration` v1alpha1 contract in the `0.1.0-alpha.4` candidate.
+`aether.integration` v1alpha1 contract in the `0.1.0-alpha.4` release.
 
 The crate is transport-neutral. It provides:
 

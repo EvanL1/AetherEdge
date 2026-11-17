@@ -7,9 +7,11 @@ evidence.
 
 ## 1. Select the compatible baseline
 
-Use AetherEdge `v0.0.1`, AetherContracts `v0.1.0-alpha.3`, and an AetherCloud
-revision that consumes the same complete contract lock. Confirm the exact
-combination in the [version matrix](../compatibility/version-matrix.md).
+Use the AetherContracts release pinned by the AetherEdge revision under test:
+`v0.1.0-alpha.3` for AetherEdge `v0.0.1`, or `v0.1.0-alpha.4` for the current
+unreleased source tree. Pair it with an AetherCloud revision that consumes the
+same complete contract lock. Confirm the exact combination in the
+[version matrix](../compatibility/version-matrix.md).
 
 Do not follow `main`, `latest`, a version range, or a sibling checkout for
 contract behavior.
@@ -28,7 +30,7 @@ service. For a supervised runtime installation, follow the
 
 ## 3. Verify the public contract authority
 
-In an AetherContracts `v0.1.0-alpha.3` checkout:
+In a checkout of that exact AetherContracts tag:
 
 ```bash
 pnpm test:tck

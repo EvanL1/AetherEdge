@@ -110,29 +110,117 @@ pub enum CloudLinkCodecError {
     },
 }
 
-impl CloudLinkCodecError {
-    /// Returns the stable public AetherContracts failure taxonomy code.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CloudLinkFailureCode {
+    FieldBound,
+    UnsupportedVersion,
+    StreamBindingConflict,
+    BatchIdMismatch,
+    UnknownField,
+    JsonSyntaxError,
+    DuplicateJsonKey,
+    JsonInvalidUnicode,
+    JsonUnsupportedValue,
+    AuthenticationRequired,
+    AuthenticationInvalid,
+    SemverInvalid,
+    InvalidDigest,
+    CursorConflict,
+    IntegerNonCanonical,
+    IntegerOutOfRange,
+    DigestMismatch,
+    StaleSession,
+    MessageExpired,
+}
+
+impl CloudLinkFailureCode {
+    pub const ALL: [Self; 19] = [
+        Self::FieldBound,
+        Self::UnsupportedVersion,
+        Self::StreamBindingConflict,
+        Self::BatchIdMismatch,
+        Self::UnknownField,
+        Self::JsonSyntaxError,
+        Self::DuplicateJsonKey,
+        Self::JsonInvalidUnicode,
+        Self::JsonUnsupportedValue,
+        Self::AuthenticationRequired,
+        Self::AuthenticationInvalid,
+        Self::SemverInvalid,
+        Self::InvalidDigest,
+        Self::CursorConflict,
+        Self::IntegerNonCanonical,
+        Self::IntegerOutOfRange,
+        Self::DigestMismatch,
+        Self::StaleSession,
+        Self::MessageExpired,
+    ];
+
     #[must_use]
-    pub fn failure_code(&self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
-            Self::MessageTooLarge { .. } | Self::TooManySamples { .. } => "FIELD_BOUND",
-            Self::IntegrationExtensionNotEnabled => "UNSUPPORTED_VERSION",
-            Self::IntegrationStreamBindingConflict => "STREAM_BINDING_CONFLICT",
-            Self::IntegrationBatchIdMismatch => "BATCH_ID_MISMATCH",
-            Self::IntegrationContract { source } => source.code().as_str(),
-            Self::InvalidJson { source } if source.to_string().contains("unknown field") => {
-                "UNKNOWN_FIELD"
+            Self::FieldBound => "FIELD_BOUND",
+            Self::UnsupportedVersion => "UNSUPPORTED_VERSION",
+            Self::StreamBindingConflict => "STREAM_BINDING_CONFLICT",
+            Self::BatchIdMismatch => "BATCH_ID_MISMATCH",
+            Self::UnknownField => "UNKNOWN_FIELD",
+            Self::JsonSyntaxError => "JSON_SYNTAX_ERROR",
+            Self::DuplicateJsonKey => "DUPLICATE_JSON_KEY",
+            Self::JsonInvalidUnicode => "JSON_INVALID_UNICODE",
+            Self::JsonUnsupportedValue => "JSON_UNSUPPORTED_VALUE",
+            Self::AuthenticationRequired => "AUTHENTICATION_REQUIRED",
+            Self::AuthenticationInvalid => "AUTHENTICATION_INVALID",
+            Self::SemverInvalid => "SEMVER_INVALID",
+            Self::InvalidDigest => "INVALID_DIGEST",
+            Self::CursorConflict => "CURSOR_CONFLICT",
+            Self::IntegerNonCanonical => "INTEGER_NON_CANONICAL",
+            Self::IntegerOutOfRange => "INTEGER_OUT_OF_RANGE",
+            Self::DigestMismatch => "DIGEST_MISMATCH",
+            Self::StaleSession => "STALE_SESSION",
+            Self::MessageExpired => "MESSAGE_EXPIRED",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CloudLinkFailure {
+    Codec(CloudLinkFailureCode),
+    Integration(aether_integration_contract::IntegrationContractErrorCode),
+}
+
+impl CloudLinkFailure {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Codec(code) => code.as_str(),
+            Self::Integration(code) => code.as_str(),
+        }
+    }
+}
+
+impl CloudLinkCodecError {
+    #[must_use]
+    pub fn failure(&self) -> CloudLinkFailure {
+        use CloudLinkFailureCode as Code;
+
+        let code = match self {
+            Self::IntegrationContract { source } => {
+                return CloudLinkFailure::Integration(source.code());
             },
-            Self::InvalidJson { .. } | Self::CanonicalJson { .. } => "INVALID_JSON",
-            Self::UnsupportedMessage { .. } => "UNSUPPORTED_MESSAGE",
-            Self::UnsupportedProtocolVersion { .. } | Self::VersionNegotiationFailed => {
-                "UNSUPPORTED_VERSION"
-            },
+            Self::MessageTooLarge { .. } | Self::TooManySamples { .. } => Code::FieldBound,
+            Self::IntegrationExtensionNotEnabled => Code::UnsupportedVersion,
+            Self::IntegrationStreamBindingConflict => Code::StreamBindingConflict,
+            Self::IntegrationBatchIdMismatch => Code::BatchIdMismatch,
+            Self::InvalidJson { source } => json_failure(source),
+            Self::CanonicalJson { .. } => Code::JsonUnsupportedValue,
+            Self::UnsupportedMessage { .. }
+            | Self::UnsupportedProtocolVersion { .. }
+            | Self::VersionNegotiationFailed => Code::UnsupportedVersion,
             Self::InvalidField { field, message }
                 if matches!(*field, "gateway_key_id" | "gateway_signature")
                     && message.contains("required") =>
             {
-                "AUTHENTICATION_REQUIRED"
+                Code::AuthenticationRequired
             },
             Self::InvalidField { field, .. }
                 if matches!(
@@ -144,25 +232,44 @@ impl CloudLinkCodecError {
                         | "credential_binding.origin_model"
                 ) =>
             {
-                "AUTHENTICATION_INVALID"
+                Code::AuthenticationInvalid
             },
             Self::InvalidField { field, .. } if *field == "payload.manifest.aether_version" => {
-                "SEMVER_INVALID"
+                Code::SemverInvalid
             },
             Self::InvalidField { field, .. } if matches!(*field, "delivery.digest" | "digest") => {
-                "INVALID_DIGEST"
+                Code::InvalidDigest
             },
-            Self::InvalidField { field, .. } if *field == "resume" => "CURSOR_CONFLICT",
+            Self::InvalidField { field, .. } if *field == "resume" => Code::CursorConflict,
             Self::InvalidField { .. } | Self::NonFinitePointValue | Self::ControlPointForbidden => {
-                "FIELD_BOUND"
+                Code::FieldBound
             },
-            Self::InvalidCanonicalUint64 { .. } => "INTEGER_NON_CANONICAL",
-            Self::IntegerOutOfRange { .. } => "INTEGER_OUT_OF_RANGE",
-            Self::DigestMismatch => "DIGEST_MISMATCH",
-            Self::SessionMismatch => "STALE_SESSION",
-            Self::MessageExpired => "MESSAGE_EXPIRED",
-            Self::RuntimeManifestChecksum => "MANIFEST_INVALID",
-        }
+            Self::InvalidCanonicalUint64 { .. } => Code::IntegerNonCanonical,
+            Self::IntegerOutOfRange { .. } => Code::IntegerOutOfRange,
+            Self::DigestMismatch => Code::DigestMismatch,
+            Self::SessionMismatch => Code::StaleSession,
+            Self::MessageExpired => Code::MessageExpired,
+            Self::RuntimeManifestChecksum => Code::DigestMismatch,
+        };
+        CloudLinkFailure::Codec(code)
+    }
+
+    #[must_use]
+    pub fn failure_code(&self) -> &'static str {
+        self.failure().as_str()
+    }
+}
+
+fn json_failure(source: &serde_json::Error) -> CloudLinkFailureCode {
+    let message = source.to_string();
+    if message.contains("unknown field") {
+        CloudLinkFailureCode::UnknownField
+    } else if message.contains("duplicate field") {
+        CloudLinkFailureCode::DuplicateJsonKey
+    } else if message.contains("surrogate") || message.contains("unicode code point") {
+        CloudLinkFailureCode::JsonInvalidUnicode
+    } else {
+        CloudLinkFailureCode::JsonSyntaxError
     }
 }
 

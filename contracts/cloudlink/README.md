@@ -1,7 +1,7 @@
 # Experimental CloudLink contracts
 
 `v1/` is AetherEdge's integration surface for the public AetherContracts
-release. AetherContracts `v0.1.0-alpha.3`, pinned by the root consumer lock,
+release. AetherContracts `v0.1.0-alpha.4`, pinned by the root consumer lock,
 is shared authority. The local files are adopted byte copies, migration
 history, or product proposals; they are not a second authority. Adoption is
 partial and is not a production release.

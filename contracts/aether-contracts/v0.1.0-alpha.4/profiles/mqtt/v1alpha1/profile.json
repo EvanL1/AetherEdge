@@ -1,0 +1,55 @@
+{
+  "schema": "aether.cloudlink.mqtt-profile.v1alpha1",
+  "status": "experimental-auth-proposal",
+  "transport": {
+    "mqtt_baseline": "3.1.1",
+    "qos": 1,
+    "retain": false,
+    "maximum_message_bytes": 262144,
+    "encoding": "UTF-8 JSON"
+  },
+  "topics": {
+    "up_session": "{prefix}/v1/gateways/{gatewayId}/up/session",
+    "up_heartbeat": "{prefix}/v1/gateways/{gatewayId}/up/heartbeat",
+    "up_manifest": "{prefix}/v1/gateways/{gatewayId}/up/manifest",
+    "up_telemetry": "{prefix}/v1/gateways/{gatewayId}/up/telemetry",
+    "up_integration_topology": "{prefix}/v1/gateways/{gatewayId}/up/integration/topology",
+    "up_integration_observations": "{prefix}/v1/gateways/{gatewayId}/up/integration/observations",
+    "up_integration_control_receipts": "{prefix}/v1/gateways/{gatewayId}/up/integration-control/receipts",
+    "up_data_loss": "{prefix}/v1/gateways/{gatewayId}/up/data-loss",
+    "down_session": "{prefix}/v1/gateways/{gatewayId}/down/session",
+    "down_ack": "{prefix}/v1/gateways/{gatewayId}/down/ack",
+    "down_replay": "{prefix}/v1/gateways/{gatewayId}/down/replay",
+    "down_integration_control": "{prefix}/v1/gateways/{gatewayId}/down/integration-control"
+  },
+  "namespace_authorization": {
+    "prefix_role": "authorization-namespace",
+    "gateway_id_uniqueness": "unique-within-one-prefix",
+    "multi_tenant_requirement": "tenant-and-project-isolated-prefix-or-cloud-global-gateway-id",
+    "broker_principal_scope": {
+      "publish": "exact-prefix-and-gateway-up-topics-only",
+      "subscribe": "exact-prefix-and-gateway-down-topics-only",
+      "cross_namespace": false,
+      "wildcard_gateway": false
+    }
+  },
+  "authentication": {
+    "status": "proposal",
+    "shared_broker": "alpha.4 declares a default-off rate-limited up/session challenge request plus gateway-signed and trusted-connector external-attestation origin models; the request is not identity evidence and production key lifecycle and verifier ownership remain undefined",
+    "prefix_identity_is_authentication": false,
+    "topic_identity_is_authentication": false,
+    "payload_identity_is_authentication": false,
+    "mqtt_credentials_are_gateway_attestation": false
+  },
+  "acknowledgement": {
+    "mqtt_puback_is_application_durable": false,
+    "application_ack": "unsigned in alpha.4",
+    "signed_durable_ack": "planned"
+  },
+  "forbidden": [
+    "arbitrary physical-control topics outside explicitly activated extensions",
+    "direct SHM writes",
+    "direct device-register writes",
+    "payload-supplied trusted Broker attestation"
+  ]
+}

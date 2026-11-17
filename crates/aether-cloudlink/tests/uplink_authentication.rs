@@ -58,7 +58,7 @@ fn telemetry_record() -> CloudLinkRecord {
 #[test]
 fn real_contract_fixture_projects_exactly_thirteen_language_neutral_fields() {
     let fixture: Value = serde_json::from_slice(include_bytes!(
-        "fixtures/action-receipt-provider-accepted.valid.json"
+        "../../../contracts/aether-contracts/v0.1.0-alpha.4/fixtures/integration-control/v1alpha1/action-receipt-provider-accepted.valid.json"
     ))
     .expect("frozen AetherContracts fixture");
     let delivery = &fixture["delivery"];

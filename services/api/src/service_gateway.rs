@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use aether_auth_jwt::{Confirmation, ROLE_COMMAND_PERMISSIONS, scope_allows};
+use aether_auth_jwt::Confirmation;
 use axum::{
     Json, Router,
     body::{Body, to_bytes},
@@ -216,17 +216,7 @@ fn authorize_service_request(
     if !is_governed_mutation(service, path, method) {
         return Ok(());
     }
-    if !matches!(claims.role.as_deref(), Some("Engineer" | "Admin")) {
-        return Err(GatewayAuthorizationError::MutationForbidden);
-    }
-    // A scoped token keeps command authority only if its scope still lists at
-    // least one command permission. The downstream service remains the
-    // authority on which one applies; this gate exists so a token narrowed to
-    // reads is refused here instead of being forwarded to be rejected there.
-    if !ROLE_COMMAND_PERMISSIONS
-        .iter()
-        .any(|permission| scope_allows(&claims.scope, permission))
-    {
+    if !claims.may_mutate_application_state() {
         return Err(GatewayAuthorizationError::MutationForbidden);
     }
     let confirmation = Confirmation::from_headers(headers)

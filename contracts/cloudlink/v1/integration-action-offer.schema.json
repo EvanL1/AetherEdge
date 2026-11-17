@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "integration-action-offer.schema.json",
+  "title": "Experimental Aether CloudLink governed Integration action offer v1 alpha 1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "protocol",
+    "protocol_version",
+    "extension",
+    "message_kind",
+    "gateway_id",
+    "session_id",
+    "session_epoch",
+    "credential_generation",
+    "job_id",
+    "issued_at_ms",
+    "expires_at_ms",
+    "intent_digest",
+    "intent",
+    "cloud_authentication"
+  ],
+  "properties": {
+    "schema": {
+      "const": "aether.cloudlink.integration-action-offer.v1alpha1"
+    },
+    "protocol": { "const": "aether.cloudlink" },
+    "protocol_version": { "const": "1.0" },
+    "extension": {
+      "const": "aether.cloudlink.integration-control.v1alpha1"
+    },
+    "message_kind": { "const": "integration-action-offer" },
+    "gateway_id": { "$ref": "envelope.schema.json#/$defs/uuid" },
+    "session_id": { "$ref": "envelope.schema.json#/$defs/uuid" },
+    "session_epoch": {
+      "$ref": "envelope.schema.json#/$defs/positiveUint64"
+    },
+    "credential_generation": {
+      "$ref": "envelope.schema.json#/$defs/positiveUint64"
+    },
+    "job_id": { "$ref": "envelope.schema.json#/$defs/uuid" },
+    "issued_at_ms": { "$ref": "envelope.schema.json#/$defs/uint64" },
+    "expires_at_ms": { "$ref": "envelope.schema.json#/$defs/uint64" },
+    "intent_digest": { "$ref": "envelope.schema.json#/$defs/digest" },
+    "intent": {
+      "$ref": "https://contracts.aether.dev/schemas/integration-control/v1alpha1/integration-action-intent.schema.json"
+    },
+    "cloud_authentication": {
+      "$ref": "envelope.schema.json#/$defs/messageAuthentication"
+    }
+  }
+}

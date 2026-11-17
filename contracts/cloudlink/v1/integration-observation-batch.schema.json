@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "integration-observation-batch.schema.json",
+  "title": "Experimental Aether CloudLink Integration observation batch v1 alpha 1",
+  "allOf": [
+    { "$ref": "envelope.schema.json#/$defs/uplinkEnvelope" },
+    {
+      "properties": {
+        "message_kind": { "const": "integration-observation-batch" },
+        "payload": {
+          "$ref": "https://contracts.aether.dev/schemas/integration/v1alpha1/integration-observation-batch.schema.json"
+        }
+      }
+    }
+  ]
+}

@@ -3,8 +3,8 @@ use std::fs;
 use std::path::Path;
 
 use aether_cloudlink::{
-    CandidateMessage, CloudLinkCodec, CloudLinkCodecError, MessageAuthentication, SessionBinding,
-    SessionHello, TopologyBinding, UplinkAuthentication,
+    CandidateMessage, CloudLinkCodec, CloudLinkCodecError, MessageAuthentication, ResumeCursor,
+    SessionBinding, SessionChallengeRequest, SessionHello, TopologyBinding, UplinkAuthentication,
 };
 use aether_domain::{
     InstanceId, PointAddress, PointId, PointKind, PointQuality, PointSample, TimestampMs,
@@ -24,9 +24,13 @@ fn aether_contracts_distribution_lock_pins_imported_bytes() {
 
     assert_eq!(lock["schema"], "aether.contracts.consumer-lock.v1alpha1");
     assert_eq!(lock["status"], "complete-consumer");
-    assert_eq!(lock["release"]["version"], "0.1.0-alpha.3");
+    assert_eq!(lock["release"]["version"], "0.1.0-alpha.4");
+    assert_eq!(lock["release"]["tag"], "v0.1.0-alpha.4");
+    assert_eq!(
+        lock["release"]["commit"],
+        "8c858ba978aa183a3c534c34f62596f4902461ae"
+    );
     assert_eq!(lock["pending_imports"], serde_json::json!([]));
-    assert_eq!(lock["release"]["version"], "0.1.0-alpha.3");
     assert_eq!(lock["policy"]["conformance_claim"], "distribution-only");
     assert_eq!(lock["policy"]["production_release"], false);
     assert_eq!(lock["policy"]["legacy_default"], true);
@@ -48,7 +52,7 @@ fn aether_contracts_distribution_lock_pins_imported_bytes() {
     let manifest: Value =
         serde_json::from_slice(&manifest_bytes).expect("AetherContracts release manifest JSON");
     assert_eq!(manifest["contract"], "aether.contracts");
-    assert_eq!(manifest["release_version"], "0.1.0-alpha.3");
+    assert_eq!(manifest["release_version"], "0.1.0-alpha.4");
     assert_eq!(manifest["production_release"], false);
     assert_eq!(manifest["legacy_default"], true);
     assert_eq!(manifest["physical_control"], false);
@@ -71,8 +75,8 @@ fn aether_contracts_distribution_lock_pins_imported_bytes() {
     let pending = lock["pending_imports"]
         .as_array()
         .expect("pending consumer imports");
-    assert_eq!(imports.len(), 53, "complete alpha.3 adoption closure");
-    assert!(pending.is_empty(), "alpha.3 has no pending imports");
+    assert_eq!(imports.len(), 101, "complete alpha.4 adoption closure");
+    assert!(pending.is_empty(), "alpha.4 has no pending imports");
 
     let mut sources = HashSet::new();
     let mut destinations = HashSet::new();
@@ -128,9 +132,9 @@ fn product_integration_manifest_and_hello_are_pinned() {
             .expect("checked-in joint contract manifest"),
     )
     .expect("contract manifest JSON");
-    assert_eq!(manifest["contracts_release"], "0.1.0-alpha.3");
+    assert_eq!(manifest["contracts_release"], "0.1.0-alpha.4");
     assert_eq!(manifest["status"], "product-local-implementation-overlay");
-    assert_eq!(manifest["authority"], "AetherContracts v0.1.0-alpha.3");
+    assert_eq!(manifest["authority"], "AetherContracts v0.1.0-alpha.4");
     assert_eq!(manifest["owner"], "AetherEdge implementation evidence");
     assert_eq!(
         manifest["authoritative_artifacts"]["core_profile"],
@@ -209,7 +213,7 @@ fn product_codec_executes_the_complete_public_fixture_manifest() {
     )
     .expect("fixture manifest JSON");
     let entries = manifest["fixtures"].as_array().expect("fixture entries");
-    assert_eq!(entries.len(), 25, "the complete alpha.3 public fixture set");
+    assert_eq!(entries.len(), 27, "the complete alpha.4 public fixture set");
 
     for entry in entries {
         let name = entry["file"].as_str().expect("fixture file");
@@ -334,6 +338,7 @@ fn telemetry_sample() -> PointSample {
 #[test]
 fn all_valid_golden_fixtures_decode_strictly() {
     for name in [
+        "session-challenge-request.valid.json",
         "session-challenge.valid.json",
         "session-hello.valid.json",
         "session-accepted.valid.json",
@@ -352,14 +357,48 @@ fn all_valid_golden_fixtures_decode_strictly() {
 }
 
 #[test]
-fn alpha3_authentication_and_manifest_gap_fixtures_fail_closed() {
+fn session_challenge_request_encoder_matches_the_published_fixture() {
+    let published: Value = serde_json::from_slice(&fixture("session-challenge-request.valid.json"))
+        .expect("published challenge request fixture JSON");
+    let request = SessionChallengeRequest::new(
+        "33333333-3333-4333-8333-333333333333",
+        "development-binding-17",
+        3,
+        vec!["1.0".to_owned()],
+        "A".repeat(43),
+        vec![ResumeCursor::new("telemetry", 4, 18).expect("resume cursor")],
+    )
+    .expect("challenge request");
+    let encoded = CloudLinkCodec::encode(&request).expect("challenge request JSON");
+    assert_eq!(
+        serde_json::from_slice::<Value>(&encoded).expect("encoded challenge request"),
+        published,
+        "the encoder must emit exactly the published closed request"
+    );
+
+    let decoded = match CloudLinkCodec::decode(&fixture("session-challenge-request.valid.json"))
+        .expect("published challenge request must decode")
+    {
+        CandidateMessage::SessionChallengeRequest(value) => value,
+        other => panic!("wrong message: {other:?}"),
+    };
+    assert_eq!(decoded, request);
+    assert_eq!(decoded.gateway_id(), "33333333-3333-4333-8333-333333333333");
+
+    let error = CloudLinkCodec::decode(&fixture("session-challenge-request-unknown-field.json"))
+        .expect_err("the closed request rejects unknown fields");
+    assert_eq!(error.failure_code(), "UNKNOWN_FIELD");
+}
+
+#[test]
+fn authentication_and_manifest_gap_fixtures_fail_closed() {
     for name in [
         "session-hello-auth-required.json",
         "session-hello-auth-invalid.json",
         "runtime-manifest-invalid-semver.json",
     ] {
         let _ = CloudLinkCodec::decode(&fixture(name))
-            .expect_err("alpha.3 gap fixture must fail closed");
+            .expect_err("pinned gap fixture must fail closed");
     }
 }
 

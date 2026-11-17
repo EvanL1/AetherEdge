@@ -1,6 +1,6 @@
 # CloudLink MQTT v1 AetherEdge implementation overlay
 
-This directory consumes AetherContracts `v0.1.0-alpha.3`, the sole CloudLink
+This directory consumes AetherContracts `v0.1.0-alpha.4`, the sole CloudLink
 wire authority. Imported files are exact release bytes. Local manifests,
 profiles, gates, scenarios, and migration notes are non-authoritative AetherEdge
 implementation/readiness/evidence overlays and cannot redefine the public
@@ -34,12 +34,12 @@ position, batch identity, business digest, and durable receipt.
   control message.
 
 `fixture-manifest.json` and the root complete-consumer lock pin every required
-alpha.3 artifact with `pending_imports: []`. Product tests execute the public
+alpha.4 artifact with `pending_imports: []`. Product tests execute the public
 fixtures, but do not establish production credentials, Cloud crash durability,
 signed ACK, or cutover readiness.
 
 `wire-profile.json` and the interoperability files are product overlays only.
 The public replay identity is `(gateway_id, stream_id, stream_epoch, position)`;
-`batch_id` and `digest` are stable bindings. Alpha.3 durable application ACKs
+`batch_id` and `digest` are stable bindings. Alpha.4 durable application ACKs
 are unsigned. `session-authentication.schema.json` is retained only as
 superseded migration history and is never contract authority.

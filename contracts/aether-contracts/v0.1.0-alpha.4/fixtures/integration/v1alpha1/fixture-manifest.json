@@ -1,0 +1,111 @@
+{
+  "schema": "aether.fixture-manifest.v1alpha1",
+  "contract": "aether.integration",
+  "status": "experimental",
+  "hash_algorithm": "sha256",
+  "fixtures": [
+    {
+      "file": "valid/home-assistant-topology.json",
+      "expectation": "valid",
+      "schema_id": "https://contracts.aether.dev/schemas/integration/v1alpha1/integration-topology-snapshot.schema.json",
+      "sha256": "465907921d147b26e7441e20a1a28c07dbde95c12a8cdb9e2f4270dd53d5c6a2"
+    },
+    {
+      "file": "valid/home-assistant-observations.json",
+      "expectation": "valid",
+      "schema_id": "https://contracts.aether.dev/schemas/integration/v1alpha1/integration-observation-batch.schema.json",
+      "sha256": "3ad49c54acf6a9e4956e94bb311f5d59e6803f8f846239f0ca424322c0751fbb"
+    },
+    {
+      "file": "invalid/topology-duplicate-entity.json",
+      "expectation": "context-invalid",
+      "schema_id": "https://contracts.aether.dev/schemas/integration/v1alpha1/integration-topology-snapshot.schema.json",
+      "failure_code": "IDENTITY_CONFLICT",
+      "sha256": "e60d1688c35844178440e867e3929e46c74189ee7be06628ee2c492040c82de5"
+    },
+    {
+      "file": "invalid/topology-dangling-device-area.json",
+      "expectation": "context-invalid",
+      "schema_id": "https://contracts.aether.dev/schemas/integration/v1alpha1/integration-topology-snapshot.schema.json",
+      "failure_code": "REFERENCE_NOT_FOUND",
+      "sha256": "0315cab47a087291e85d75cb7e2fc9fbedabb5a9788594d4e4091134b45fe7e2"
+    },
+    {
+      "file": "invalid/observation-dangling-point.json",
+      "expectation": "context-invalid",
+      "schema_id": "https://contracts.aether.dev/schemas/integration/v1alpha1/integration-observation-batch.schema.json",
+      "failure_code": "REFERENCE_NOT_FOUND",
+      "sha256": "9950798b24fc9e0f4b626120bfd7a6c419ed5ac59d5d584e7790d431d2b30692"
+    },
+    {
+      "file": "invalid/observation-type-mismatch.json",
+      "expectation": "context-invalid",
+      "schema_id": "https://contracts.aether.dev/schemas/integration/v1alpha1/integration-observation-batch.schema.json",
+      "failure_code": "VALUE_TYPE_MISMATCH",
+      "sha256": "d8eb3ded3f02c902e1f2033fa9d88f06d6eb2fb6d1cb592ac1717b3cd332083f"
+    },
+    {
+      "file": "invalid/observation-good-without-value.json",
+      "expectation": "context-invalid",
+      "schema_id": "https://contracts.aether.dev/schemas/integration/v1alpha1/integration-observation-batch.schema.json",
+      "failure_code": "OBSERVATION_VALUE_INVALID",
+      "sha256": "32a255c88935352a3daf6ad13a3c96c9609eafdfbeebb938f54f4a665b25639e"
+    },
+    {
+      "file": "invalid/observation-unavailable-with-value.json",
+      "expectation": "context-invalid",
+      "schema_id": "https://contracts.aether.dev/schemas/integration/v1alpha1/integration-observation-batch.schema.json",
+      "failure_code": "OBSERVATION_VALUE_INVALID",
+      "sha256": "a1c351813db59bc0e3d78c053a8341af57168db46e0e10e09f7de824199715db"
+    },
+    {
+      "file": "invalid/topology-unknown-field.json",
+      "expectation": "wire-invalid",
+      "schema_id": "https://contracts.aether.dev/schemas/integration/v1alpha1/integration-topology-snapshot.schema.json",
+      "failure_code": "UNKNOWN_FIELD",
+      "sha256": "0d6e012b9ebbc8e2caedc27406098eff11edc669aac1646a3675ccd53277ea89"
+    },
+    {
+      "file": "invalid/topology-display-text-invalid.json",
+      "expectation": "wire-invalid",
+      "schema_id": "https://contracts.aether.dev/schemas/integration/v1alpha1/integration-topology-snapshot.schema.json",
+      "failure_code": "TEXT_INVALID",
+      "sha256": "752de89af37991d6dbde8a4ebfd6b6839b89967039b71361cc377d6f7b76c496"
+    },
+    {
+      "file": "invalid/observation-diagnostic-text-invalid.json",
+      "expectation": "wire-invalid",
+      "schema_id": "https://contracts.aether.dev/schemas/integration/v1alpha1/integration-observation-batch.schema.json",
+      "failure_code": "TEXT_INVALID",
+      "sha256": "9e07894e2d6579e06fd74a57eab3fbfdfd5ef8dd324845b48e20f614c96ade8b"
+    },
+    {
+      "file": "invalid/value-int64-overflow.json",
+      "expectation": "wire-invalid",
+      "schema_id": "https://contracts.aether.dev/schemas/integration/v1alpha1/observed-value.schema.json",
+      "failure_code": "INTEGER_OUT_OF_RANGE",
+      "sha256": "a09a9b126ae4171886342596af8b5b79f1be6242d122153c446eb307316d6cb0"
+    },
+    {
+      "file": "invalid/value-uint64-overflow.json",
+      "expectation": "wire-invalid",
+      "schema_id": "https://contracts.aether.dev/schemas/integration/v1alpha1/observed-value.schema.json",
+      "failure_code": "INTEGER_OUT_OF_RANGE",
+      "sha256": "91bb1b4767050b1fe82bd889fd6aee0cbdd5df5f5244550d44666235f603df7a"
+    },
+    {
+      "file": "invalid/value-decimal-noncanonical.json",
+      "expectation": "wire-invalid",
+      "schema_id": "https://contracts.aether.dev/schemas/integration/v1alpha1/observed-value.schema.json",
+      "failure_code": "VALUE_ENCODING_INVALID",
+      "sha256": "30a5ce138242980b9c45ebbf56a94a14ec15c9440b7faffb20c9eed8a7b31f26"
+    },
+    {
+      "file": "invalid/value-bytes-noncanonical.json",
+      "expectation": "wire-invalid",
+      "schema_id": "https://contracts.aether.dev/schemas/integration/v1alpha1/observed-value.schema.json",
+      "failure_code": "VALUE_ENCODING_INVALID",
+      "sha256": "907c601cff1872f8c1b1421ad91c1bb9631db52ff30d3569f1cfae04281c7b90"
+    }
+  ]
+}

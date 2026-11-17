@@ -24,12 +24,23 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
-use tokio::time::interval;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 /// Default scheduler tick interval (100ms)
 pub const DEFAULT_TICK_MS: u64 = 100;
+
+fn effective_tick_ms(configured: u64) -> u64 {
+    if configured == 0 {
+        warn!(
+            default_ms = DEFAULT_TICK_MS,
+            "rule scheduler tick was configured as 0 ms; using the default"
+        );
+        DEFAULT_TICK_MS
+    } else {
+        configured
+    }
+}
 
 // A stalled action must not hold up later rules or scheduler ticks.
 const RULE_EXECUTION_TIMEOUT: Duration = Duration::from_secs(30);
@@ -486,7 +497,7 @@ impl RuleScheduler {
             pool,
             rules: Arc::new(RwLock::new(Vec::new())),
             shutdown: CancellationToken::new(),
-            tick_ms,
+            tick_ms: effective_tick_ms(tick_ms),
             logger_manager: RuleLoggerManager::new(log_root),
             max_concurrency: 4,
             watch_rx: None,
@@ -519,7 +530,7 @@ impl RuleScheduler {
             pool,
             rules: Arc::new(RwLock::new(Vec::new())),
             shutdown: CancellationToken::new(),
-            tick_ms,
+            tick_ms: effective_tick_ms(tick_ms),
             logger_manager: RuleLoggerManager::new(log_root),
             max_concurrency: 4,
             watch_rx: None,
@@ -625,7 +636,11 @@ impl RuleScheduler {
 
         info!("Scheduler start ({}ms)", self.tick_ms);
 
-        let mut tick_interval = interval(Duration::from_millis(self.tick_ms));
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "aether-rules does not link `common`; the constructors replace a zero tick and it is clamped again here"
+        )]
+        let mut tick_interval = tokio::time::interval(Duration::from_millis(self.tick_ms.max(1)));
 
         loop {
             // Branch 1 (common): 100ms tick
@@ -2448,6 +2463,56 @@ mod tests {
             scheduler.tick().await.expect("later tick progresses");
             assert!(scheduler.rules.read().await[1].last_execution.is_some());
         }
+    }
+
+    #[tokio::test]
+    async fn regression_zero_tick_falls_back_to_the_default_instead_of_panicking_or_spinning() {
+        let rule = create_test_rule(84, "zero-tick", 0);
+        let logs = tempfile::tempdir().expect("rule logs");
+        let scheduler = Arc::new(RuleScheduler::new(
+            Arc::new(crate::MemoryRuleLiveState::new()),
+            rule_pool(&rule).await,
+            0,
+            logs.path().to_path_buf(),
+        ));
+        let composed = RuleScheduler::with_state_store(
+            Arc::new(crate::MemoryRuleLiveState::new()),
+            rule_pool(&rule).await,
+            0,
+            logs.path().to_path_buf(),
+            Arc::new(MemoryStateStore::new()),
+            None,
+        );
+
+        assert_eq!(scheduler.status().await.tick_interval_ms, DEFAULT_TICK_MS);
+        assert_eq!(composed.status().await.tick_interval_ms, DEFAULT_TICK_MS);
+
+        let running = scheduler.clone();
+        let task = tokio::spawn(async move { running.start().await });
+        tokio::task::yield_now().await;
+        scheduler.stop();
+
+        let finished = tokio::time::timeout(Duration::from_secs(2), task)
+            .await
+            .expect("the scheduler loop stops once cancelled");
+        assert!(
+            finished.is_ok(),
+            "a zero tick must not panic the scheduler loop: {finished:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_configured_tick_is_reported_unchanged() {
+        let rule = create_test_rule(85, "explicit-tick", 0);
+        let logs = tempfile::tempdir().expect("rule logs");
+        let scheduler = RuleScheduler::new(
+            Arc::new(crate::MemoryRuleLiveState::new()),
+            rule_pool(&rule).await,
+            250,
+            logs.path().to_path_buf(),
+        );
+
+        assert_eq!(scheduler.status().await.tick_interval_ms, 250);
     }
 
     #[tokio::test]
