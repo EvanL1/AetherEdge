@@ -61,12 +61,11 @@ pub(crate) fn require_admin(
     headers: &HeaderMap,
 ) -> Result<crate::auth::Claims, (StatusCode, Json<Value>)> {
     let claims = require_auth(state, headers)?;
-    let role = claims.role.as_deref().unwrap_or("");
-    if role != "Admin" {
+    if !claims.may_administer() {
         warn!(
             user_id = claims.user_id,
             username = %claims.username,
-            role,
+            role = claims.role.as_deref().unwrap_or(""),
             "Admin authorization denied"
         );
         return Err((
@@ -75,6 +74,24 @@ pub(crate) fn require_admin(
         ));
     }
     Ok(claims)
+}
+
+pub(crate) fn authority_denied(
+    claims: &crate::auth::Claims,
+    required: &'static str,
+) -> axum::response::Response {
+    warn!(
+        user_id = claims.user_id,
+        username = %claims.username,
+        role = claims.role.as_deref().unwrap_or(""),
+        required,
+        "authorization denied"
+    );
+    (
+        StatusCode::FORBIDDEN,
+        Json(json!({"success": false, "message": format!("{required} privileges required")})),
+    )
+        .into_response()
 }
 
 // ── POST /api/v1/auth/register ────────────────────────────────────────────────
@@ -482,8 +499,7 @@ pub async fn update_me(
         Err(e) => return e.into_response(),
     };
 
-    let is_admin = claims.role.as_deref() == Some("Admin");
-    if !is_admin && (body.role_id.is_some() || body.is_active.is_some()) {
+    if !claims.may_administer() && (body.role_id.is_some() || body.is_active.is_some()) {
         return (
             StatusCode::FORBIDDEN,
             Json(json!({"success": false, "message": "Only admins can modify roles and activation status"})),

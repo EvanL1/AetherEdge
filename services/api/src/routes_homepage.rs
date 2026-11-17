@@ -127,7 +127,7 @@ pub async fn get_point(
     security(("bearer_auth" = [])),
     params(("id" = i64, Path, description = "Point ID")),
     request_body = CalculatedPointUpdate,
-    responses((status = 200, description = "Point updated", body = crate::models::GatewayDataResponse<CalculatedPoint>), (status = 404, description = "Not found")))]
+    responses((status = 200, description = "Point updated", body = crate::models::GatewayDataResponse<CalculatedPoint>), (status = 403, description = "Engineer or Admin privileges required"), (status = 404, description = "Not found")))]
 pub async fn update_point(
     State(state): State<Arc<AppState>>,
     Path(point_id): Path<i64>,
@@ -201,7 +201,7 @@ pub async fn update_point(
 /// **Destructive operation** — deleted definitions cannot be recovered.
 #[utoipa::path(post, path = "/api/v1/homepage/reset", tag = "Homepage",
     security(("bearer_auth" = [])),
-    responses((status = 200, description = "Homepage points cleared to the safe empty state", body = crate::models::GatewayDataResponse<crate::models::HomepageResetData>)))]
+    responses((status = 200, description = "Homepage points cleared to the safe empty state", body = crate::models::GatewayDataResponse<crate::models::HomepageResetData>), (status = 403, description = "Engineer or Admin privileges required")))]
 pub async fn reset_points(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     match db::reset_calculated_points(&state.db).await {
         Ok(count) => Json(json!({
