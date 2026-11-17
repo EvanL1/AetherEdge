@@ -2391,7 +2391,7 @@
       "implementation_status": "partial",
       "production_readiness": "not-applicable",
       "context_sensitivity": "public",
-      "updated": "2026-08-11",
+      "updated": "2026-11-17",
       "priority": "core",
       "media_type": "text/markdown",
       "capability_refs": [],
