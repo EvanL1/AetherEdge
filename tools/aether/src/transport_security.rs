@@ -10,6 +10,14 @@ use anyhow::{Context, Result, bail};
 /// certificate-validated HTTPS ingress; read-only compatibility queries do not
 /// call this guard because they carry no access token.
 pub(crate) fn require_secure_bearer_transport(base_url: &str) -> Result<()> {
+    require_secure_transport(base_url, "an Aether Bearer token")
+}
+
+pub(crate) fn require_secure_extra_header_transport(base_url: &str) -> Result<()> {
+    require_secure_transport(base_url, "AETHER_API_HEADERS values")
+}
+
+fn require_secure_transport(base_url: &str, credential: &str) -> Result<()> {
     let url = reqwest::Url::parse(base_url)
         .with_context(|| format!("invalid governed service URL `{base_url}`"))?;
     if !url.username().is_empty() || url.password().is_some() {
@@ -24,7 +32,7 @@ pub(crate) fn require_secure_bearer_transport(base_url: &str) -> Result<()> {
     }
 
     bail!(
-        "refusing to send an Aether Bearer token over a non-loopback plaintext transport; use the on-device CLI/loopback or a certificate-validated HTTPS ingress"
+        "refusing to send {credential} over a non-loopback plaintext transport; use the on-device CLI/loopback or a certificate-validated HTTPS ingress"
     )
 }
 

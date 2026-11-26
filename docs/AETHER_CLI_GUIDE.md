@@ -495,6 +495,7 @@ Aether 支持通过环境变量配置，所有变量使用 `AETHER_` 前缀：
 | `AETHER_CONFIG_PATH` | 配置文件目录 | 自动检测 |
 | `AETHER_DATA_PATH` | 数据文件目录 | 自动检测 |
 | `AETHER_API_URL` | API 网关基址（CLI 数据面与 MCP 的唯一远程边界） | `http://localhost:6005` |
+| `AETHER_API_HEADERS` | 每个网关请求附带的额外请求头，格式为逗号分隔的 `Name=value`（例如 Cloudflare Access 服务令牌）；值属于机密，CLI 自己设置的请求头会被拒绝 | 未设置 |
 | `AETHER_ACCESS_TOKEN` | 网关访问令牌；查询用 Viewer 即可，受治理写操作需 Admin/Engineer | 未设置 |
 
 ---

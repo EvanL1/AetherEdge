@@ -14,7 +14,7 @@ pub struct ModelClient {
 impl ModelClient {
     pub fn new(base_url: &str) -> Result<Self> {
         Ok(Self {
-            client: Client::new(),
+            client: crate::gateway_client::client(base_url)?,
             base_url: base_url.to_string(),
             access_token: std::env::var("AETHER_ACCESS_TOKEN")
                 .ok()

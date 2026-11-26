@@ -10,6 +10,7 @@ mod comtrade;
 mod core;
 mod deploy_mode;
 mod doctor;
+mod gateway_client;
 mod history;
 mod install_context;
 mod logs;
