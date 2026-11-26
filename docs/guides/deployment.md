@@ -412,8 +412,98 @@ set already installed on the device. It is a same-release recovery operation,
 not a supported path for replacing the installed release. See [Getting
 Started](getting-started.md) for what a healthy `aether doctor` run covers.
 
+## Remote access over one HTTPS ingress
+
+Remote clients reach AetherEdge only through `aether-api` on port `6005`, and
+the CLI and MCP bridge refuse to send a token over non-loopback plaintext HTTP.
+The gateway itself speaks plain HTTP, so standing remote access needs something
+in front of it that terminates certificate-validated TLS. Any reverse proxy that
+does this works. This section gives one concrete recipe for the common edge
+case: a host behind NAT with no public address and no inbound port.
+
+[Cloudflare Tunnel](https://developers.cloudflare.com/tunnel/) fits that case
+because `cloudflared` dials out from the host. It is an operator-managed host
+process, not part of AetherEdge: the runtime gains no dependency on it, and
+stopping it removes remote access without touching the six services.
+
+What the ingress does and does not change:
+
+- **Authentication is unchanged.** The gateway reads no forwarding header and
+  gives loopback clients no privilege, so a request arriving through the tunnel
+  is authorized exactly like a local one: by its access token, role, and scope.
+- **TLS ends at Cloudflare.** Cloudflare can read every token and payload that
+  crosses the tunnel. If that is not acceptable for a site, use the SSH paths in
+  [Connect AI Assistants](ai-assistants.md) instead.
+- **Rate limiting becomes your job at the edge.** The gateway has no actor or
+  source-IP rate limiter. Add a
+  [rate limiting rule](https://developers.cloudflare.com/waf/rate-limiting-rules/)
+  on the hostname before exposing it.
+- **An edge timeout is not a command result.** Cloudflare answers `524` when the
+  gateway does not respond within its
+  [proxy read timeout](https://developers.cloudflare.com/fundamentals/reference/connection-limits/).
+  The command may still have been accepted. Treat it like any other unknown
+  outcome: keep the `request_id` and do not retry automatically.
+
+Bind the gateway to loopback so the tunnel is the only remote path. The
+services use host networking, so `cloudflared` on the same host still reaches
+it. In a Compose deployment set this in `.env` and recreate `aether-api`:
+
+```bash
+AETHER_API_HOST=127.0.0.1
+```
+
+Create the tunnel and route a hostname on a zone you control to it:
+
+```bash
+cloudflared tunnel login
+cloudflared tunnel create aether-edge
+cloudflared tunnel route dns aether-edge edge.example.test
+```
+
+`tunnel create` prints the tunnel UUID and where it wrote the credentials file.
+Point the tunnel at the gateway in `config.yml`. The final catch-all rule is
+required:
+
+```yaml
+tunnel: <TUNNEL_UUID>
+credentials-file: /root/.cloudflared/<TUNNEL_UUID>.json
+
+ingress:
+  - hostname: edge.example.test
+    service: http://127.0.0.1:6005
+  - service: http_status:404
+```
+
+Validate the rules, then run the tunnel as a service by following
+[Cloudflare's service guide](https://developers.cloudflare.com/tunnel/features/locally-managed-tunnels/as-a-service/):
+
+```bash
+cloudflared tunnel ingress validate
+```
+
+Check both sides of the boundary from another machine. A request without a
+token must be rejected by the gateway, and the CLI must work with one:
+
+```bash
+curl -sS -o /dev/null -w '%{http_code}\n' \
+  https://edge.example.test/api/v1/io/api/channels
+# 401
+
+AETHER_API_URL=https://edge.example.test \
+AETHER_ACCESS_TOKEN=<SCOPED_ACCESS_TOKEN> aether --json channels list
+```
+
+Issue that token with the narrowest `scope` the remote client needs; see
+[Connect AI Assistants](ai-assistants.md#read-only-vs-write-access).
+
+Do not put a Cloudflare Access application on this hostname for CLI or MCP use.
+`aether` sends the Aether credential and the governed-command headers only; it
+cannot attach Access service-token headers, so Access would reject it before the
+gateway sees the request.
+
 ## Related pages
 
 - [Getting Started](getting-started.md) — build, initialize, and verify a fresh checkout
 - [Connect Devices](connect-devices.md) — add channels and map points once the stack is running
+- [Connect AI Assistants](ai-assistants.md) — the SSH alternatives to a standing ingress
 - [System Architecture](../concepts/architecture.md) — the services these containers run

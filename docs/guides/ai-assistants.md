@@ -109,7 +109,9 @@ plaintext HTTP, so a remote gateway needs one of:
 - **SSH port-forward** — `ssh -L 6005:localhost:6005 user@gateway`, then run
   `aether mcp` locally against the default loopback URL.
 - **One HTTPS ingress** in front of `6005` for standing remote access:
-  `AETHER_API_URL=https://edge.example.test`.
+  `AETHER_API_URL=https://edge.example.test`. See
+  [Remote access over one HTTPS ingress](deployment.md#remote-access-over-one-https-ingress)
+  for a recipe that needs no public address.
 
 In the Claude Desktop config, a remote write-enabled server looks like this
 (replace the hostname with your ingress endpoint):
