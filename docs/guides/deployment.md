@@ -540,7 +540,7 @@ client configuration they go in the same `env` block as the URL and the token:
   arguments are visible in process listings. The CLI does not print them in
   errors, `--json` output, or `--verbose` logs.
 - **Format.** Each pair is split at its first `=`, and whitespace around names
-  and values is ignored. A value cannot contain a comma.
+  and values is ignored. A value must be ASCII and cannot contain a comma.
 - **Invalid input stops the command before any request.** That covers an entry
   without `=`, an invalid header name or value, an empty value, a repeated
   name, and a reserved name. Reserved names are the headers the CLI sets
@@ -550,15 +550,23 @@ client configuration they go in the same `env` block as the URL and the token:
   `Upgrade`, and every name starting with `X-Aether-`. Confirmation therefore
   comes only from `--confirmed` or the MCP `confirmed: true` argument, never
   from the environment.
-- **Same transport rule as the token.** The CLI refuses to send these headers
-  over non-loopback plaintext HTTP.
+- **Every gateway request needs a protected transport.** While the variable is
+  set, the CLI refuses to send any gateway request over non-loopback plaintext
+  HTTP, including a read-only query sent without a token. Requests to a
+  loopback gateway URL never go through a proxy, whatever `HTTP_PROXY`,
+  `HTTPS_PROXY`, or `ALL_PROXY` say, with or without this variable.
 - **Redirects stay on the gateway origin.** While the variable is set, the CLI
   does not follow a redirect to another origin and reports an error instead.
-  Depending on the organization's
+- **Access and the gateway both answer `401` and `403`.** Access refused the
+  service token, and the gateway never saw the request, when the CLI reports a
+  refused redirect to the Access login host or when a `401`/`403` response body
+  is not the gateway's JSON error. Which of the two Access sends depends on the
+  organization's
   [strict service token authentication](https://developers.cloudflare.com/cloudflare-one/access-controls/service-credentials/service-tokens/#strict-service-token-authentication)
-  setting, Access answers a rejected service token with `401`/`403` or with a
-  redirect to its login page. Either one means Access refused the token and
-  the gateway never saw the request.
+  setting. A `401`/`403` whose body is the gateway's JSON error, an `error`
+  object with a `code` and a `message`, passed Access: `401` means
+  `AETHER_ACCESS_TOKEN` is missing, invalid, or expired, and `403` means its
+  role or scope does not allow the request.
 
 ## Related pages
 
