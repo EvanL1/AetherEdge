@@ -452,7 +452,10 @@ it. In a Compose deployment set this in `.env` and recreate `aether-api`:
 AETHER_API_HOST=127.0.0.1
 ```
 
-Create the tunnel and route a hostname on a zone you control to it:
+Create the tunnel and route a hostname on a zone you control to it. Use a
+first-level name such as `edge.example.test`: Cloudflare's default certificate
+does not cover deeper names like `edge.home.example.test`, and the CLI rejects
+a hostname whose certificate does not validate.
 
 ```bash
 cloudflared tunnel login
