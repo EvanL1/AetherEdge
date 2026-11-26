@@ -1,8 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use aether_ports::PortResult;
+use aether_ports::{AuditSink, PortResult};
 use aether_shm_bridge::SlotSnapshot;
+use aether_store_local::MemoryAuditSink;
 use axum::http::{HeaderMap, HeaderValue, header};
 use dashmap::DashMap;
 use sqlx::sqlite::SqlitePoolOptions;
@@ -54,6 +55,26 @@ pub(crate) async fn app_state() -> Arc<AppState> {
 pub(crate) async fn app_state_with_public_registration(
     allow_public_registration: bool,
 ) -> Arc<AppState> {
+    build_app_state(
+        allow_public_registration,
+        None,
+        Arc::new(MemoryAuditSink::new()),
+    )
+    .await
+}
+
+pub(crate) async fn app_state_with_history_gateway(
+    history_service_url: String,
+    command_audit: Arc<dyn AuditSink>,
+) -> Arc<AppState> {
+    build_app_state(false, Some(history_service_url), command_audit).await
+}
+
+async fn build_app_state(
+    allow_public_registration: bool,
+    history_service_url: Option<String>,
+    command_audit: Arc<dyn AuditSink>,
+) -> Arc<AppState> {
     let database = SqlitePoolOptions::new()
         .max_connections(1)
         .connect("sqlite::memory:")
@@ -77,7 +98,7 @@ pub(crate) async fn app_state_with_public_registration(
         allow_public_registration,
         io_service_url: closed.clone(),
         automation_service_url: closed.clone(),
-        history_service_url: closed.clone(),
+        history_service_url: history_service_url.unwrap_or_else(|| closed.clone()),
         uplink_service_url: closed.clone(),
         alarm_service_url: closed,
         ..GatewayConfig::default()
@@ -89,6 +110,7 @@ pub(crate) async fn app_state_with_public_registration(
         config: Arc::new(config),
         ws_hub,
         data_processing: None,
+        command_audit,
         refresh_tokens: DashMap::new(),
         service_client: reqwest::Client::new(),
     })

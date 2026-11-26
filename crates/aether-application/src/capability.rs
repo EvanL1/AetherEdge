@@ -265,6 +265,20 @@ pub const RESOLVE_ALERT_CAPABILITY: CapabilityDescriptor = CapabilityDescriptor:
     false,
 );
 
+/// Change history collection settings or its storage backend.
+///
+/// Storage changes can redirect or stop every history write, so the
+/// operation is always confirmed and durably audited.
+pub const MANAGE_HISTORY_CONFIG_CAPABILITY: CapabilityDescriptor = CapabilityDescriptor::new(
+    "history.config.manage",
+    OperationKind::Command,
+    RiskLevel::High,
+    "history.config.manage",
+    ConfirmationPolicy::Always,
+    AuditPolicy::Required,
+    false,
+);
+
 /// Discover configured data-processing tasks and bindings.
 pub const TASKS_LIST_CAPABILITY: CapabilityDescriptor = CapabilityDescriptor::new(
     "data_processing.tasks.list",
@@ -298,7 +312,7 @@ pub const PROCESS_DATA_CAPABILITY: CapabilityDescriptor = CapabilityDescriptor::
     false,
 );
 
-const CAPABILITY_CATALOG: [CapabilityDescriptor; 13] = [
+const CAPABILITY_CATALOG: [CapabilityDescriptor; 14] = [
     READ_POINT_CAPABILITY,
     WRITE_POINT_CAPABILITY,
     EXECUTE_RULE_CAPABILITY,
@@ -309,6 +323,7 @@ const CAPABILITY_CATALOG: [CapabilityDescriptor; 13] = [
     RECONCILE_CHANNELS_CAPABILITY,
     MANAGE_ALARM_RULE_CAPABILITY,
     RESOLVE_ALERT_CAPABILITY,
+    MANAGE_HISTORY_CONFIG_CAPABILITY,
     TASKS_LIST_CAPABILITY,
     PROCESSOR_HEALTH_CAPABILITY,
     PROCESS_DATA_CAPABILITY,

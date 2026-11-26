@@ -30,6 +30,7 @@
     "data_processing.tasks.list",
     "device.read_point",
     "device.write_point",
+    "history.config.manage",
     "io.channel.manage",
     "io.channel.reconcile"
   ],
@@ -42,6 +43,6 @@
   ],
   "checksum": {
     "algorithm": "sha256",
-    "digest": "ffdb014cf440dc636f8bba1a8105dd3acdbc797618d35b8fd62874f1996eb0b2"
+    "digest": "3f6db117ee8c4f7ab6b82692cb70bd001066e18f2c1fa5709c72f59db286c3aa"
   }
 }

@@ -135,6 +135,12 @@ The owning service then applies operation-specific authorization:
   Bearer JWT with the capability documented for the operation;
 - alarm rule mutation and alert resolution require an Admin or Engineer Bearer
   JWT;
+- history configuration and storage changes (`PUT /history/config`,
+  `PUT /history/storage`, `POST /history/storage/test`, and
+  `POST /history/storage/reconnect`) require an Admin or Engineer Bearer JWT
+  with `history.config.manage` and `x-aether-confirmed: true`. `aether-history`
+  has no command boundary of its own, so the gateway authorizes and audits
+  these before it forwards them;
 - forwarded identity headers and loopback reachability do not satisfy these
   protected command boundaries.
 
@@ -157,6 +163,14 @@ terminal audit append failed, the operation is still accepted and its audit
 state is marked incomplete and non-retryable. Retain the correlation ID and do
 not automatically submit the command again. Failure to record the attempted
 audit fails closed before dispatch.
+
+A history change audited by the gateway keeps the history service's response
+body. The gateway adds the `x-request-id` it recorded and
+`x-aether-audit: recorded` or `incomplete` as response headers, and answers
+`503 COMMAND_AUDIT_UNAVAILABLE` without forwarding when the attempt cannot be
+recorded. The audit detail names the operation and the response status, never
+the request body, so storage credentials stay out of the trail. These events
+share the trail above; filter it with `capability=history.config.manage`.
 
 Device-command acceptance means the local command plane accepted the request;
 it is not proof that physical equipment executed it. Use feedback telemetry for
