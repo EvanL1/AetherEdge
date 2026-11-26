@@ -30,6 +30,8 @@ fn aether(api_url: &str, api_headers: Option<&str>) -> Command {
         "https_proxy",
         "ALL_PROXY",
         "all_proxy",
+        "NO_PROXY",
+        "no_proxy",
     ] {
         command.env_remove(variable);
     }
@@ -54,14 +56,40 @@ fn rendered(output: &Output) -> String {
     )
 }
 
-async fn channel_list_server() -> MockServer {
-    let server = MockServer::start().await;
+async fn serve_channel_list(server: &MockServer) {
     Mock::given(method("GET"))
         .and(path(CHANNELS_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "channels": [] })))
+        .mount(server)
+        .await;
+}
+
+async fn channel_list_server() -> MockServer {
+    let server = MockServer::start().await;
+    serve_channel_list(&server).await;
+    server
+}
+
+async fn catch_all_server() -> MockServer {
+    let server = MockServer::start().await;
+    Mock::given(wiremock::matchers::any())
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "channels": [] })))
         .mount(&server)
         .await;
     server
+}
+
+fn through_proxy(command: &mut Command, proxy: &MockServer) {
+    for variable in [
+        "http_proxy",
+        "HTTP_PROXY",
+        "https_proxy",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "all_proxy",
+    ] {
+        command.env(variable, proxy.uri());
+    }
 }
 
 async fn requests(server: &MockServer) -> Vec<Request> {
@@ -443,4 +471,94 @@ async fn mcp_server_refuses_to_start_with_a_reserved_header() {
     assert!(text.contains("x-aether-confirmed"), "{text}");
     assert!(!text.contains(CLIENT_SECRET), "{text}");
     assert!(requests(&server).await.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn loopback_gateway_requests_never_go_through_a_proxy() {
+    let proxy = catch_all_server().await;
+    let ipv4 = channel_list_server().await;
+    let mut gateways = vec![
+        (ipv4.uri(), &ipv4),
+        (ipv4.uri().replace("127.0.0.1", "localhost"), &ipv4),
+    ];
+    let ipv6 = match std::net::TcpListener::bind("[::1]:0") {
+        Ok(listener) => {
+            let server = MockServer::builder().listener(listener).start().await;
+            serve_channel_list(&server).await;
+            Some(server)
+        },
+        Err(error) => {
+            eprintln!("skipping the [::1] gateway: {error}");
+            None
+        },
+    };
+    if let Some(server) = &ipv6 {
+        assert!(
+            server.uri().starts_with("http://[::1]:"),
+            "{}",
+            server.uri()
+        );
+        gateways.push((server.uri(), server));
+    }
+
+    for (api_url, gateway) in gateways {
+        let credentials = [
+            (Some(access_headers()), None),
+            (None, Some("signed-access-token")),
+        ];
+        for (api_headers, access_token) in credentials {
+            let before = requests(gateway).await.len();
+            let mut command = aether(&api_url, api_headers.as_deref());
+            through_proxy(&mut command, &proxy);
+            if let Some(token) = access_token {
+                command.env("AETHER_ACCESS_TOKEN", token);
+            }
+            command.args(["--json", "channels", "list"]);
+            let output = run(command).await;
+            let context = format!(
+                "{api_url} headers={} token={}: {}",
+                api_headers.is_some(),
+                access_token.is_some(),
+                rendered(&output)
+            );
+
+            assert!(requests(&proxy).await.is_empty(), "{context}");
+            assert!(output.status.success(), "{context}");
+            let received = requests(gateway).await;
+            assert_eq!(received.len(), before + 1, "{context}");
+            let request = &received[before];
+            if api_headers.is_some() {
+                assert_eq!(
+                    header(request, "cf-access-client-secret"),
+                    Some(CLIENT_SECRET),
+                    "{context}"
+                );
+            }
+            if let Some(token) = access_token {
+                assert_eq!(
+                    header(request, "authorization"),
+                    Some(format!("Bearer {token}").as_str()),
+                    "{context}"
+                );
+            }
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_https_gateway_requests_still_honour_the_proxy() {
+    let proxy = catch_all_server().await;
+
+    let mut command = aether("https://edge.invalid", Some(&access_headers()));
+    through_proxy(&mut command, &proxy);
+    command.args(["--json", "channels", "list"]);
+    let output = run(command).await;
+
+    let received = requests(&proxy).await;
+    assert!(!received.is_empty(), "{}", rendered(&output));
+    for request in &received {
+        assert_eq!(request.method.as_str(), "CONNECT");
+        assert!(header(request, "cf-access-client-secret").is_none());
+    }
+    assert!(!rendered(&output).contains(CLIENT_SECRET));
 }

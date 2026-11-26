@@ -68,12 +68,12 @@ impl fmt::Debug for ExtraHeaders {
 impl ExtraHeaders {
     fn parse(raw: &str) -> Result<Self, ApiHeadersError> {
         let mut headers = HeaderMap::new();
-        let entries = raw
-            .split(',')
-            .map(str::trim)
-            .filter(|entry| !entry.is_empty());
-        for (index, entry) in entries.enumerate() {
+        for (index, entry) in raw.split(',').enumerate() {
             let position = index + 1;
+            let entry = entry.trim();
+            if entry.is_empty() {
+                continue;
+            }
             let (name, value) = entry
                 .split_once('=')
                 .ok_or(ApiHeadersError::MissingSeparator { position })?;
@@ -89,7 +89,10 @@ impl ExtraHeaders {
             if value.is_empty() {
                 return Err(ApiHeadersError::EmptyValue { name });
             }
-            let Ok(mut value) = HeaderValue::from_str(value) else {
+            let parsed = HeaderValue::from_str(value)
+                .ok()
+                .filter(|_| value.is_ascii());
+            let Some(mut value) = parsed else {
                 return Err(ApiHeadersError::InvalidValue { name });
             };
             value.set_sensitive(true);
@@ -121,12 +124,16 @@ pub(crate) fn builder(base_url: &str) -> Result<ClientBuilder> {
 }
 
 fn builder_with(base_url: &str, extra: ExtraHeaders) -> Result<ClientBuilder> {
+    let mut builder = Client::builder();
+    if crate::transport_security::is_loopback_base(base_url) {
+        builder = builder.no_proxy();
+    }
     if extra.0.is_empty() {
-        return Ok(Client::builder());
+        return Ok(builder);
     }
     crate::transport_security::require_secure_extra_header_transport(base_url)?;
     let gateway = Url::parse(base_url).context("invalid gateway URL")?;
-    Ok(Client::builder()
+    Ok(builder
         .default_headers(extra.0)
         .redirect(same_origin_redirects(&gateway)))
 }
@@ -209,7 +216,17 @@ mod tests {
             ("=value", ApiHeadersError::InvalidName { position: 1 }),
             (
                 "X-Probe=1,,bad name=2",
-                ApiHeadersError::InvalidName { position: 2 },
+                ApiHeadersError::InvalidName { position: 3 },
+            ),
+            (
+                " ,X-Probe=1, ,no-separator",
+                ApiHeadersError::MissingSeparator { position: 4 },
+            ),
+            (
+                "X-Probe=caf\u{e9}",
+                ApiHeadersError::InvalidValue {
+                    name: name("x-probe"),
+                },
             ),
             (
                 "X-Probe=",
