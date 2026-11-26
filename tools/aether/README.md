@@ -11,7 +11,7 @@ domain pack rather than a CLI or runtime prerequisite.
 ### One-line install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/EvanL1/AetherEdge/main/tools/aether/install.sh | bash
+curl -fsSL https://get.aetheriot.ai | bash
 ```
 
 Auto-detects a published platform artifact and installs to `~/.local/bin`.
