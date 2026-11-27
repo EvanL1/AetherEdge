@@ -28,20 +28,29 @@ pub struct Claims {
 }
 
 impl Claims {
+    /// Whether the gateway may forward a mutation to a service that authorizes
+    /// commands itself. Only a permission such a service enforces counts.
     #[must_use]
-    pub fn may_mutate_application_state(&self) -> bool {
-        matches!(self.role.as_deref(), Some("Engineer" | "Admin")) && self.holds_command_scope()
+    pub fn may_command_services(&self) -> bool {
+        aether_auth_jwt::SERVICE_COMMAND_PERMISSIONS
+            .into_iter()
+            .any(|permission| self.holds(permission))
+    }
+
+    #[must_use]
+    pub fn may_operate_gateway(&self) -> bool {
+        self.holds(aether_auth_jwt::GATEWAY_OPERATE)
     }
 
     #[must_use]
     pub fn may_administer(&self) -> bool {
-        self.role.as_deref() == Some("Admin") && self.holds_command_scope()
+        self.holds(aether_auth_jwt::GATEWAY_ADMINISTER)
     }
 
-    fn holds_command_scope(&self) -> bool {
-        aether_auth_jwt::ROLE_COMMAND_PERMISSIONS
-            .iter()
-            .any(|permission| aether_auth_jwt::scope_allows(&self.scope, permission))
+    /// The role sets the ceiling and the scope selects within it.
+    fn holds(&self, permission: &str) -> bool {
+        aether_auth_jwt::permissions_for_role(self.role.as_deref()).contains(&permission)
+            && aether_auth_jwt::scope_allows(&self.scope, permission)
     }
 }
 
@@ -212,34 +221,84 @@ mod authority_tests {
         aether_auth_jwt::permissions_for_role(Some(role))
     }
 
+    fn other_command_permissions() -> impl Iterator<Item = &'static str> {
+        aether_auth_jwt::SERVICE_COMMAND_PERMISSIONS
+            .into_iter()
+            .chain(aether_auth_jwt::GATEWAY_COMMAND_PERMISSIONS)
+    }
+
     #[test]
-    fn operators_with_command_scope_may_mutate_application_state() {
+    fn a_login_token_keeps_the_authority_of_its_role() {
         for role in ["Engineer", "Admin"] {
-            assert!(claims(Some(role), &full_scope(role)).may_mutate_application_state());
+            let login = claims(Some(role), &full_scope(role));
+            assert!(login.may_operate_gateway(), "{role}");
+            assert!(login.may_command_services(), "{role}");
+        }
+        assert!(claims(Some("Admin"), &full_scope("Admin")).may_administer());
+        assert!(!claims(Some("Engineer"), &full_scope("Engineer")).may_administer());
+
+        let viewer = claims(Some("Viewer"), &full_scope("Viewer"));
+        assert!(!viewer.may_operate_gateway());
+        assert!(!viewer.may_command_services());
+        assert!(!viewer.may_administer());
+    }
+
+    #[test]
+    fn a_missing_or_unknown_role_holds_no_authority_whatever_its_scope() {
+        for role in [None, Some("admin"), Some("Owner")] {
+            let forged = claims(role, &full_scope("Admin"));
+            assert!(!forged.may_operate_gateway(), "{role:?}");
+            assert!(!forged.may_command_services(), "{role:?}");
+            assert!(!forged.may_administer(), "{role:?}");
         }
     }
 
     #[test]
-    fn a_viewer_a_missing_role_or_an_unknown_role_may_not_mutate() {
-        assert!(!claims(Some("Viewer"), &full_scope("Viewer")).may_mutate_application_state());
-        assert!(!claims(None, &full_scope("Admin")).may_mutate_application_state());
-        assert!(!claims(Some("admin"), &full_scope("Admin")).may_mutate_application_state());
-    }
-
-    #[test]
-    fn a_token_narrowed_to_reads_may_not_mutate_whatever_its_role() {
-        for role in ["Engineer", "Admin"] {
-            let narrowed = claims(Some(role), &["data_processing.read"]);
-            assert!(!narrowed.may_mutate_application_state(), "{role}");
-            assert!(!narrowed.may_administer(), "{role}");
+    fn one_command_permission_does_not_open_the_gateway_own_routes() {
+        for permission in other_command_permissions().chain(["data_processing.run"]) {
+            let narrowed = claims(Some("Admin"), &[permission]);
+            assert!(!narrowed.may_administer(), "{permission}");
+            assert!(!narrowed.may_operate_gateway(), "{permission}");
         }
         assert!(!claims(Some("Admin"), &[]).may_administer());
     }
 
     #[test]
-    fn only_an_administrator_with_command_scope_may_administer() {
-        assert!(claims(Some("Admin"), &full_scope("Admin")).may_administer());
-        assert!(!claims(Some("Engineer"), &full_scope("Engineer")).may_administer());
-        assert!(!claims(Some("Viewer"), &full_scope("Viewer")).may_administer());
+    fn each_gateway_permission_opens_only_its_own_routes() {
+        let operate = claims(Some("Admin"), &["gateway.operate"]);
+        assert!(operate.may_operate_gateway());
+        assert!(!operate.may_administer());
+        assert!(!operate.may_command_services());
+
+        let administer = claims(Some("Admin"), &["gateway.administer"]);
+        assert!(administer.may_administer());
+        assert!(!administer.may_operate_gateway());
+        assert!(!administer.may_command_services());
+
+        let claimed = claims(Some("Engineer"), &["gateway.administer"]);
+        assert!(!claimed.may_administer());
+    }
+
+    #[test]
+    fn only_a_permission_a_service_enforces_passes_the_service_gate() {
+        for permission in aether_auth_jwt::SERVICE_COMMAND_PERMISSIONS {
+            assert!(
+                claims(Some("Engineer"), &[permission]).may_command_services(),
+                "{permission}"
+            );
+        }
+        for permission in aether_auth_jwt::GATEWAY_COMMAND_PERMISSIONS
+            .into_iter()
+            .chain([
+                "gateway.operate",
+                "gateway.administer",
+                "data_processing.read",
+            ])
+        {
+            assert!(
+                !claims(Some("Admin"), &[permission]).may_command_services(),
+                "{permission}"
+            );
+        }
     }
 }

@@ -124,8 +124,23 @@ may exercise. The role remains the ceiling and the scope selects within it, so
 a scope never grants authority the role lacks. A token without the claim is
 refused rather than treated as fully privileged.
 
-The gateway requires an access JWT before forwarding any namespace request.
-The owning service then applies operation-specific authorization:
+The gateway's own management routes each need one named permission. Holding
+some other command permission does not open them:
+
+- `gateway.administer` (Admin only) covers user management, configuration
+  import, upgrade, service restart, host network changes, log administration
+  under `/api/admin`, and `POST /api/v1/broadcast`;
+- `gateway.operate` (Admin and Engineer) covers editing and resetting the
+  homepage points.
+
+Login issues both to an Admin and `gateway.operate` to an Engineer. A token
+narrowed to, say, `uplink.message.publish` can do that and nothing on these
+routes.
+
+The gateway requires an access JWT before forwarding any namespace request, and
+forwards a mutation to io, automation, or alarm only for a token that holds at
+least one permission those services enforce. The owning service then applies
+operation-specific authorization:
 
 - io channel create, update, delete, enable, and disable require an Admin or
   Engineer Bearer JWT with `io.channel.manage`;

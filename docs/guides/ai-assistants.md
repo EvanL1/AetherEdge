@@ -170,6 +170,12 @@ token carrying everything its role may hold; issue a narrowed one for any
 assistant that should read but never command, and use `--allow-write` to decide
 what the model is shown, not what it is permitted to do.
 
+A narrowed token is held to exactly what it lists. The gateway's own management
+routes need `gateway.administer` or `gateway.operate` by name, so an Admin token
+scoped to one command, such as `alarm.alert.resolve`, cannot manage users,
+import configuration, or start an upgrade. See
+[HTTP API and Swagger](../reference/http-api.md#authentication-model).
+
 Starting the server with `--allow-write` is a deliberate act, but the flag is
 only a registration gate. It is not confirmation for any command. The MCP
 caller must still pass `confirmed: true` on every invocation, and the
