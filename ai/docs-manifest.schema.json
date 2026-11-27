@@ -18,7 +18,7 @@
       "const": "https://raw.githubusercontent.com/EvanL1/AetherEdge/main/ai/docs-manifest.schema.json"
     },
     "schema_version": {
-      "const": 3
+      "const": 4
     },
     "project": {
       "const": "AetherEdge"
@@ -59,6 +59,7 @@
         "implementation_status",
         "production_readiness",
         "context_sensitivity",
+        "content_sha256",
         "updated",
         "priority",
         "media_type",
@@ -80,7 +81,7 @@
         "canonical_url": {
           "type": "string",
           "format": "uri",
-          "pattern": "^https://(?:docs\\.aetheriot\\.workers\\.dev/en/.+\\.md|github\\.com/EvanL1/AetherEdge/blob/main/.+|raw\\.githubusercontent\\.com/EvanL1/AetherEdge/main/.+)$"
+          "pattern": "^https://(?:docs\\.aetheriot\\.ai/.+\\.md|github\\.com/EvanL1/AetherEdge/blob/main/.+|raw\\.githubusercontent\\.com/EvanL1/AetherEdge/main/.+)$"
         },
         "title": {
           "type": "string",
@@ -138,7 +139,13 @@
         "context_sensitivity": {
           "enum": ["public", "internal", "redacted-only", "sensitive-never-load"]
         },
+        "content_sha256": {
+          "description": "SHA-256 of the file with line endings normalized to LF.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
         "updated": {
+          "description": "The day the catalog first recorded the current content_sha256.",
           "type": "string",
           "format": "date"
         },

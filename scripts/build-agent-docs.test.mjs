@@ -1,16 +1,18 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
   buildDocumentRecord,
+  buildManifest,
   canonicalUrlFor,
   classifyDocument,
+  contentDigest,
   findManifestViolations,
   findProductIndexCoverageViolations,
   renderProductLlmsIndex,
-  sourceUpdatedDate,
 } from './build-agent-docs.mjs';
 
 const testDir = path.dirname(fileURLToPath(import.meta.url));
@@ -49,7 +51,7 @@ describe('Edge agent document metadata', () => {
     expect(classifyDocument('crates/aether-cloudlink/README.md').section).toBe('optional');
   });
 
-  it('builds a version-three record with orthogonal status fields', () => {
+  it('builds a version-four record with orthogonal status fields', () => {
     const record = buildDocumentRecord({
       path: 'docs/guides/deployment.md',
       content: '# Deployment\n\nDeploy and verify the edge runtime.\n',
@@ -113,21 +115,99 @@ describe('Edge agent document metadata', () => {
       'https://raw.githubusercontent.com/EvanL1/AetherEdge/main/ai/docs-manifest.schema.json'
     );
   });
+});
 
-  it('uses a valid source-owned date when an uncommitted document has no Git date', () => {
-    expect(sourceUpdatedDate('---\nupdated: 2026-07-29\n---\n\n# New document\n')).toBe(
-      '2026-07-29'
+describe('Edge catalog dates', () => {
+  async function sourceTree(files) {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-docs-'));
+    for (const [relativePath, content] of Object.entries(files)) {
+      const target = path.join(root, relativePath);
+      await fs.mkdir(path.dirname(target), { recursive: true });
+      await fs.writeFile(target, content, 'utf8');
+    }
+    return root;
+  }
+
+  const byPath = (manifest, relativePath) =>
+    manifest.documents.find((document) => document.path === relativePath);
+
+  it('hashes content the same way whatever the line endings', () => {
+    expect(contentDigest('# Title\n\nBody.\n')).toBe(contentDigest('# Title\r\n\r\nBody.\r\n'));
+    expect(contentDigest('# Title\n\nBody.\n')).toMatch(/^[0-9a-f]{64}$/);
+    assert.notEqual(contentDigest('# Title\n\nBody.\n'), contentDigest('# Title\n\nOther.\n'));
+  });
+
+  it('dates a document by when its content changed, without a Git history', async () => {
+    const root = await sourceTree({
+      'docs/guides/stable.md': '# Stable\n\nThis page stays as it is.\n',
+      'docs/guides/edited.md': '# Edited\n\nThis page is about to change.\n',
+    });
+    try {
+      const first = await buildManifest(root, { today: '2030-01-01' });
+      expect(first.documents.map((document) => document.updated)).toEqual([
+        '2030-01-01',
+        '2030-01-01',
+      ]);
+      expect(byPath(first, 'docs/guides/stable.md').content_sha256).toBe(
+        contentDigest('# Stable\n\nThis page stays as it is.\n')
+      );
+
+      await fs.writeFile(
+        path.join(root, 'docs/guides/edited.md'),
+        '# Edited\n\nThis page has changed.\n',
+        'utf8'
+      );
+      const second = await buildManifest(root, { previous: first, today: '2030-02-02' });
+      expect(byPath(second, 'docs/guides/stable.md').updated).toBe('2030-01-01');
+      expect(byPath(second, 'docs/guides/edited.md').updated).toBe('2030-02-02');
+
+      const later = await buildManifest(root, { previous: second, today: '2031-03-03' });
+      expect(later).toEqual(second);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('does not keep a date that is not a calendar date', async () => {
+    const root = await sourceTree({ 'docs/guides/page.md': '# Page\n\nA short page.\n' });
+    try {
+      const first = await buildManifest(root, { today: '2030-01-01' });
+      for (const invalid of ['yesterday', '2030-02-31', '']) {
+        const previous = structuredClone(first);
+        previous.documents[0].updated = invalid;
+        const next = await buildManifest(root, { previous, today: '2030-05-05' });
+        expect(next.documents[0].updated).toBe('2030-05-05');
+      }
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('reproduces the checked-in manifest on any later day', async () => {
+    const checkedIn = JSON.parse(
+      await fs.readFile(path.join(repoRoot, 'ai', 'docs-manifest.json'), 'utf8')
     );
-    expect(sourceUpdatedDate('---\nupdated: not-a-date\n---\n\n# New document\n')).toBe(null);
-    expect(sourceUpdatedDate('---\nupdated: 2026-02-31\n---\n\n# New document\n')).toBe(null);
-    expect(sourceUpdatedDate('# New document\n')).toBe(null);
+    expect(await buildManifest(repoRoot, { previous: checkedIn, today: '2099-12-31' })).toEqual(
+      checkedIn
+    );
+  });
+
+  it('reports an entry whose digest no longer matches its file', async () => {
+    const manifest = JSON.parse(
+      await fs.readFile(path.join(repoRoot, 'ai', 'docs-manifest.json'), 'utf8')
+    );
+    const stale = manifest.documents.find((document) => document.path === 'AGENTS.md');
+    stale.content_sha256 = '0'.repeat(64);
+    expect(await findManifestViolations(manifest, repoRoot)).toEqual([
+      'AGENTS.md: content_sha256 does not match the file',
+    ]);
   });
 });
 
 describe('Edge llms.txt generation', () => {
   it('renders every catalog entry exactly once with safety gates and Optional context', () => {
     const manifest = {
-      schema_version: 3,
+      schema_version: 4,
       product: 'AetherEdge',
       documents: [
         buildDocumentRecord({
@@ -184,6 +264,13 @@ describe('Edge llms.txt generation', () => {
     expect(schema.required).toContain('$schema');
     expect(schema.$defs.document.required).toContain('canonical_url');
     expect(manifest.documents.every((document) => URL.canParse(document.canonical_url))).toBe(true);
+    const canonicalUrl = new RegExp(schema.$defs.document.properties.canonical_url.pattern);
+    expect(
+      manifest.documents
+        .filter((document) => !canonicalUrl.test(document.canonical_url))
+        .map((document) => document.path)
+    ).toEqual([]);
+    expect(schema.properties.schema_version.const).toBe(manifest.schema_version);
     expect(await findManifestViolations(manifest, repoRoot)).toEqual([]);
     expect(findProductIndexCoverageViolations(manifest, index)).toEqual([]);
     expect([...index.matchAll(/\]\(([^)]+)\)/g)].every((match) => URL.canParse(match[1]))).toBe(
