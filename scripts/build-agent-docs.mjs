@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -625,6 +625,7 @@ export function buildDocumentRecord({ path: relativePath, content, updated, publ
     implementation_status: implementationStatus,
     production_readiness: productionReadinessFor(classification, implementationStatus),
     context_sensitivity: contextSensitivityFor(relativePath),
+    content_sha256: contentDigest(content),
     updated,
     priority: classification.section === 'optional' ? 'optional' : 'core',
     media_type: relativePath.endsWith('.md') ? 'text/markdown' : 'application/yaml',
@@ -636,32 +637,35 @@ export function buildDocumentRecord({ path: relativePath, content, updated, publ
   };
 }
 
-export function sourceUpdatedDate(content) {
-  const { metadata } = parseFrontmatter(content);
-  const declared = metadata.match(/^updated:\s*(.+)$/m);
-  if (!declared) return null;
+export function contentDigest(content) {
+  return createHash('sha256').update(content.replaceAll('\r\n', '\n'), 'utf8').digest('hex');
+}
 
-  const value = parseScalar(declared[1]);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+function isCalendarDate(value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const instant = new Date(`${value}T00:00:00Z`);
-  return !Number.isNaN(instant.getTime()) && instant.toISOString().startsWith(value)
-    ? value
-    : null;
+  return !Number.isNaN(instant.getTime()) && instant.toISOString().startsWith(value);
 }
 
-function lastCommittedDate(root, relativePath, content) {
-  try {
-    const value = execFileSync('git', ['log', '-1', '--format=%cs', '--', relativePath], {
-      cwd: root,
-      encoding: 'utf8',
-    }).trim();
-    return value || sourceUpdatedDate(content) || '2026-07-18';
-  } catch {
-    return sourceUpdatedDate(content) || '2026-07-18';
-  }
+// The date moves only when the content does. It is carried from the previous
+// catalog, never read from Git: a squash merge rewrites commit dates.
+function updatedDateFor(digest, previous, today) {
+  return previous?.content_sha256 === digest && isCalendarDate(previous.updated)
+    ? previous.updated
+    : today;
 }
 
-export async function buildManifest(root = repoRoot) {
+function utcToday() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+export async function buildManifest(root = repoRoot, { previous = null, today = utcToday() } = {}) {
+  const previousByPath = new Map(
+    (Array.isArray(previous?.documents) ? previous.documents : []).map((document) => [
+      document.path,
+      document,
+    ])
+  );
   const paths = await discoverAgentReadablePaths(root);
   const publishedPaths = await discoverPublishedPaths(root, paths);
   const documents = await Promise.all(
@@ -670,14 +674,14 @@ export async function buildManifest(root = repoRoot) {
       return buildDocumentRecord({
         path: relativePath,
         content,
-        updated: lastCommittedDate(root, relativePath, content),
+        updated: updatedDateFor(contentDigest(content), previousByPath.get(relativePath), today),
         published: publishedPaths.has(relativePath),
       });
     })
   );
   return {
     $schema: manifestSchemaUrl,
-    schema_version: 3,
+    schema_version: 4,
     project: 'AetherEdge',
     repository: repositoryUrl,
     scope:
@@ -715,7 +719,7 @@ export async function findManifestViolations(manifest, root = repoRoot) {
   if (manifest.$schema !== manifestSchemaUrl) {
     violations.push(`$schema must be ${manifestSchemaUrl}`);
   }
-  if (manifest.schema_version !== 3) violations.push('schema_version must be 3');
+  if (manifest.schema_version !== 4) violations.push('schema_version must be 4');
   if (manifest.project !== 'AetherEdge') violations.push('project must be AetherEdge');
   if (!Array.isArray(manifest.documents)) {
     return [...violations, 'documents must be an array'];
@@ -734,6 +738,7 @@ export async function findManifestViolations(manifest, root = repoRoot) {
     'implementation_status',
     'production_readiness',
     'context_sensitivity',
+    'content_sha256',
     'updated',
     'priority',
   ];
@@ -820,10 +825,18 @@ export async function findManifestViolations(manifest, root = repoRoot) {
     if (paths.has(document.path)) violations.push(`${label}: duplicate path ${document.path}`);
     ids.add(document.id);
     paths.add(document.path);
+    if (!isCalendarDate(document.updated)) {
+      violations.push(`${label}: updated must be a calendar date`);
+    }
     try {
-      await fs.access(path.join(root, document.path));
-    } catch {
-      violations.push(`${label}: path does not exist`);
+      const content = await fs.readFile(path.join(root, document.path), 'utf8');
+      if (document.content_sha256 !== contentDigest(content)) {
+        violations.push(`${label}: content_sha256 does not match the file`);
+      }
+    } catch (error) {
+      violations.push(
+        error.code === 'ENOENT' ? `${label}: path does not exist` : `${label}: path cannot be read`
+      );
     }
   }
 
@@ -895,13 +908,33 @@ export function findProductIndexCoverageViolations(manifest, index) {
   });
 }
 
+// Only a missing catalog starts from nothing. An unparsable one, such as an
+// unresolved merge, must not silently date every entry today.
+export async function readPreviousManifest(file = manifestPath) {
+  let text;
+  try {
+    text = await fs.readFile(file, 'utf8');
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  }
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    throw new Error(
+      'ai/docs-manifest.json cannot be read as JSON. If a merge left conflict markers, resolve it to one side (git checkout --ours or --theirs ai/docs-manifest.json) and run --write again.',
+      { cause: error }
+    );
+  }
+}
+
 async function main() {
   const mode = process.argv[2] ?? '--check';
   if (!['--check', '--write'].includes(mode)) {
     throw new Error('Usage: node scripts/build-agent-docs.mjs [--check|--write]');
   }
 
-  const manifest = await buildManifest(repoRoot);
+  const manifest = await buildManifest(repoRoot, { previous: await readPreviousManifest() });
   const index = renderProductLlmsIndex(manifest);
   const manifestText = `${JSON.stringify(manifest, null, 2)}\n`;
   if (mode === '--write') {
