@@ -336,7 +336,7 @@
       "implementation_status": "partial",
       "production_readiness": "not-applicable",
       "context_sensitivity": "internal",
-      "updated": "2026-11-26",
+      "updated": "2026-11-27",
       "priority": "core",
       "media_type": "application/yaml",
       "capability_refs": [],
