@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use aether_application::DataProcessingApplication;
+use aether_ports::AuditSink;
 use dashmap::DashMap;
 use sqlx::SqlitePool;
 
@@ -16,6 +17,8 @@ pub struct AppState {
     ///
     /// The HTTP surface is not mounted when this is `None`.
     pub data_processing: Option<Arc<DataProcessingApplication>>,
+    /// Audit trail for commands the gateway governs on behalf of a service.
+    pub command_audit: Arc<dyn AuditSink>,
     /// In-memory refresh token store: token_id -> RefreshTokenInfo
     pub refresh_tokens: DashMap<String, RefreshTokenInfo>,
     /// Shared connection pool for the fixed internal application-service

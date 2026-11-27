@@ -102,3 +102,10 @@ capabilities:
     idempotent: false
     confirmation: always
     audit: required
+  history.config.manage:
+    kind: command
+    risk: high
+    permission: history.config.manage
+    idempotent: false
+    confirmation: always
+    audit: required

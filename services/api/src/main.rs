@@ -32,6 +32,7 @@ mod auth;
 mod config;
 mod data_processing_runtime;
 mod db;
+mod gateway_command_audit;
 mod live_values;
 mod middleware_auth;
 mod models;
@@ -549,11 +550,18 @@ async fn main() -> anyhow::Result<()> {
         ))
         .build()?;
 
+    let command_audit: Arc<dyn aether_ports::AuditSink> = Arc::new(
+        aether_store_local::SqliteAuditSink::initialize(db_pool.clone())
+            .await
+            .map_err(|error| anyhow::anyhow!("Gateway command audit: {error}"))?,
+    );
+
     let state = Arc::new(AppState {
         db: db_pool,
         config: Arc::new(cfg),
         ws_hub: Arc::clone(&ws_hub),
         data_processing,
+        command_audit,
         refresh_tokens: DashMap::new(),
         service_client,
     });
