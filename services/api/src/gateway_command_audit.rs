@@ -65,8 +65,9 @@ pub(crate) fn uplink_command(path: &str, method: &Method) -> GatewayCommand {
 }
 
 fn names_one_certificate(path: &str) -> bool {
-    path.strip_prefix("certificate/")
-        .is_some_and(|role| !role.is_empty() && !role.contains('/'))
+    path.strip_prefix("certificate/").is_some_and(|role| {
+        !role.is_empty() && !role.contains('/') && !matches!(role, "upload" | "info")
+    })
 }
 
 pub(crate) fn command_context(claims: &Claims, headers: &HeaderMap) -> RequestContext {

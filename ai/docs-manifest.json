@@ -2501,7 +2501,7 @@
       "implementation_status": "partial",
       "production_readiness": "not-applicable",
       "context_sensitivity": "public",
-      "content_sha256": "d445964f4e3ad4b064004b2bc5b092e90734b3351b54949f62a824b1de1b7117",
+      "content_sha256": "a6d3e2cb917fcc58791e0fa1cb304b0872ab2e3db81033af9dd3439b3997a14e",
       "updated": "2026-11-27",
       "priority": "core",
       "media_type": "text/markdown",

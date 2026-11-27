@@ -1440,6 +1440,87 @@ mod tests {
                 assert!(audit.records().expect("audit records").is_empty());
             }
 
+            #[tokio::test]
+            async fn an_uplink_request_reaches_its_own_route_with_the_body_intact() {
+                async fn certificate_route(
+                    axum::extract::Path(role): axum::extract::Path<String>,
+                    headers: HeaderMap,
+                    body: axum::body::Bytes,
+                ) -> axum::Json<serde_json::Value> {
+                    axum::Json(json!({
+                        "role": role,
+                        "content_type": headers
+                            .get("content-type")
+                            .and_then(|value| value.to_str().ok()),
+                        "bytes": body.len(),
+                    }))
+                }
+
+                let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+                    .await
+                    .expect("bind isolated uplink server");
+                let address = listener.local_addr().expect("uplink server address");
+                tokio::spawn(async move {
+                    axum::serve(
+                        listener,
+                        Router::new().route("/netApi/certificate/{role}", any(certificate_route)),
+                    )
+                    .await
+                    .expect("serve isolated uplink server");
+                });
+                let audit = Arc::new(MemoryAuditSink::new());
+                let state =
+                    app_state_with_audited_upstream(format!("http://{address}"), audit).await;
+
+                let multipart = "multipart/form-data; boundary=aether-test-boundary";
+                let body = "--aether-test-boundary\r\ncontent\r\n--aether-test-boundary--\r\n";
+                let mut request = mutation(claims("Admin"), Method::POST, true, body);
+                request
+                    .headers_mut()
+                    .insert("content-type", multipart.parse().expect("valid header"));
+                let response = proxy_service(
+                    state,
+                    ServiceName::Uplink,
+                    "certificate/upload".to_owned(),
+                    request,
+                )
+                .await;
+
+                assert_eq!(response.status(), StatusCode::OK);
+                let echoed: serde_json::Value = serde_json::from_slice(
+                    &to_bytes(response.into_body(), 16 * 1024)
+                        .await
+                        .expect("read uplink response"),
+                )
+                .expect("decode uplink echo");
+                assert_eq!(echoed["role"], "upload");
+                assert_eq!(echoed["content_type"], multipart);
+                assert_eq!(echoed["bytes"], body.len());
+            }
+
+            #[tokio::test]
+            async fn the_publish_scope_cannot_delete_a_certificate() {
+                let (url, seen) = history_upstream(StatusCode::OK).await;
+                let audit = Arc::new(MemoryAuditSink::new());
+                let state = app_state_with_audited_upstream(url, audit.clone()).await;
+
+                let response = proxy_service(
+                    state,
+                    ServiceName::Uplink,
+                    "certificate/client_key".to_owned(),
+                    mutation(
+                        scoped_claims("Admin", vec![PUBLISH]),
+                        Method::DELETE,
+                        true,
+                        "",
+                    ),
+                )
+                .await;
+
+                assert_eq!(response.status(), StatusCode::FORBIDDEN);
+                assert!(forwarded(&seen).is_empty());
+            }
+
             #[test]
             fn an_unlisted_uplink_mutation_needs_the_configuration_capability() {
                 for (method, path, capability, operation) in ROUTES {
@@ -1452,6 +1533,8 @@ mod tests {
                     (Method::POST, "certificate/client_key"),
                     (Method::DELETE, "certificate/client_key/extra"),
                     (Method::DELETE, "certificate"),
+                    (Method::DELETE, "certificate/upload"),
+                    (Method::DELETE, "certificate/info"),
                     (Method::POST, "alarm/config"),
                     (Method::POST, "anything/else"),
                 ] {

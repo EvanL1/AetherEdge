@@ -276,7 +276,10 @@ pub const MANAGE_HISTORY_CONFIG_CAPABILITY: CapabilityDescriptor = CapabilityDes
     false,
 );
 
-/// Change the uplink broker settings, its certificates, or its connection.
+/// Change what the uplink connects to, forwards, and trusts.
+///
+/// Covers the broker, forwarding filters, the internal service URLs the
+/// uplink calls with its own credential, certificates, and the connection.
 pub const MANAGE_UPLINK_CONFIG_CAPABILITY: CapabilityDescriptor = CapabilityDescriptor::new(
     "uplink.config.manage",
     OperationKind::Command,
@@ -287,7 +290,7 @@ pub const MANAGE_UPLINK_CONFIG_CAPABILITY: CapabilityDescriptor = CapabilityDesc
     false,
 );
 
-/// Publish a caller-supplied message upstream through the uplink.
+/// Make the uplink publish upstream: an alarm message or the instance list.
 pub const PUBLISH_UPLINK_MESSAGE_CAPABILITY: CapabilityDescriptor = CapabilityDescriptor::new(
     "uplink.message.publish",
     OperationKind::Command,

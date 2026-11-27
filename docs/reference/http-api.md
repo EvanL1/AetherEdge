@@ -143,9 +143,13 @@ The owning service then applies operation-specific authorization:
   `POST /uplink/mqtt/disconnect`, `POST /uplink/mqtt/reconnect`,
   `POST /uplink/certificate/upload`, and
   `DELETE /uplink/certificate/{cert_type}`) require an Admin or Engineer Bearer
-  JWT with `uplink.config.manage` and `x-aether-confirmed: true`;
-- messages a caller publishes upstream (`POST /uplink/alarm/broadcast` and
-  `POST /uplink/inst-sync`) require an Admin or Engineer Bearer JWT with
+  JWT with `uplink.config.manage` and `x-aether-confirmed: true`. The MQTT
+  configuration also holds the forwarding filters and the internal service
+  URLs the uplink calls with its own credential, so this permission decides
+  what leaves the site and where that credential is sent;
+- upstream publishes a caller triggers (`POST /uplink/alarm/broadcast`, which
+  queues the supplied alarm message, and `POST /uplink/inst-sync`, which sends
+  the instance list) require an Admin or Engineer Bearer JWT with
   `uplink.message.publish` and `x-aether-confirmed: true`;
 - `aether-history` and `aether-uplink` have no command boundary of their own,
   so the gateway authorizes and audits the history and uplink changes above
