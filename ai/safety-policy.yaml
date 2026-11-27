@@ -109,3 +109,17 @@ capabilities:
     idempotent: false
     confirmation: always
     audit: required
+  uplink.config.manage:
+    kind: command
+    risk: high
+    permission: uplink.config.manage
+    idempotent: false
+    confirmation: always
+    audit: required
+  uplink.message.publish:
+    kind: command
+    risk: high
+    permission: uplink.message.publish
+    idempotent: false
+    confirmation: always
+    audit: required

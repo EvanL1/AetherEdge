@@ -31,7 +31,7 @@ struct AccessClaims {
 ///
 /// Exported so the gateway gates on the same list the services enforce, rather
 /// than keeping a second copy that can drift out of agreement with this one.
-pub const ROLE_COMMAND_PERMISSIONS: [&str; 9] = [
+pub const ROLE_COMMAND_PERMISSIONS: [&str; 11] = [
     "device.control",
     "automation.rule.execute",
     "automation.rule.manage",
@@ -41,6 +41,8 @@ pub const ROLE_COMMAND_PERMISSIONS: [&str; 9] = [
     "alarm.rule.manage",
     "alarm.alert.resolve",
     "history.config.manage",
+    "uplink.config.manage",
+    "uplink.message.publish",
 ];
 
 /// Gateway-local capabilities that are not device or automation commands.

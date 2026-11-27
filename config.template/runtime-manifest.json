@@ -32,7 +32,9 @@
     "device.write_point",
     "history.config.manage",
     "io.channel.manage",
-    "io.channel.reconcile"
+    "io.channel.reconcile",
+    "uplink.config.manage",
+    "uplink.message.publish"
   ],
   "protocols": [
     "can",
@@ -43,6 +45,6 @@
   ],
   "checksum": {
     "algorithm": "sha256",
-    "digest": "10ecdf72ab6bd8f17ddcf77654cd0f74f2898a0002452be7700065707417ced9"
+    "digest": "496e18cc1995829806f738e7d88c3f2c809663ec0611aa474fb2ba9c12626ab2"
   }
 }

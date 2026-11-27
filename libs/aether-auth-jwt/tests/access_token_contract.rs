@@ -52,6 +52,8 @@ fn administrative_access_tokens_receive_the_shared_command_permissions() {
             "alarm.rule.manage",
             "alarm.alert.resolve",
             "history.config.manage",
+            "uplink.config.manage",
+            "uplink.message.publish",
         ] {
             assert!(actor.has_permission(permission), "missing {permission}");
         }
@@ -66,6 +68,8 @@ fn viewer_refresh_and_malformed_credentials_never_gain_command_permissions() {
         .expect("valid viewer access token");
     assert!(!viewer.has_permission("alarm.rule.manage"));
     assert!(!viewer.has_permission("history.config.manage"));
+    assert!(!viewer.has_permission("uplink.config.manage"));
+    assert!(!viewer.has_permission("uplink.message.publish"));
     assert!(!viewer.has_permission("automation.routing.manage"));
     assert!(!viewer.has_permission("automation.instance.manage"));
     assert!(!viewer.has_permission("io.channel.manage"));

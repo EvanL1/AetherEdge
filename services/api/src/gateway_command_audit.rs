@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use aether_application::{
-    Actor, CapabilityDescriptor, MANAGE_HISTORY_CONFIG_CAPABILITY, RequestContext,
+    Actor, CapabilityDescriptor, MANAGE_HISTORY_CONFIG_CAPABILITY, MANAGE_UPLINK_CONFIG_CAPABILITY,
+    PUBLISH_UPLINK_MESSAGE_CAPABILITY, RequestContext,
 };
 use aether_domain::TimestampMs;
 use aether_ports::{AuditOutcome, AuditRecord, AuditSink, PortResult};
@@ -41,6 +42,32 @@ pub(crate) fn history_command(path: &str, method: &Method) -> GatewayCommand {
         capability: MANAGE_HISTORY_CONFIG_CAPABILITY,
         operation,
     }
+}
+
+pub(crate) fn uplink_command(path: &str, method: &Method) -> GatewayCommand {
+    let config = MANAGE_UPLINK_CONFIG_CAPABILITY;
+    let publish = PUBLISH_UPLINK_MESSAGE_CAPABILITY;
+    let (capability, operation) = match (method.as_str(), path) {
+        ("POST", "mqtt/config") => (config, "mqtt.config.update"),
+        ("POST", "mqtt/disconnect") => (config, "mqtt.disconnect"),
+        ("POST", "mqtt/reconnect") => (config, "mqtt.reconnect"),
+        ("POST", "certificate/upload") => (config, "certificate.upload"),
+        ("DELETE", path) if names_one_certificate(path) => (config, "certificate.delete"),
+        ("POST", "alarm/broadcast") => (publish, "alarm.broadcast"),
+        ("POST", "inst-sync") => (publish, "instance.sync"),
+        // An unlisted route may change anything, so it needs the wider capability.
+        _ => (config, "unrecognized"),
+    };
+    GatewayCommand {
+        capability,
+        operation,
+    }
+}
+
+fn names_one_certificate(path: &str) -> bool {
+    path.strip_prefix("certificate/").is_some_and(|role| {
+        !role.is_empty() && !role.contains('/') && !matches!(role, "upload" | "info")
+    })
 }
 
 pub(crate) fn command_context(claims: &Claims, headers: &HeaderMap) -> RequestContext {
