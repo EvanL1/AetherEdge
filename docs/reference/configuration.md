@@ -176,6 +176,7 @@ gates):
 | `HOST_GID` | `1000` | Group id for container processes; pairs with `HOST_UID` |
 | `DIALOUT_GID` | `20` | Dialout group id for serial-port access (Linux only) |
 | `AETHER_API_URL` | `http://localhost:6005` | API gateway base URL for the `aether` CLI data plane and MCP; the only remote application boundary |
+| `AETHER_API_HEADERS` | unset | Extra HTTP headers the `aether` CLI data plane and MCP send on every gateway request, as comma-separated `Name=value` pairs, for an access proxy in front of the gateway such as a Cloudflare Access service token. The values are secrets. Headers the CLI sets itself, including `Authorization` and every `X-Aether-*` name, are rejected; see [Cloudflare Access in front of the gateway](../guides/deployment.md#cloudflare-access-in-front-of-the-gateway) |
 | `AETHER_SHM_PATH` | platform-selected tmpfs path | Canonical authoritative point-state segment shared by io and read-only consumers |
 | `AETHER_CHANNEL_HEALTH_SHM_PATH` | sibling `*-health` path | Separate authoritative channel-connectivity segment; normally derived from `AETHER_SHM_PATH` |
 | `SHM_WRITER_STALE_AFTER_MS` | `30000` | Maximum writer-heartbeat age accepted by read-side SHM adapters |

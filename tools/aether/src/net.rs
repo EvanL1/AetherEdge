@@ -149,7 +149,7 @@ pub(crate) struct NetClient {
 impl NetClient {
     pub(crate) fn new(base_url: &str) -> Result<Self> {
         Ok(Self {
-            client: Client::new(),
+            client: crate::gateway_client::client(base_url)?,
             base_url: base_url.trim_end_matches('/').to_string(),
             access_token: std::env::var("AETHER_ACCESS_TOKEN")
                 .ok()

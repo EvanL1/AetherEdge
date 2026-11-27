@@ -231,7 +231,9 @@ impl TopState {
 
 pub async fn run_top(io_url: &str, automation_url: &str) -> Result<()> {
     let handle = tokio::runtime::Handle::current();
-    let client = Client::builder().timeout(Duration::from_secs(5)).build()?;
+    let client = crate::gateway_client::builder(io_url)?
+        .timeout(Duration::from_secs(5))
+        .build()?;
 
     let host_display = io_url
         .trim_start_matches("http://")

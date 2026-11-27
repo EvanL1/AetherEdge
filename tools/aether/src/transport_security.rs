@@ -10,8 +10,16 @@ use anyhow::{Context, Result, bail};
 /// certificate-validated HTTPS ingress; read-only compatibility queries do not
 /// call this guard because they carry no access token.
 pub(crate) fn require_secure_bearer_transport(base_url: &str) -> Result<()> {
+    require_secure_transport(base_url, "an Aether Bearer token")
+}
+
+pub(crate) fn require_secure_extra_header_transport(base_url: &str) -> Result<()> {
+    require_secure_transport(base_url, "AETHER_API_HEADERS values")
+}
+
+fn require_secure_transport(base_url: &str, credential: &str) -> Result<()> {
     let url = reqwest::Url::parse(base_url)
-        .with_context(|| format!("invalid governed service URL `{base_url}`"))?;
+        .context("the gateway URL from AETHER_API_URL or --host is not a valid URL")?;
     if !url.username().is_empty() || url.password().is_some() {
         bail!("governed service URLs must not contain embedded credentials");
     }
@@ -24,8 +32,12 @@ pub(crate) fn require_secure_bearer_transport(base_url: &str) -> Result<()> {
     }
 
     bail!(
-        "refusing to send an Aether Bearer token over a non-loopback plaintext transport; use the on-device CLI/loopback or a certificate-validated HTTPS ingress"
+        "refusing to send {credential} over a non-loopback plaintext transport; use the on-device CLI/loopback or a certificate-validated HTTPS ingress"
     )
+}
+
+pub(crate) fn is_loopback_base(base_url: &str) -> bool {
+    reqwest::Url::parse(base_url).is_ok_and(|url| url.host_str().is_some_and(is_loopback_host))
 }
 
 fn is_loopback_host(host: &str) -> bool {
@@ -41,7 +53,55 @@ fn is_loopback_host(host: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::require_secure_bearer_transport;
+    use super::{
+        is_loopback_base, require_secure_bearer_transport, require_secure_extra_header_transport,
+    };
+
+    #[test]
+    fn errors_never_echo_the_url_or_its_credentials() {
+        for url in [
+            "http://operator:hunter2-password@edge.example.test:notaport",
+            "operator:hunter2-password@edge.example.test",
+            "http://operator:hunter2-password@localhost:6005",
+            "http://operator:hunter2-password@edge.example.test:6005",
+        ] {
+            for guard in [
+                require_secure_bearer_transport,
+                require_secure_extra_header_transport,
+            ] {
+                let error = format!("{:#}", guard(url).unwrap_err());
+                assert!(!error.contains("hunter2-password"), "{error}");
+                assert!(!error.contains("operator"), "{error}");
+                assert!(!error.contains("edge.example.test"), "{error}");
+            }
+        }
+        let error = format!(
+            "{:#}",
+            require_secure_bearer_transport("http://edge.example.test:notaport").unwrap_err()
+        );
+        assert!(error.contains("AETHER_API_URL"), "{error}");
+    }
+
+    #[test]
+    fn loopback_base_matches_the_hosts_the_guard_allows_over_http() {
+        for loopback in [
+            "http://localhost:6005",
+            "http://LOCALHOST:6005/api/v1/io",
+            "http://127.0.0.1:6005",
+            "http://[::1]:6005",
+            "https://localhost:8443",
+        ] {
+            assert!(is_loopback_base(loopback), "{loopback}");
+        }
+        for remote in [
+            "https://edge.example.test",
+            "http://192.0.2.10:6005",
+            "http://localhost.example.test:6005",
+            "not a url",
+        ] {
+            assert!(!is_loopback_base(remote), "{remote}");
+        }
+    }
 
     #[test]
     fn bearer_transport_allows_loopback_http_and_remote_https_only() {
