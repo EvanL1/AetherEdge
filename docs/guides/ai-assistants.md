@@ -131,6 +131,13 @@ In the Claude Desktop config, a remote write-enabled server looks like this
 }
 ```
 
+If the ingress also requires its own request headers, such as a Cloudflare
+Access service token, add them to the same `env` block as `AETHER_API_HEADERS`,
+a comma-separated list of `Name=value` pairs. The server sends them on every
+gateway request and refuses to start if the list is malformed or names a header
+the CLI sets itself. See
+[Cloudflare Access in front of the gateway](deployment.md#cloudflare-access-in-front-of-the-gateway).
+
 ## Read-only vs write access
 
 By default, `aether mcp` is read-only. This is not an advisory annotation:
