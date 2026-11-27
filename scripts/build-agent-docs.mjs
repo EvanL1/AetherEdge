@@ -833,8 +833,10 @@ export async function findManifestViolations(manifest, root = repoRoot) {
       if (document.content_sha256 !== contentDigest(content)) {
         violations.push(`${label}: content_sha256 does not match the file`);
       }
-    } catch {
-      violations.push(`${label}: path does not exist`);
+    } catch (error) {
+      violations.push(
+        error.code === 'ENOENT' ? `${label}: path does not exist` : `${label}: path cannot be read`
+      );
     }
   }
 
@@ -906,11 +908,23 @@ export function findProductIndexCoverageViolations(manifest, index) {
   });
 }
 
-async function readCheckedInManifest() {
+// Only a missing catalog starts from nothing. An unparsable one, such as an
+// unresolved merge, must not silently date every entry today.
+export async function readPreviousManifest(file = manifestPath) {
+  let text;
   try {
-    return JSON.parse(await fs.readFile(manifestPath, 'utf8'));
-  } catch {
-    return null;
+    text = await fs.readFile(file, 'utf8');
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  }
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    throw new Error(
+      'ai/docs-manifest.json cannot be read as JSON. If a merge left conflict markers, resolve it to one side (git checkout --ours or --theirs ai/docs-manifest.json) and run --write again.',
+      { cause: error }
+    );
   }
 }
 
@@ -920,7 +934,7 @@ async function main() {
     throw new Error('Usage: node scripts/build-agent-docs.mjs [--check|--write]');
   }
 
-  const manifest = await buildManifest(repoRoot, { previous: await readCheckedInManifest() });
+  const manifest = await buildManifest(repoRoot, { previous: await readPreviousManifest() });
   const index = renderProductLlmsIndex(manifest);
   const manifestText = `${JSON.stringify(manifest, null, 2)}\n`;
   if (mode === '--write') {

@@ -12,6 +12,7 @@ import {
   contentDigest,
   findManifestViolations,
   findProductIndexCoverageViolations,
+  readPreviousManifest,
   renderProductLlmsIndex,
 } from './build-agent-docs.mjs';
 
@@ -198,9 +199,27 @@ describe('Edge catalog dates', () => {
     );
     const stale = manifest.documents.find((document) => document.path === 'AGENTS.md');
     stale.content_sha256 = '0'.repeat(64);
+    stale.updated = '2026-02-31';
     expect(await findManifestViolations(manifest, repoRoot)).toEqual([
+      'AGENTS.md: updated must be a calendar date',
       'AGENTS.md: content_sha256 does not match the file',
     ]);
+  });
+
+  it('refuses a catalog it cannot parse instead of dating every entry today', async () => {
+    const root = await sourceTree({
+      'ai/docs-manifest.json':
+        '{\n<<<<<<< HEAD\n  "schema_version": 4,\n=======\n  "schema_version": 4,\n>>>>>>> branch\n}\n',
+    });
+    try {
+      await assert.rejects(
+        readPreviousManifest(path.join(root, 'ai', 'docs-manifest.json')),
+        /ai\/docs-manifest\.json cannot be read.*resolve it to one side/s
+      );
+      expect(await readPreviousManifest(path.join(root, 'ai', 'missing.json'))).toBe(null);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
   });
 });
 

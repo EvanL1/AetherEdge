@@ -26,7 +26,7 @@
       "implementation_status": "implemented",
       "production_readiness": "not-applicable",
       "context_sensitivity": "internal",
-      "content_sha256": "c4f997d8de177f69859c9eef64815c1ef6555f9159f0a5846b3a4c833721774c",
+      "content_sha256": "ec95c06dedc35ca56bd1a00868270725c520f0d4cd86ab38a77f8b7379cf2b5d",
       "updated": "2026-11-27",
       "priority": "core",
       "media_type": "text/markdown",

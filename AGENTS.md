@@ -115,8 +115,8 @@ domain <- ports <- application <- services/interfaces
   `node scripts/build-agent-docs.mjs --write`; never edit them by hand.
 - A catalog entry's `updated` date moves only when its `content_sha256`
   changes. The generator carries it from the checked-in catalog and never
-  reads Git, so committing, rebasing, or squash-merging cannot make the
-  catalog stale.
+  reads Git, so committing, rebasing, or squash-merging cannot make a
+  catalog date stale.
 - `ai/safety-policy.yaml` remains the capability-risk authority. Document
   metadata may reference its capability identifiers but must not redefine
   permission, confirmation, idempotency, or audit policy.

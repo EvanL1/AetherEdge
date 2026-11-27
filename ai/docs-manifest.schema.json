@@ -145,7 +145,7 @@
           "pattern": "^[0-9a-f]{64}$"
         },
         "updated": {
-          "description": "The day the catalog first recorded the current content_sha256.",
+          "description": "The day the generator last saw this path's content change.",
           "type": "string",
           "format": "date"
         },
