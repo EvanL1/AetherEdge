@@ -127,15 +127,21 @@ refused rather than treated as fully privileged.
 The gateway's own management routes each need one named permission. Holding
 some other command permission does not open them:
 
-- `gateway.administer` (Admin only) covers user management, configuration
-  import, upgrade, service restart, host network changes, log administration
-  under `/api/admin`, and `POST /api/v1/broadcast`;
+- `gateway.administer` (Admin only) covers the user directory and user
+  changes, token statistics and cleanup, everything under `/api/v1/config`
+  (check, export, import, upgrade, service restart), host network changes, log
+  administration under `/api/admin`, `POST /api/v1/broadcast`, and changing a
+  role or activation state through `PUT /api/v1/auth/me`;
 - `gateway.operate` (Admin and Engineer) covers editing and resetting the
   homepage points.
 
 Login issues both to an Admin and `gateway.operate` to an Engineer. A token
 narrowed to, say, `uplink.message.publish` can do that and nothing on these
-routes.
+routes. Treat `gateway.administer` as full authority over the host: its holder
+can import configuration, install an upgrade, and change any account's role.
+
+The scope narrows commands, not reads. Any valid token, whatever its scope, can
+read through the gateway, including service configuration and the audit trail.
 
 The gateway requires an access JWT before forwarding any namespace request, and
 forwards a mutation to io, automation, or alarm only for a token that holds at

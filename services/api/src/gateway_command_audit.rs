@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use aether_application::{
-    Actor, CapabilityDescriptor, MANAGE_HISTORY_CONFIG_CAPABILITY, MANAGE_UPLINK_CONFIG_CAPABILITY,
+    CapabilityDescriptor, MANAGE_HISTORY_CONFIG_CAPABILITY, MANAGE_UPLINK_CONFIG_CAPABILITY,
     PUBLISH_UPLINK_MESSAGE_CAPABILITY, RequestContext,
 };
 use aether_domain::TimestampMs;
@@ -71,13 +71,7 @@ fn names_one_certificate(path: &str) -> bool {
 }
 
 pub(crate) fn command_context(claims: &Claims, headers: &HeaderMap) -> RequestContext {
-    let actor = aether_auth_jwt::permissions_for_role(claims.role.as_deref())
-        .into_iter()
-        .filter(|permission| aether_auth_jwt::scope_allows(&claims.scope, permission))
-        .fold(
-            Actor::new(format!("user:{}", claims.user_id)),
-            Actor::with_permission,
-        );
+    let actor = claims.actor();
     let header = |name: &str| headers.get(name).and_then(|value| value.to_str().ok());
     let request_id = header("x-request-id")
         .and_then(|value| Uuid::parse_str(value).ok())

@@ -1,3 +1,4 @@
+use aether_application::Actor;
 use anyhow::{Result, anyhow};
 use chrono::Utc;
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
@@ -45,6 +46,18 @@ impl Claims {
     #[must_use]
     pub fn may_administer(&self) -> bool {
         self.holds(aether_auth_jwt::GATEWAY_ADMINISTER)
+    }
+
+    /// The actor this token speaks for, holding exactly what `holds` allows.
+    #[must_use]
+    pub fn actor(&self) -> Actor {
+        aether_auth_jwt::permissions_for_role(self.role.as_deref())
+            .into_iter()
+            .filter(|permission| aether_auth_jwt::scope_allows(&self.scope, permission))
+            .fold(
+                Actor::new(format!("user:{}", self.user_id)),
+                Actor::with_permission,
+            )
     }
 
     /// The role sets the ceiling and the scope selects within it.
