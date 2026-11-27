@@ -16,7 +16,7 @@ use uuid::Uuid;
 use crate::auth::Claims;
 use crate::config::GatewayConfig;
 use crate::gateway_command_audit::{
-    CommandAudit, GatewayCommand, command_context, history_command,
+    CommandAudit, GatewayCommand, command_context, history_command, uplink_command,
 };
 use crate::state::AppState;
 
@@ -179,8 +179,14 @@ fn gateway_audited_command(
     path: &str,
     method: &Method,
 ) -> Option<GatewayCommand> {
-    (service == ServiceName::History && is_governed_mutation(service, path, method))
-        .then(|| history_command(path, method))
+    if !is_governed_mutation(service, path, method) {
+        return None;
+    }
+    match service {
+        ServiceName::History => Some(history_command(path, method)),
+        ServiceName::Uplink => Some(uplink_command(path, method)),
+        ServiceName::Io | ServiceName::Automation | ServiceName::Alarm => None,
+    }
 }
 
 async fn forward_audited(
@@ -556,15 +562,15 @@ mod tests {
             &Method::POST
         ));
         assert!(is_governed_mutation(
-            ServiceName::Uplink,
-            "mqtt/config",
+            ServiceName::Alarm,
+            "rules",
             &Method::POST
         ));
 
         let viewer = authorize_service_request(
             &claims("Viewer"),
-            ServiceName::Uplink,
-            "mqtt/config",
+            ServiceName::Alarm,
+            "rules",
             &Method::POST,
             &headers,
         )
@@ -573,8 +579,8 @@ mod tests {
 
         let engineer = authorize_service_request(
             &claims("Engineer"),
-            ServiceName::Uplink,
-            "mqtt/config",
+            ServiceName::Alarm,
+            "rules",
             &Method::POST,
             &headers,
         )
@@ -585,8 +591,8 @@ mod tests {
         confirmed.insert("x-aether-confirmed", "true".parse().expect("valid header"));
         authorize_service_request(
             &claims("Admin"),
-            ServiceName::Uplink,
-            "mqtt/config",
+            ServiceName::Alarm,
+            "rules",
             &Method::POST,
             &confirmed,
         )
@@ -619,8 +625,8 @@ mod tests {
         // refused here rather than forwarded for the service to reject.
         let forbidden = authorize_service_request(
             &scoped_claims("Admin", vec!["data_processing.read"]),
-            ServiceName::Uplink,
-            "mqtt/config",
+            ServiceName::Alarm,
+            "rules",
             &Method::POST,
             &confirmed,
         )
@@ -630,8 +636,8 @@ mod tests {
         // A scope that still carries command authority keeps working.
         authorize_service_request(
             &scoped_claims("Admin", vec!["io.channel.manage"]),
-            ServiceName::Uplink,
-            "mqtt/config",
+            ServiceName::Alarm,
+            "rules",
             &Method::POST,
             &confirmed,
         )
@@ -753,7 +759,7 @@ mod tests {
         assert!(!String::from_utf8_lossy(&body).contains("127.0.0.1"));
     }
 
-    mod history_command_audit {
+    mod gateway_audited_commands {
         use std::sync::{
             Arc, Mutex,
             atomic::{AtomicUsize, Ordering},
@@ -777,7 +783,7 @@ mod tests {
         use super::{claims, scoped_claims};
         use crate::auth::Claims;
         use crate::service_gateway::{ServiceName, proxy_service};
-        use crate::test_support::app_state_with_history_gateway;
+        use crate::test_support::app_state_with_audited_upstream;
 
         const CAPABILITY: &str = "history.config.manage";
 
@@ -826,27 +832,27 @@ mod tests {
                 .await
                 .expect("bind isolated history server");
             let address = listener.local_addr().expect("history server address");
-            let app = Router::new().route(
-                "/hisApi/{*path}",
-                any(move |headers: HeaderMap| {
-                    let recorder = Arc::clone(&recorder);
-                    async move {
-                        let request_id = headers
-                            .get("x-request-id")
-                            .and_then(|value| value.to_str().ok())
-                            .map(str::to_owned);
-                        recorder
-                            .lock()
-                            .expect("record history request")
-                            .push(request_id);
-                        tokio::time::sleep(delay).await;
-                        (
-                            status,
-                            axum::Json(json!({ "success": status.is_success() })),
-                        )
-                    }
-                }),
-            );
+            let handler = move |headers: HeaderMap| {
+                let recorder = Arc::clone(&recorder);
+                async move {
+                    let request_id = headers
+                        .get("x-request-id")
+                        .and_then(|value| value.to_str().ok())
+                        .map(str::to_owned);
+                    recorder
+                        .lock()
+                        .expect("record history request")
+                        .push(request_id);
+                    tokio::time::sleep(delay).await;
+                    (
+                        status,
+                        axum::Json(json!({ "success": status.is_success() })),
+                    )
+                }
+            };
+            let app = Router::new()
+                .route("/hisApi/{*path}", any(handler.clone()))
+                .route("/netApi/{*path}", any(handler));
             tokio::spawn(async move {
                 axum::serve(listener, app)
                     .await
@@ -906,7 +912,7 @@ mod tests {
         async fn a_confirmed_mutation_is_audited_before_and_after_the_forward() {
             let (url, seen) = history_upstream(StatusCode::OK).await;
             let audit = Arc::new(MemoryAuditSink::new());
-            let state = app_state_with_history_gateway(url, audit.clone()).await;
+            let state = app_state_with_audited_upstream(url, audit.clone()).await;
 
             let response = proxy_service(
                 state,
@@ -949,7 +955,7 @@ mod tests {
         async fn a_caller_request_id_is_kept_only_when_it_is_a_uuid() {
             let (url, seen) = history_upstream(StatusCode::OK).await;
             let audit = Arc::new(MemoryAuditSink::new());
-            let state = app_state_with_history_gateway(url, audit.clone()).await;
+            let state = app_state_with_audited_upstream(url, audit.clone()).await;
             let supplied = "0f0e0d0c-0b0a-4908-8706-050403020100";
 
             for value in [supplied, "not-a-uuid"] {
@@ -981,7 +987,7 @@ mod tests {
         async fn a_rejected_mutation_is_audited_and_never_forwarded() {
             let (url, seen) = history_upstream(StatusCode::OK).await;
             let audit = Arc::new(MemoryAuditSink::new());
-            let state = app_state_with_history_gateway(url, audit.clone()).await;
+            let state = app_state_with_audited_upstream(url, audit.clone()).await;
 
             let cases = [
                 (
@@ -1044,7 +1050,7 @@ mod tests {
         #[tokio::test]
         async fn a_mutation_fails_closed_when_the_attempt_cannot_be_audited() {
             let (url, seen) = history_upstream(StatusCode::OK).await;
-            let state = app_state_with_history_gateway(url, Arc::new(FailingAfter::new(0))).await;
+            let state = app_state_with_audited_upstream(url, Arc::new(FailingAfter::new(0))).await;
 
             for confirmed in [true, false] {
                 let response = proxy_service(
@@ -1064,7 +1070,7 @@ mod tests {
         async fn an_applied_mutation_reports_an_incomplete_terminal_audit() {
             let (url, seen) = history_upstream(StatusCode::OK).await;
             let audit = Arc::new(FailingAfter::new(1));
-            let state = app_state_with_history_gateway(url, audit.clone()).await;
+            let state = app_state_with_audited_upstream(url, audit.clone()).await;
 
             let response = proxy_service(
                 state,
@@ -1101,7 +1107,7 @@ mod tests {
             ];
             for (url, status, expected) in targets {
                 let audit = Arc::new(MemoryAuditSink::new());
-                let state = app_state_with_history_gateway(url, audit.clone()).await;
+                let state = app_state_with_audited_upstream(url, audit.clone()).await;
                 let response = proxy_service(
                     state,
                     ServiceName::History,
@@ -1127,7 +1133,7 @@ mod tests {
         async fn reads_and_service_owned_commands_add_no_gateway_audit_record() {
             let (url, seen) = history_upstream(StatusCode::OK).await;
             let audit = Arc::new(MemoryAuditSink::new());
-            let state = app_state_with_history_gateway(url, audit.clone()).await;
+            let state = app_state_with_audited_upstream(url, audit.clone()).await;
 
             for (service, path, method) in [
                 (ServiceName::History, "config", Method::GET),
@@ -1148,7 +1154,7 @@ mod tests {
         async fn a_token_scoped_to_history_alone_may_change_it() {
             let (url, seen) = history_upstream(StatusCode::OK).await;
             let audit = Arc::new(MemoryAuditSink::new());
-            let state = app_state_with_history_gateway(url, audit.clone()).await;
+            let state = app_state_with_audited_upstream(url, audit.clone()).await;
 
             let response = proxy_service(
                 state,
@@ -1171,7 +1177,7 @@ mod tests {
         async fn an_unlisted_mutation_is_still_governed_and_audited() {
             let (url, seen) = history_upstream(StatusCode::OK).await;
             let audit = Arc::new(MemoryAuditSink::new());
-            let state = app_state_with_history_gateway(url, audit.clone()).await;
+            let state = app_state_with_audited_upstream(url, audit.clone()).await;
 
             let refused = proxy_service(
                 state.clone(),
@@ -1211,7 +1217,7 @@ mod tests {
         async fn a_method_the_gateway_cannot_forward_leaves_no_attempt_behind() {
             let (url, seen) = history_upstream(StatusCode::OK).await;
             let audit = Arc::new(MemoryAuditSink::new());
-            let state = app_state_with_history_gateway(url, audit.clone()).await;
+            let state = app_state_with_audited_upstream(url, audit.clone()).await;
 
             let response = proxy_service(
                 state,
@@ -1232,7 +1238,7 @@ mod tests {
 
             let (url, seen) = history_upstream(StatusCode::OK).await;
             let audit = Arc::new(MemoryAuditSink::new());
-            let state = app_state_with_history_gateway(url, audit.clone()).await;
+            let state = app_state_with_audited_upstream(url, audit.clone()).await;
 
             for path in ["storage%3Fx", "storage%3F", "storage%23", "storage%23x"] {
                 let mut request = Request::builder()
@@ -1260,7 +1266,7 @@ mod tests {
             let (url, seen) =
                 slow_history_upstream(StatusCode::OK, Duration::from_millis(200)).await;
             let audit = Arc::new(MemoryAuditSink::new());
-            let state = app_state_with_history_gateway(url, audit.clone()).await;
+            let state = app_state_with_audited_upstream(url, audit.clone()).await;
 
             let caller = tokio::spawn(proxy_service(
                 state,
@@ -1277,6 +1283,183 @@ mod tests {
                 vec![AuditOutcome::Attempted, AuditOutcome::Succeeded]
             );
             assert_eq!(forwarded(&seen).len(), 1);
+        }
+
+        mod uplink {
+            use super::*;
+            use crate::gateway_command_audit::uplink_command;
+
+            const CONFIG: &str = "uplink.config.manage";
+            const PUBLISH: &str = "uplink.message.publish";
+            const ROUTES: [(Method, &str, &str, &str); 7] = [
+                (Method::POST, "mqtt/config", CONFIG, "mqtt.config.update"),
+                (Method::POST, "mqtt/disconnect", CONFIG, "mqtt.disconnect"),
+                (Method::POST, "mqtt/reconnect", CONFIG, "mqtt.reconnect"),
+                (
+                    Method::POST,
+                    "certificate/upload",
+                    CONFIG,
+                    "certificate.upload",
+                ),
+                (
+                    Method::DELETE,
+                    "certificate/client_key",
+                    CONFIG,
+                    "certificate.delete",
+                ),
+                (Method::POST, "alarm/broadcast", PUBLISH, "alarm.broadcast"),
+                (Method::POST, "inst-sync", PUBLISH, "instance.sync"),
+            ];
+
+            #[tokio::test]
+            async fn every_uplink_mutation_is_audited_under_its_capability() {
+                let (url, seen) = history_upstream(StatusCode::OK).await;
+                let audit = Arc::new(MemoryAuditSink::new());
+                let state = app_state_with_audited_upstream(url, audit.clone()).await;
+
+                for (method, path, _, _) in ROUTES {
+                    let response = proxy_service(
+                        state.clone(),
+                        ServiceName::Uplink,
+                        path.to_owned(),
+                        mutation(
+                            claims("Engineer"),
+                            method,
+                            true,
+                            "-----BEGIN PRIVATE KEY-----",
+                        ),
+                    )
+                    .await;
+                    assert_eq!(response.status(), StatusCode::OK, "{path}");
+                    assert_eq!(response.headers()["x-aether-audit"], "recorded");
+                }
+
+                assert_eq!(forwarded(&seen).len(), ROUTES.len());
+                let records = audit.records().expect("audit records");
+                assert_eq!(records.len(), ROUTES.len() * 2);
+                for (pair, (_, path, capability, operation)) in records.chunks(2).zip(ROUTES) {
+                    assert_eq!(pair[0].outcome(), AuditOutcome::Attempted, "{path}");
+                    assert_eq!(pair[1].outcome(), AuditOutcome::Succeeded, "{path}");
+                    for record in pair {
+                        assert_eq!(record.capability(), capability, "{path}");
+                        assert_eq!(record.actor_id(), "user:7");
+                        let detail = record.detail().expect("audit detail");
+                        assert_eq!(detail, format!("operation={operation}"), "{path}");
+                    }
+                }
+            }
+
+            #[tokio::test]
+            async fn each_uplink_scope_reaches_only_its_own_routes() {
+                let (url, seen) = history_upstream(StatusCode::OK).await;
+                let audit = Arc::new(MemoryAuditSink::new());
+                let state = app_state_with_audited_upstream(url, audit.clone()).await;
+
+                let cases = [
+                    (vec![CONFIG], "mqtt/config", StatusCode::OK),
+                    (vec![CONFIG], "alarm/broadcast", StatusCode::FORBIDDEN),
+                    (vec![PUBLISH], "inst-sync", StatusCode::OK),
+                    (vec![PUBLISH], "mqtt/config", StatusCode::FORBIDDEN),
+                    (vec![PUBLISH], "certificate/upload", StatusCode::FORBIDDEN),
+                    (
+                        vec!["io.channel.manage"],
+                        "mqtt/disconnect",
+                        StatusCode::FORBIDDEN,
+                    ),
+                    (
+                        vec!["history.config.manage"],
+                        "inst-sync",
+                        StatusCode::FORBIDDEN,
+                    ),
+                ];
+                let allowed = cases
+                    .iter()
+                    .filter(|(_, _, status)| *status == StatusCode::OK)
+                    .count();
+                for (scope, path, status) in cases {
+                    let response = proxy_service(
+                        state.clone(),
+                        ServiceName::Uplink,
+                        path.to_owned(),
+                        mutation(scoped_claims("Admin", scope), Method::POST, true, "{}"),
+                    )
+                    .await;
+                    assert_eq!(response.status(), status, "{path}");
+                }
+
+                assert_eq!(forwarded(&seen).len(), allowed);
+                let rejected = audit
+                    .records()
+                    .expect("audit records")
+                    .iter()
+                    .filter(|record| record.outcome() == AuditOutcome::Rejected)
+                    .count();
+                assert_eq!(rejected, 5);
+            }
+
+            #[tokio::test]
+            async fn an_unconfirmed_uplink_mutation_is_rejected_and_never_forwarded() {
+                let (url, seen) = history_upstream(StatusCode::OK).await;
+                let audit = Arc::new(MemoryAuditSink::new());
+                let state = app_state_with_audited_upstream(url, audit.clone()).await;
+
+                let response = proxy_service(
+                    state,
+                    ServiceName::Uplink,
+                    "mqtt/reconnect".to_owned(),
+                    mutation(claims("Admin"), Method::POST, false, "{}"),
+                )
+                .await;
+
+                assert_eq!(response.status(), StatusCode::PRECONDITION_REQUIRED);
+                assert!(forwarded(&seen).is_empty());
+                let records = audit.records().expect("audit records");
+                assert_eq!(records.len(), 1);
+                assert_eq!(records[0].outcome(), AuditOutcome::Rejected);
+                assert_eq!(records[0].capability(), CONFIG);
+            }
+
+            #[tokio::test]
+            async fn uplink_reads_add_no_audit_record() {
+                let (url, seen) = history_upstream(StatusCode::OK).await;
+                let audit = Arc::new(MemoryAuditSink::new());
+                let state = app_state_with_audited_upstream(url, audit.clone()).await;
+
+                for path in ["mqtt/status", "mqtt/config", "certificate/info"] {
+                    let response = proxy_service(
+                        state.clone(),
+                        ServiceName::Uplink,
+                        path.to_owned(),
+                        mutation(claims("Viewer"), Method::GET, false, ""),
+                    )
+                    .await;
+                    assert_eq!(response.status(), StatusCode::OK, "{path}");
+                }
+
+                assert_eq!(forwarded(&seen).len(), 3);
+                assert!(audit.records().expect("audit records").is_empty());
+            }
+
+            #[test]
+            fn an_unlisted_uplink_mutation_needs_the_configuration_capability() {
+                for (method, path, capability, operation) in ROUTES {
+                    let command = uplink_command(path, &method);
+                    assert_eq!(command.capability().name(), capability, "{path}");
+                    assert_eq!(command.operation(), operation, "{path}");
+                }
+                for (method, path) in [
+                    (Method::PUT, "mqtt/config"),
+                    (Method::POST, "certificate/client_key"),
+                    (Method::DELETE, "certificate/client_key/extra"),
+                    (Method::DELETE, "certificate"),
+                    (Method::POST, "alarm/config"),
+                    (Method::POST, "anything/else"),
+                ] {
+                    let command = uplink_command(path, &method);
+                    assert_eq!(command.capability().name(), CONFIG, "{path}");
+                    assert_eq!(command.operation(), "unrecognized", "{path}");
+                }
+            }
         }
 
         #[test]

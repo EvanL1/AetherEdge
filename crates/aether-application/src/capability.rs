@@ -276,6 +276,28 @@ pub const MANAGE_HISTORY_CONFIG_CAPABILITY: CapabilityDescriptor = CapabilityDes
     false,
 );
 
+/// Change the uplink broker settings, its certificates, or its connection.
+pub const MANAGE_UPLINK_CONFIG_CAPABILITY: CapabilityDescriptor = CapabilityDescriptor::new(
+    "uplink.config.manage",
+    OperationKind::Command,
+    RiskLevel::High,
+    "uplink.config.manage",
+    ConfirmationPolicy::Always,
+    AuditPolicy::Required,
+    false,
+);
+
+/// Publish a caller-supplied message upstream through the uplink.
+pub const PUBLISH_UPLINK_MESSAGE_CAPABILITY: CapabilityDescriptor = CapabilityDescriptor::new(
+    "uplink.message.publish",
+    OperationKind::Command,
+    RiskLevel::High,
+    "uplink.message.publish",
+    ConfirmationPolicy::Always,
+    AuditPolicy::Required,
+    false,
+);
+
 /// Discover configured data-processing tasks and bindings.
 pub const TASKS_LIST_CAPABILITY: CapabilityDescriptor = CapabilityDescriptor::new(
     "data_processing.tasks.list",
@@ -309,7 +331,7 @@ pub const PROCESS_DATA_CAPABILITY: CapabilityDescriptor = CapabilityDescriptor::
     false,
 );
 
-const CAPABILITY_CATALOG: [CapabilityDescriptor; 14] = [
+const CAPABILITY_CATALOG: [CapabilityDescriptor; 16] = [
     READ_POINT_CAPABILITY,
     WRITE_POINT_CAPABILITY,
     EXECUTE_RULE_CAPABILITY,
@@ -321,6 +343,8 @@ const CAPABILITY_CATALOG: [CapabilityDescriptor; 14] = [
     MANAGE_ALARM_RULE_CAPABILITY,
     RESOLVE_ALERT_CAPABILITY,
     MANAGE_HISTORY_CONFIG_CAPABILITY,
+    MANAGE_UPLINK_CONFIG_CAPABILITY,
+    PUBLISH_UPLINK_MESSAGE_CAPABILITY,
     TASKS_LIST_CAPABILITY,
     PROCESSOR_HEALTH_CAPABILITY,
     PROCESS_DATA_CAPABILITY,

@@ -138,9 +138,19 @@ The owning service then applies operation-specific authorization:
 - history configuration and storage changes (`PUT /history/config`,
   `PUT /history/storage`, `POST /history/storage/test`, and
   `POST /history/storage/reconnect`) require an Admin or Engineer Bearer JWT
-  with `history.config.manage` and `x-aether-confirmed: true`. `aether-history`
-  has no command boundary of its own, so the gateway authorizes and audits
-  these before it forwards them;
+  with `history.config.manage` and `x-aether-confirmed: true`;
+- uplink configuration changes (`POST /uplink/mqtt/config`,
+  `POST /uplink/mqtt/disconnect`, `POST /uplink/mqtt/reconnect`,
+  `POST /uplink/certificate/upload`, and
+  `DELETE /uplink/certificate/{cert_type}`) require an Admin or Engineer Bearer
+  JWT with `uplink.config.manage` and `x-aether-confirmed: true`;
+- messages a caller publishes upstream (`POST /uplink/alarm/broadcast` and
+  `POST /uplink/inst-sync`) require an Admin or Engineer Bearer JWT with
+  `uplink.message.publish` and `x-aether-confirmed: true`;
+- `aether-history` and `aether-uplink` have no command boundary of their own,
+  so the gateway authorizes and audits the history and uplink changes above
+  before it forwards them. Any other non-read route on those two services is
+  treated the same way, under the service's configuration capability;
 - forwarded identity headers and loopback reachability do not satisfy these
   protected command boundaries.
 
@@ -164,18 +174,20 @@ state is marked incomplete and non-retryable. Retain the correlation ID and do
 not automatically submit the command again. Failure to record the attempted
 audit fails closed before dispatch.
 
-A history change audited by the gateway keeps the history service's response
+A history or uplink change audited by the gateway keeps the service's response
 body. The gateway adds the `x-request-id` it recorded, on refusals too, and
 `x-aether-audit: recorded` or `incomplete` on a forwarded change. It answers
 `503 COMMAND_AUDIT_UNAVAILABLE` without forwarding when the refusal or the
 attempt cannot be recorded. The terminal record is written even if the caller
 disconnects first. A `failed` event with `response_status=502;
 upstream_outcome=unknown` means the forward broke in transit, so read the
-history configuration back before retrying. The audit detail names the
+service's configuration back before retrying. The audit detail names the
 operation and the response status, never the request body, so storage
-credentials stay out of the trail. Where the services share one SQLite
-database, as the supported installations do, read these events at
-`/api/v1/io/api/audit/events?capability=history.config.manage`.
+credentials, broker passwords, and certificate files stay out of the trail.
+Where the services share one SQLite database, as the supported installations
+do, read these events at `/api/v1/io/api/audit/events` with
+`capability=history.config.manage`, `capability=uplink.config.manage`, or
+`capability=uplink.message.publish`.
 
 Device-command acceptance means the local command plane accepted the request;
 it is not proof that physical equipment executed it. Use feedback telemetry for

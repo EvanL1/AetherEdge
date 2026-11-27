@@ -63,16 +63,18 @@ pub(crate) async fn app_state_with_public_registration(
     .await
 }
 
-pub(crate) async fn app_state_with_history_gateway(
-    history_service_url: String,
+/// Points history and uplink, the two services whose commands the gateway
+/// audits itself, at one upstream.
+pub(crate) async fn app_state_with_audited_upstream(
+    upstream_url: String,
     command_audit: Arc<dyn AuditSink>,
 ) -> Arc<AppState> {
-    build_app_state(false, Some(history_service_url), command_audit).await
+    build_app_state(false, Some(upstream_url), command_audit).await
 }
 
 async fn build_app_state(
     allow_public_registration: bool,
-    history_service_url: Option<String>,
+    audited_upstream_url: Option<String>,
     command_audit: Arc<dyn AuditSink>,
 ) -> Arc<AppState> {
     let database = SqlitePoolOptions::new()
@@ -98,8 +100,10 @@ async fn build_app_state(
         allow_public_registration,
         io_service_url: closed.clone(),
         automation_service_url: closed.clone(),
-        history_service_url: history_service_url.unwrap_or_else(|| closed.clone()),
-        uplink_service_url: closed.clone(),
+        history_service_url: audited_upstream_url
+            .clone()
+            .unwrap_or_else(|| closed.clone()),
+        uplink_service_url: audited_upstream_url.unwrap_or_else(|| closed.clone()),
         alarm_service_url: closed,
         ..GatewayConfig::default()
     };
