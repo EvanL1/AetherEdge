@@ -11,7 +11,6 @@ use axum::{
     routing::any,
 };
 use serde_json::json;
-use tracing::error;
 use uuid::Uuid;
 
 use crate::auth::Claims;
@@ -151,7 +150,7 @@ async fn proxy_service(
     };
     if let Some(command) = gateway_audited_command(service, &path, request.method()) {
         let claims = claims.clone();
-        return forward_audited(&state, service, &path, command, &claims, request).await;
+        return forward_audited(state, service, path, command, &claims, request).await;
     }
     if let Err(error) =
         authorize_service_request(claims, service, &path, request.method(), request.headers())
@@ -185,13 +184,16 @@ fn gateway_audited_command(
 }
 
 async fn forward_audited(
-    state: &AppState,
+    state: Arc<AppState>,
     service: ServiceName,
-    path: &str,
+    path: String,
     command: GatewayCommand,
     claims: &Claims,
     mut request: Request<Body>,
 ) -> Response<Body> {
+    if !is_forwardable_method(request.method()) {
+        return method_not_allowed();
+    }
     let context = command_context(claims, request.headers());
     let Ok(request_id) = HeaderValue::from_str(context.request_id()) else {
         return gateway_error(
@@ -200,9 +202,9 @@ async fn forward_audited(
             "the request identifier is invalid",
         );
     };
-    let audit = CommandAudit::new(state.command_audit.as_ref(), &context, command);
+    let audit = CommandAudit::new(Arc::clone(&state.command_audit), context, command);
 
-    if let Err(error) = SafetyPolicy.authorize(command.capability(), &context) {
+    if let Err(error) = SafetyPolicy.authorize(command.capability(), audit.context()) {
         let reason = error.to_string();
         if audit
             .record(AuditOutcome::Rejected, Some(&reason))
@@ -211,52 +213,45 @@ async fn forward_audited(
         {
             return audit_unavailable();
         }
-        return match error {
+        let mut response = match error {
             ApplicationError::ConfirmationRequired { .. } => {
                 GatewayAuthorizationError::ConfirmationRequired
             },
             _ => GatewayAuthorizationError::MutationForbidden,
         }
         .into_response();
+        response.headers_mut().insert(REQUEST_ID_HEADER, request_id);
+        return response;
     }
     if audit.record(AuditOutcome::Attempted, None).await.is_err() {
         return audit_unavailable();
     }
-
     request
         .headers_mut()
         .insert(REQUEST_ID_HEADER, request_id.clone());
-    let mut response = forward_to_upstream(
-        &state.service_client,
-        service.base_url(&state.config),
-        &service.downstream_path(path),
-        request,
-    )
-    .await;
 
-    let status = response.status();
-    let recorded = if status.is_success() {
-        audit.record(AuditOutcome::Succeeded, None).await
-    } else {
-        let failure = format!("response_status={}", status.as_u16());
-        audit.record(AuditOutcome::Failed, Some(&failure)).await
-    };
-    let audit_state = match recorded {
-        Ok(()) => "recorded",
-        Err(failure) => {
-            error!(
-                request_id = context.request_id(),
-                operation = command.operation(),
-                response_status = status.as_u16(),
-                "terminal command audit was not recorded: {failure}"
-            );
-            "incomplete"
-        },
-    };
-    let headers = response.headers_mut();
-    headers.insert(REQUEST_ID_HEADER, request_id);
-    headers.insert(AUDIT_STATE_HEADER, HeaderValue::from_static(audit_state));
-    response
+    // Detached so a caller that disconnects cannot skip the terminal record.
+    let dispatch = tokio::spawn(async move {
+        let mut response = forward_to_upstream(
+            &state.service_client,
+            service.base_url(&state.config),
+            &service.downstream_path(&path),
+            request,
+        )
+        .await;
+        let audit_state = audit.record_terminal(response.status()).await;
+        let headers = response.headers_mut();
+        headers.insert(REQUEST_ID_HEADER, request_id);
+        headers.insert(AUDIT_STATE_HEADER, HeaderValue::from_static(audit_state));
+        response
+    });
+    dispatch.await.unwrap_or_else(|_| {
+        gateway_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "GATEWAY_RESPONSE_FAILED",
+            "the application gateway could not construct a response",
+        )
+    })
 }
 
 fn audit_unavailable() -> Response<Body> {
@@ -330,7 +325,7 @@ pub(crate) fn validate_relative_path(path: &str) -> Result<(), ()> {
     let lower = path.to_ascii_lowercase();
     if path.is_empty()
         || path.starts_with('/')
-        || path.contains('\\')
+        || path.contains(['\\', '?', '#'])
         || lower.contains("%2e")
         || lower.contains("%2f")
         || lower.contains("%5c")
@@ -343,21 +338,29 @@ pub(crate) fn validate_relative_path(path: &str) -> Result<(), ()> {
     Ok(())
 }
 
+fn is_forwardable_method(method: &Method) -> bool {
+    matches!(
+        *method,
+        Method::GET | Method::POST | Method::PUT | Method::PATCH | Method::DELETE | Method::HEAD
+    )
+}
+
+fn method_not_allowed() -> Response<Body> {
+    gateway_error(
+        StatusCode::METHOD_NOT_ALLOWED,
+        "METHOD_NOT_ALLOWED",
+        "the method is not supported by the application gateway",
+    )
+}
+
 pub(crate) async fn forward_to_upstream(
     client: &reqwest::Client,
     base_url: &str,
     relative_path: &str,
     request: Request<Body>,
 ) -> Response<Body> {
-    if !matches!(
-        *request.method(),
-        Method::GET | Method::POST | Method::PUT | Method::PATCH | Method::DELETE | Method::HEAD
-    ) {
-        return gateway_error(
-            StatusCode::METHOD_NOT_ALLOWED,
-            "METHOD_NOT_ALLOWED",
-            "the method is not supported by the application gateway",
-        );
+    if !is_forwardable_method(request.method()) {
+        return method_not_allowed();
     }
 
     let mut url = match reqwest::Url::parse(&format!(
@@ -755,6 +758,7 @@ mod tests {
             Arc, Mutex,
             atomic::{AtomicUsize, Ordering},
         };
+        use std::time::Duration;
 
         use aether_ports::{
             AuditOutcome, AuditRecord, AuditSink, PortError, PortErrorKind, PortResult,
@@ -809,6 +813,13 @@ mod tests {
         type SeenRequestIds = Arc<Mutex<Vec<Option<String>>>>;
 
         async fn history_upstream(status: StatusCode) -> (String, SeenRequestIds) {
+            slow_history_upstream(status, Duration::ZERO).await
+        }
+
+        async fn slow_history_upstream(
+            status: StatusCode,
+            delay: Duration,
+        ) -> (String, SeenRequestIds) {
             let seen: SeenRequestIds = Arc::new(Mutex::new(Vec::new()));
             let recorder = Arc::clone(&seen);
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -828,6 +839,7 @@ mod tests {
                             .lock()
                             .expect("record history request")
                             .push(request_id);
+                        tokio::time::sleep(delay).await;
                         (
                             status,
                             axum::Json(json!({ "success": status.is_success() })),
@@ -877,6 +889,17 @@ mod tests {
 
         fn forwarded(seen: &SeenRequestIds) -> Vec<Option<String>> {
             seen.lock().expect("read history requests").clone()
+        }
+
+        async fn records_once_there_are(audit: &MemoryAuditSink, count: usize) -> Vec<AuditRecord> {
+            for _ in 0..300 {
+                let records = audit.records().expect("audit records");
+                if records.len() >= count {
+                    return records;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            panic!("the audit trail never reached {count} records");
         }
 
         #[tokio::test]
@@ -985,10 +1008,24 @@ mod tests {
                     state.clone(),
                     ServiceName::History,
                     "storage/reconnect".to_owned(),
-                    mutation(claims, Method::POST, confirmed, "{}"),
+                    mutation(
+                        claims,
+                        Method::POST,
+                        confirmed,
+                        r#"{"password":"s3cret-dsn"}"#,
+                    ),
                 )
                 .await;
                 assert_eq!(response.status(), status);
+                let request_id = response.headers()["x-request-id"]
+                    .to_str()
+                    .expect("request id header")
+                    .to_owned();
+                let recorded = audit.records().expect("audit records");
+                assert_eq!(
+                    recorded.last().expect("rejected record").request_id(),
+                    request_id
+                );
                 assert_eq!(error_code(response).await, code);
             }
 
@@ -1000,6 +1037,7 @@ mod tests {
                 assert_eq!(record.capability(), CAPABILITY);
                 let detail = record.detail().expect("audit detail");
                 assert!(detail.contains("operation=storage.reconnect"), "{detail}");
+                assert!(!detail.contains("s3cret-dsn"), "{detail}");
             }
         }
 
@@ -1058,7 +1096,7 @@ mod tests {
                 (
                     "http://127.0.0.1:1".to_owned(),
                     StatusCode::BAD_GATEWAY,
-                    "response_status=502",
+                    "response_status=502; upstream_outcome=unknown",
                 ),
             ];
             for (url, status, expected) in targets {
@@ -1096,8 +1134,7 @@ mod tests {
                 (ServiceName::History, "data/batch-query", Method::POST),
                 (ServiceName::Io, "api/channels", Method::POST),
             ] {
-                let mut request = mutation(claims("Admin"), method, true, "{}");
-                request.headers_mut().remove("x-request-id");
+                let request = mutation(claims("Admin"), method, true, "{}");
                 let response =
                     proxy_service(state.clone(), service, path.to_owned(), request).await;
                 assert!(!response.headers().contains_key("x-aether-audit"));
@@ -1105,6 +1142,141 @@ mod tests {
 
             assert_eq!(forwarded(&seen).len(), 2);
             assert!(audit.records().expect("audit records").is_empty());
+        }
+
+        #[tokio::test]
+        async fn a_token_scoped_to_history_alone_may_change_it() {
+            let (url, seen) = history_upstream(StatusCode::OK).await;
+            let audit = Arc::new(MemoryAuditSink::new());
+            let state = app_state_with_history_gateway(url, audit.clone()).await;
+
+            let response = proxy_service(
+                state,
+                ServiceName::History,
+                "config".to_owned(),
+                mutation(
+                    scoped_claims("Engineer", vec![CAPABILITY]),
+                    Method::PUT,
+                    true,
+                    "{}",
+                ),
+            )
+            .await;
+
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(forwarded(&seen).len(), 1);
+        }
+
+        #[tokio::test]
+        async fn an_unlisted_mutation_is_still_governed_and_audited() {
+            let (url, seen) = history_upstream(StatusCode::OK).await;
+            let audit = Arc::new(MemoryAuditSink::new());
+            let state = app_state_with_history_gateway(url, audit.clone()).await;
+
+            let refused = proxy_service(
+                state.clone(),
+                ServiceName::History,
+                "storage".to_owned(),
+                mutation(claims("Viewer"), Method::DELETE, true, "{}"),
+            )
+            .await;
+            assert_eq!(refused.status(), StatusCode::FORBIDDEN);
+            assert!(forwarded(&seen).is_empty());
+
+            let allowed = proxy_service(
+                state,
+                ServiceName::History,
+                "storage".to_owned(),
+                mutation(claims("Admin"), Method::DELETE, true, "{}"),
+            )
+            .await;
+            assert_eq!(allowed.status(), StatusCode::OK);
+
+            let records = audit.records().expect("audit records");
+            assert_eq!(
+                records.iter().map(AuditRecord::outcome).collect::<Vec<_>>(),
+                vec![
+                    AuditOutcome::Rejected,
+                    AuditOutcome::Attempted,
+                    AuditOutcome::Succeeded
+                ]
+            );
+            for record in &records {
+                let detail = record.detail().expect("audit detail");
+                assert!(detail.contains("operation=unrecognized"), "{detail}");
+            }
+        }
+
+        #[tokio::test]
+        async fn a_method_the_gateway_cannot_forward_leaves_no_attempt_behind() {
+            let (url, seen) = history_upstream(StatusCode::OK).await;
+            let audit = Arc::new(MemoryAuditSink::new());
+            let state = app_state_with_history_gateway(url, audit.clone()).await;
+
+            let response = proxy_service(
+                state,
+                ServiceName::History,
+                "config".to_owned(),
+                mutation(claims("Admin"), Method::OPTIONS, true, "{}"),
+            )
+            .await;
+
+            assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+            assert!(forwarded(&seen).is_empty());
+            assert!(audit.records().expect("audit records").is_empty());
+        }
+
+        #[tokio::test]
+        async fn an_encoded_query_or_fragment_cannot_relabel_a_mutation() {
+            use tower::ServiceExt;
+
+            let (url, seen) = history_upstream(StatusCode::OK).await;
+            let audit = Arc::new(MemoryAuditSink::new());
+            let state = app_state_with_history_gateway(url, audit.clone()).await;
+
+            for path in ["storage%3Fx", "storage%3F", "storage%23", "storage%23x"] {
+                let mut request = Request::builder()
+                    .method(Method::PUT)
+                    .uri(format!("/history/{path}"))
+                    .header("x-aether-confirmed", "true")
+                    .body(Body::from("{}"))
+                    .expect("valid gateway request");
+                request.extensions_mut().insert(claims("Admin"));
+                let response = crate::service_gateway::router()
+                    .with_state(state.clone())
+                    .oneshot(request)
+                    .await
+                    .expect("gateway response");
+                assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{path}");
+                assert_eq!(error_code(response).await, "INVALID_SERVICE_PATH");
+            }
+
+            assert!(forwarded(&seen).is_empty());
+            assert!(audit.records().expect("audit records").is_empty());
+        }
+
+        #[tokio::test]
+        async fn a_caller_that_disconnects_cannot_skip_the_terminal_record() {
+            let (url, seen) =
+                slow_history_upstream(StatusCode::OK, Duration::from_millis(200)).await;
+            let audit = Arc::new(MemoryAuditSink::new());
+            let state = app_state_with_history_gateway(url, audit.clone()).await;
+
+            let caller = tokio::spawn(proxy_service(
+                state,
+                ServiceName::History,
+                "storage/reconnect".to_owned(),
+                mutation(claims("Admin"), Method::POST, true, "{}"),
+            ));
+            records_once_there_are(&audit, 1).await;
+            caller.abort();
+
+            let records = records_once_there_are(&audit, 2).await;
+            assert_eq!(
+                records.iter().map(AuditRecord::outcome).collect::<Vec<_>>(),
+                vec![AuditOutcome::Attempted, AuditOutcome::Succeeded]
+            );
+            assert_eq!(forwarded(&seen).len(), 1);
         }
 
         #[test]

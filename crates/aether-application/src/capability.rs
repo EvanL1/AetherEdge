@@ -266,9 +266,6 @@ pub const RESOLVE_ALERT_CAPABILITY: CapabilityDescriptor = CapabilityDescriptor:
 );
 
 /// Change history collection settings or its storage backend.
-///
-/// Storage changes can redirect or stop every history write, so the
-/// operation is always confirmed and durably audited.
 pub const MANAGE_HISTORY_CONFIG_CAPABILITY: CapabilityDescriptor = CapabilityDescriptor::new(
     "history.config.manage",
     OperationKind::Command,

@@ -1,9 +1,12 @@
+use std::sync::Arc;
+
 use aether_application::{
     Actor, CapabilityDescriptor, MANAGE_HISTORY_CONFIG_CAPABILITY, RequestContext,
 };
 use aether_domain::TimestampMs;
 use aether_ports::{AuditOutcome, AuditRecord, AuditSink, PortResult};
-use axum::http::{HeaderMap, Method};
+use axum::http::{HeaderMap, Method, StatusCode};
+use tracing::error;
 use uuid::Uuid;
 
 use crate::auth::Claims;
@@ -20,6 +23,7 @@ impl GatewayCommand {
         self.capability
     }
 
+    #[cfg(test)]
     pub(crate) const fn operation(self) -> &'static str {
         self.operation
     }
@@ -61,16 +65,16 @@ pub(crate) fn command_context(claims: &Claims, headers: &HeaderMap) -> RequestCo
     )
 }
 
-pub(crate) struct CommandAudit<'a> {
-    sink: &'a dyn AuditSink,
-    context: &'a RequestContext,
+pub(crate) struct CommandAudit {
+    sink: Arc<dyn AuditSink>,
+    context: RequestContext,
     command: GatewayCommand,
 }
 
-impl<'a> CommandAudit<'a> {
+impl CommandAudit {
     pub(crate) const fn new(
-        sink: &'a dyn AuditSink,
-        context: &'a RequestContext,
+        sink: Arc<dyn AuditSink>,
+        context: RequestContext,
         command: GatewayCommand,
     ) -> Self {
         Self {
@@ -78,6 +82,10 @@ impl<'a> CommandAudit<'a> {
             context,
             command,
         }
+    }
+
+    pub(crate) const fn context(&self) -> &RequestContext {
+        &self.context
     }
 
     /// Records one outcome. The request body never reaches the audit trail.
@@ -101,5 +109,38 @@ impl<'a> CommandAudit<'a> {
                 Some(detail),
             ))
             .await
+    }
+
+    /// Records how the forward ended and returns the `x-aether-audit` value.
+    pub(crate) async fn record_terminal(&self, status: StatusCode) -> &'static str {
+        let recorded = if status.is_success() {
+            self.record(AuditOutcome::Succeeded, None).await
+        } else {
+            self.record(AuditOutcome::Failed, Some(&failure_detail(status)))
+                .await
+        };
+        match recorded {
+            Ok(()) => "recorded",
+            Err(failure) => {
+                error!(
+                    request_id = self.context.request_id(),
+                    operation = self.command.operation,
+                    response_status = status.as_u16(),
+                    "terminal command audit was not recorded: {failure}"
+                );
+                "incomplete"
+            },
+        }
+    }
+}
+
+fn failure_detail(status: StatusCode) -> String {
+    let code = status.as_u16();
+    // 502 is the gateway's own answer when the forward breaks in transit, so
+    // the service may or may not have applied the change.
+    if status == StatusCode::BAD_GATEWAY {
+        format!("response_status={code}; upstream_outcome=unknown")
+    } else {
+        format!("response_status={code}")
     }
 }

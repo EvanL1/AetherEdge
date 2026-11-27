@@ -165,12 +165,17 @@ not automatically submit the command again. Failure to record the attempted
 audit fails closed before dispatch.
 
 A history change audited by the gateway keeps the history service's response
-body. The gateway adds the `x-request-id` it recorded and
-`x-aether-audit: recorded` or `incomplete` as response headers, and answers
-`503 COMMAND_AUDIT_UNAVAILABLE` without forwarding when the attempt cannot be
-recorded. The audit detail names the operation and the response status, never
-the request body, so storage credentials stay out of the trail. These events
-share the trail above; filter it with `capability=history.config.manage`.
+body. The gateway adds the `x-request-id` it recorded, on refusals too, and
+`x-aether-audit: recorded` or `incomplete` on a forwarded change. It answers
+`503 COMMAND_AUDIT_UNAVAILABLE` without forwarding when the refusal or the
+attempt cannot be recorded. The terminal record is written even if the caller
+disconnects first. A `failed` event with `response_status=502;
+upstream_outcome=unknown` means the forward broke in transit, so read the
+history configuration back before retrying. The audit detail names the
+operation and the response status, never the request body, so storage
+credentials stay out of the trail. Where the services share one SQLite
+database, as the supported installations do, read these events at
+`/api/v1/io/api/audit/events?capability=history.config.manage`.
 
 Device-command acceptance means the local command plane accepted the request;
 it is not proof that physical equipment executed it. Use feedback telemetry for
