@@ -149,7 +149,7 @@ The UDS notification channel reconnects automatically with exponential backoff
 (1–5 s) if aether-io restarts, so an aether-io restart does not require
 restarting aether-automation.
 
-Two properties keep the hot path safe:
+Three properties keep the hot path safe:
 
 - **Write ownership.** aether-io is the only writer of telemetry/signal slots in
   shared memory; aether-automation is the only writer of control/action slots. See

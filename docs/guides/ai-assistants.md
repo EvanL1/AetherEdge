@@ -220,7 +220,7 @@ on the model's prior knowledge:
 
 - `aether://packs/energy/knowledge/ess-primer` — energy-storage concepts when the Energy Pack is active
 - `aether://packs/energy/knowledge/safe-operations` — the Energy Pack safety contract
-- `aether://docs/concepts/architecture` — the seven services and how they talk
+- `aether://docs/concepts/architecture` — the six services and how they talk
 - `aether://docs/concepts/data-model` — instances, channels, points
 - `aether://docs/reference/mcp-tools` — the full tool reference
 

@@ -92,7 +92,7 @@ hardened outbound integrations, and a connectable MCP server.
 
 ## AetherContracts
 
-**Implemented, experimental:** alpha.3 specifications, closed Schemas, fixtures,
+**Implemented, experimental:** alpha.4 specifications, closed Schemas, fixtures,
 TCK, digest-pinned consumer verification, and four fixture bindings.
 
 **Planned or gated:** production authentication key lifecycle, signed durable
