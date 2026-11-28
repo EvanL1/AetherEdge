@@ -92,6 +92,12 @@ pub enum CloudLinkCodecError {
     /// A response belongs to another or stale session.
     #[error("CloudLink session epoch or identity does not match the current verified session")]
     SessionMismatch,
+    #[error("CloudLink message expires before it is sent")]
+    InvalidExpiryWindow,
+    #[error("CloudLink data-loss range is unordered or reaches the earliest retained position")]
+    DataLossRangeInvalid,
+    #[error("CloudLink cursor array repeats a stream and epoch identity")]
+    CursorConflict,
     /// An explicit protocol deadline has been reached or passed.
     #[error("CloudLink message deadline has expired")]
     MessageExpired,
@@ -130,11 +136,13 @@ pub enum CloudLinkFailureCode {
     IntegerOutOfRange,
     DigestMismatch,
     StaleSession,
+    InvalidExpiryWindow,
     MessageExpired,
+    DataLossRangeInvalid,
 }
 
 impl CloudLinkFailureCode {
-    pub const ALL: [Self; 19] = [
+    pub const ALL: [Self; 21] = [
         Self::FieldBound,
         Self::UnsupportedVersion,
         Self::StreamBindingConflict,
@@ -153,7 +161,9 @@ impl CloudLinkFailureCode {
         Self::IntegerOutOfRange,
         Self::DigestMismatch,
         Self::StaleSession,
+        Self::InvalidExpiryWindow,
         Self::MessageExpired,
+        Self::DataLossRangeInvalid,
     ];
 
     #[must_use]
@@ -177,7 +187,9 @@ impl CloudLinkFailureCode {
             Self::IntegerOutOfRange => "INTEGER_OUT_OF_RANGE",
             Self::DigestMismatch => "DIGEST_MISMATCH",
             Self::StaleSession => "STALE_SESSION",
+            Self::InvalidExpiryWindow => "INVALID_EXPIRY_WINDOW",
             Self::MessageExpired => "MESSAGE_EXPIRED",
+            Self::DataLossRangeInvalid => "DATA_LOSS_RANGE_INVALID",
         }
     }
 }
@@ -240,7 +252,7 @@ impl CloudLinkCodecError {
             Self::InvalidField { field, .. } if matches!(*field, "delivery.digest" | "digest") => {
                 Code::InvalidDigest
             },
-            Self::InvalidField { field, .. } if *field == "resume" => Code::CursorConflict,
+            Self::CursorConflict => Code::CursorConflict,
             Self::InvalidField { .. } | Self::NonFinitePointValue | Self::ControlPointForbidden => {
                 Code::FieldBound
             },
@@ -248,7 +260,9 @@ impl CloudLinkCodecError {
             Self::IntegerOutOfRange { .. } => Code::IntegerOutOfRange,
             Self::DigestMismatch => Code::DigestMismatch,
             Self::SessionMismatch => Code::StaleSession,
+            Self::InvalidExpiryWindow => Code::InvalidExpiryWindow,
             Self::MessageExpired => Code::MessageExpired,
+            Self::DataLossRangeInvalid => Code::DataLossRangeInvalid,
             Self::RuntimeManifestChecksum => Code::DigestMismatch,
         };
         CloudLinkFailure::Codec(code)
@@ -266,7 +280,10 @@ fn json_failure(source: &serde_json::Error) -> CloudLinkFailureCode {
         CloudLinkFailureCode::UnknownField
     } else if message.contains("duplicate field") {
         CloudLinkFailureCode::DuplicateJsonKey
-    } else if message.contains("surrogate") || message.contains("unicode code point") {
+    } else if message.contains("surrogate")
+        || message.contains("unexpected end of hex escape")
+        || message.contains("unicode code point")
+    {
         CloudLinkFailureCode::JsonInvalidUnicode
     } else {
         CloudLinkFailureCode::JsonSyntaxError

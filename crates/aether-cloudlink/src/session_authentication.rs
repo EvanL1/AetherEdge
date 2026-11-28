@@ -136,10 +136,7 @@ impl UplinkSigningProjection {
         if let Some(expires_at_ms) = expires_at_ms
             && canonical_u64(expires_at_ms, "expires_at_ms")? < sent_at
         {
-            return Err(CloudLinkCodecError::InvalidField {
-                field: "expires_at_ms",
-                message: "must be after sent_at_ms",
-            });
+            return Err(CloudLinkCodecError::InvalidExpiryWindow);
         }
         identifier(stream_id, "stream_id", 128)?;
         positive_u64(stream_epoch, "stream_epoch")?;
