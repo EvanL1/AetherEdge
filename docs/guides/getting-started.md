@@ -232,7 +232,8 @@ aether rules list
 
 Every command accepts `--json` for structured output, which is the mode AI
 agents and scripts should use. Data starts flowing only after an explicit
-commissioning step adds and enables a channel; continue with Connect Devices.
+commissioning step adds and enables a channel; continue with
+[Connect Devices](connect-devices.md).
 
 ## Next steps
 

@@ -99,8 +99,8 @@ count define an exact regular grid; missing, extra, or off-grid valid times are
 an `InvalidData` outcome rather than a truncated response.
 
 For a v1 interval-end forecast with cadence `c`, that future grid begins at
-`as_of+c`. The current energy load/PV tasks require `issued_at` for every
-non-calendar future covariate.
+`as_of+c`. A forecast task that sets `require_future_issue_time` requires
+`issued_at` for every non-calendar future covariate.
 
 `quarter_hour` is reserved and must not be stored in the file. When requested
 as a numeric future covariate with unit `1`, it is generated deterministically

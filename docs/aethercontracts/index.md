@@ -10,7 +10,7 @@ second source of truth.
 
 ## Current release
 
-`v0.1.0-alpha.3` freezes an experimental CloudLink wire/profile/TCK surface and
+`v0.1.0-alpha.4` freezes an experimental CloudLink wire/profile/TCK surface and
 provides TypeScript, Rust, C, and C++ fixture bindings. It is not a production
 CloudLink cutover release.
 

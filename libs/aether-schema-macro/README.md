@@ -222,4 +222,4 @@ cargo test -p aether-schema-macro
 
 ## License
 
-Part of the AetherEMS project.
+Part of the AetherEdge project.

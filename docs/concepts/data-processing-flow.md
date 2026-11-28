@@ -366,10 +366,9 @@ consumer.
 
 ## 9. Hand off without crossing subsystem boundaries
 
-The following handoffs preserve ownership:
-
-Only the authenticated HTTP response is implemented in v1. The other rows are
-constraints on possible future consumers, not current integrations.
+The following handoffs preserve ownership. Only the authenticated HTTP response
+is implemented in v1. The other rows are constraints on possible future
+consumers, not current integrations.
 
 | From Data Processing | Consumer | Allowed handoff | Not allowed |
 |----------------------|----------|-----------------|-------------|
