@@ -41,7 +41,7 @@ A rule row in the SQLite `rules` table carries:
     threshold).
 - **The flow** — the logic itself: a start node fanning out through
   condition branches to nodes that write a point, ending at an end node.
-  Every node carries a `type`, and only four values are accepted there:
+  Every node carries a `type`, and only three values are accepted there:
   `start`, `end`, `custom`, and nothing else. A node that does work is
   always `"type": "custom"`, with the kind of work named in `data.type`:
 

@@ -121,8 +121,7 @@ signed runtime manifest is checked for exact agreement with this registry. A
 feature that merely compiles but cannot construct a channel is therefore a
 test failure, not an advertised capability. The former `matter` feature was
 removed because its private UDP frame was not an interoperable Matter
-implementation; see
-the runtime manifest.
+implementation.
 
 ## Point mapping contracts
 

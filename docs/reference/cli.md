@@ -6,7 +6,7 @@ updated: 2026-08-02
 
 # CLI Reference
 
-`aether` (version 0.5.0) is the unified management tool for Aether. It covers
+`aether` (version 0.0.1) is the unified management tool for Aether. It covers
 configuration management (`setup`, `sync`, `status`, `init`, `export`) and service
 operations (`channels`, `models`, `rules`, `services`, `logs`, and more).
 Every section below is generated from the binary's own `--help` output.
@@ -280,9 +280,8 @@ Manage communication channels and protocols.
 Usage: aether channels [OPTIONS] <COMMAND>
 ```
 
-Subcommands: `list`, `status`, `control`, `adjust`, `reload`, `health`,
-`create`, `update`, `delete`, `enable`, `disable`, `mappings`,
-`unmapped-points`, `write`, `points`.
+Subcommands: `list`, `status`, `reconcile`, `health`, `create`, `update`,
+`delete`, `enable`, `disable`, `mappings`, `unmapped-points`, `points`.
 
 ### channels list
 
@@ -524,7 +523,7 @@ Usage: aether channels points add [OPTIONS] --name <NAME> <CHANNEL_ID> <POINT_TY
 
 Point topology is fenced on the channel's revision, so `--expected-revision`
 and `--confirmed` are required exactly as they are for the channel lifecycle
-commands. Read the current revision with `aether channels get <id>`.
+commands. Read the current revision with `aether channels list`.
 
 ```bash
 aether channels points add 1001 T 101 --name voltage --unit V --scale 0.1 \
@@ -1934,7 +1933,7 @@ See [AI Assistants](../guides/ai-assistants.md) for connecting MCP clients.
 
 ## Exit codes and JSON mode
 
-Observed behavior of `aether` 0.4.0:
+Observed behavior of `aether` 0.0.1:
 
 - **Exit 0** — the operation succeeded.
 - **Exit 1** — the operation failed (for example, a target service is
