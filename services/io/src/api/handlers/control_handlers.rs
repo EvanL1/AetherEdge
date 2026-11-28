@@ -255,6 +255,7 @@ const fn runtime_projection_result(
     ),
     request_body = common::admin_api::SetLogLevelRequest,
     responses(
+        (status = 403, description = "Missing/invalid Bearer token or io.channel.manage permission"),
         (status = 200, description = "Channel log level updated", body = String,
             example = json!({
                 "success": true,
@@ -264,6 +265,7 @@ const fn runtime_projection_result(
         (status = 400, description = "Invalid log level"),
         (status = 404, description = "Channel not found")
     ),
+    security(("bearer_auth" = [])),
     tag = "io"
 )]
 pub async fn set_channel_log_level(

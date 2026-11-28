@@ -42,6 +42,22 @@ pub struct LogLevelResponse {
     pub error: Option<String>,
 }
 
+/// Marks the log-level change as Bearer-protected in a service that gates it.
+#[cfg(feature = "openapi")]
+pub fn document_log_level_bearer(openapi: &mut utoipa::openapi::OpenApi) {
+    if let Some(operation) = openapi
+        .paths
+        .paths
+        .get_mut("/api/admin/logs/level")
+        .and_then(|item| item.post.as_mut())
+    {
+        operation.security = Some(vec![utoipa::openapi::security::SecurityRequirement::new(
+            "bearer_auth",
+            Vec::<String>::new(),
+        )]);
+    }
+}
+
 /// Set log level dynamically
 ///
 /// POST /api/admin/logs/level

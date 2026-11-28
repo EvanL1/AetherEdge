@@ -27,6 +27,13 @@ const TEST_JWT_SECRET: &str = "0123456789abcdef0123456789abcdef";
 /// follow a change to the claim set, and the one that used to live here went
 /// stale the moment `scope` became required.
 fn admin_access_token() -> String {
+    access_token(
+        "Admin",
+        aether_auth_jwt::permissions_for_role(Some("Admin")),
+    )
+}
+
+fn access_token(role: &'static str, scope: Vec<&'static str>) -> String {
     #[derive(serde::Serialize)]
     struct AccessClaims {
         user_id: i64,
@@ -42,8 +49,8 @@ fn admin_access_token() -> String {
         &jsonwebtoken::Header::new(jsonwebtoken::Algorithm::HS256),
         &AccessClaims {
             user_id: 7,
-            role: "Admin",
-            scope: aether_auth_jwt::permissions_for_role(Some("Admin")),
+            role,
+            scope,
             token_type: "access",
             iat: 1_700_000_000,
             exp: 4_102_444_800,
@@ -3258,9 +3265,11 @@ async fn send_json_request(
         "DELETE" => builder.method("DELETE"),
         _ => builder.method("GET"),
     };
+    if method != "GET" {
+        builder = builder.header("authorization", format!("Bearer {}", admin_access_token()));
+    }
     if uri.contains("/apply/") {
         builder = builder
-            .header("authorization", format!("Bearer {}", admin_access_token()))
             .header("x-request-id", TEST_REQUEST_ID)
             .header("x-aether-confirmed", "true")
             .header("x-aether-expected-revision", "1");
@@ -3272,6 +3281,138 @@ async fn send_json_request(
     };
 
     app.oneshot(builder.body(body).unwrap()).await.unwrap()
+}
+
+async fn send_as(
+    app: Router,
+    method: &str,
+    uri: &str,
+    token: Option<String>,
+    body: serde_json::Value,
+) -> StatusCode {
+    let mut builder = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("content-type", "application/json");
+    if let Some(token) = token {
+        builder = builder.header("authorization", format!("Bearer {token}"));
+    }
+    app.oneshot(builder.body(Body::from(body.to_string())).unwrap())
+        .await
+        .unwrap()
+        .status()
+}
+
+#[tokio::test]
+async fn writes_outside_the_command_boundary_require_channel_management() {
+    let (app, pool) = create_template_test_app().await;
+    let template = json!({
+        "name": "Seed", "protocol": "modbus_tcp",
+        "points_snapshot": {}, "mappings_snapshot": {}
+    });
+    let seeded = send_json_request(app, "POST", "/api/templates", Some(template.clone())).await;
+    assert_eq!(seeded.status(), StatusCode::OK);
+    let id = extract_json(seeded).await["data"]["template_id"]
+        .as_i64()
+        .unwrap();
+
+    let writes = [
+        (
+            "POST",
+            "/api/templates".to_owned(),
+            json!({"name": "Forged", "protocol": "modbus_tcp", "points_snapshot": {}, "mappings_snapshot": {}}),
+        ),
+        (
+            "POST",
+            "/api/templates/from-channel/1001".to_owned(),
+            json!({"name": "Forged copy"}),
+        ),
+        (
+            "PUT",
+            format!("/api/templates/{id}"),
+            json!({"name": "Renamed"}),
+        ),
+        ("DELETE", format!("/api/templates/{id}"), json!({})),
+        (
+            "PUT",
+            "/api/channels/1001/logging".to_owned(),
+            json!({"level": "debug"}),
+        ),
+        ("POST", "/api/routing/reload".to_owned(), json!({})),
+    ];
+    let outsiders = [
+        None,
+        Some("not-a-token".to_owned()),
+        Some(access_token(
+            "Viewer",
+            aether_auth_jwt::permissions_for_role(Some("Viewer")),
+        )),
+        Some(access_token("Admin", vec!["alarm.alert.resolve"])),
+        Some(access_token("Viewer", vec!["io.channel.manage"])),
+    ];
+    for (method, uri, body) in &writes {
+        for token in &outsiders {
+            let app = rebuild_template_app(pool.clone()).await;
+            let status = send_as(app, method, uri, token.clone(), body.clone()).await;
+            assert_eq!(status, StatusCode::FORBIDDEN, "{method} {uri} as {token:?}");
+        }
+    }
+
+    let names: Vec<(String,)> = sqlx::query_as("SELECT name FROM channel_templates")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(names, vec![("Seed".to_owned(),)]);
+
+    let narrowed = access_token("Engineer", vec!["io.channel.manage"]);
+    let app = rebuild_template_app(pool.clone()).await;
+    let renamed = json!({"name": "Renamed"});
+    let status = send_as(
+        app,
+        "PUT",
+        &format!("/api/templates/{id}"),
+        Some(narrowed),
+        renamed,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn changing_the_service_log_level_requires_a_gateway_administrator() {
+    let (_, pool) = create_template_test_app().await;
+    let level = json!({"level": "info"});
+    for token in [
+        None,
+        Some(access_token(
+            "Engineer",
+            aether_auth_jwt::permissions_for_role(Some("Engineer")),
+        )),
+        Some(access_token("Admin", vec!["io.channel.manage"])),
+    ] {
+        let app = rebuild_template_app(pool.clone()).await;
+        let status = send_as(
+            app,
+            "POST",
+            "/api/admin/logs/level",
+            token.clone(),
+            level.clone(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{token:?}");
+    }
+
+    let app = rebuild_template_app(pool).await;
+    let malformed = json!({});
+    let status = send_as(
+        app,
+        "POST",
+        "/api/admin/logs/level",
+        Some(admin_access_token()),
+        malformed,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }
 
 #[tokio::test]
@@ -4396,6 +4537,27 @@ mod openapi_tests {
 
     fn spec() -> serde_json::Value {
         serde_json::to_value(IoApiDoc::openapi()).expect("serialize io OpenAPI document")
+    }
+
+    #[test]
+    fn every_documented_write_requires_a_bearer_token() {
+        let spec = spec();
+        let paths = spec["paths"].as_object().expect("paths");
+        let mut writes = 0;
+        let mut open = Vec::new();
+        for (path, operations) in paths {
+            for (method, operation) in operations.as_object().expect("operations") {
+                if !matches!(method.as_str(), "post" | "put" | "patch" | "delete") {
+                    continue;
+                }
+                writes += 1;
+                if operation["security"][0].get("bearer_auth").is_none() {
+                    open.push(format!("{method} {path}"));
+                }
+            }
+        }
+        assert!(writes > 20, "the sweep saw only {writes} writes");
+        assert!(open.is_empty(), "writes without bearer_auth: {open:#?}");
     }
 
     fn assert_path_methods(

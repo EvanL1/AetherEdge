@@ -251,6 +251,7 @@ impl utoipa::Modify for SecurityAddon {
                 ),
             );
         }
+        common::admin_api::document_log_level_bearer(openapi);
     }
 }
 
@@ -312,6 +313,7 @@ fn create_api_routes_with_boundary(
     point_topology: PointTopologyHttpBoundary,
 ) -> Router {
     let state = AppState::new(channel_manager, sqlite_pool, channel_reconciliation);
+    let manage = || axum::middleware::from_fn(require_channel_manager);
 
     let router = Router::new()
         // Health check (top-level for monitoring systems)
@@ -332,12 +334,12 @@ fn create_api_routes_with_boundary(
         .route("/api/channels/{id}/status", get(get_channel_status))
         .route("/api/channels/{id}/control", post(control_channel))
         .route("/api/channels/{id}/enabled", axum::routing::put(set_channel_enabled_handler))
-        .route("/api/channels/{id}/logging", axum::routing::put(set_channel_log_level))
+        .route("/api/channels/{id}/logging", axum::routing::put(set_channel_log_level).layer(manage()))
         .route("/api/channels/{id}/points", get(get_channel_points_handler))
         .route("/api/channels/{id}/unmapped-points", get(get_unmapped_points_handler))
         .route("/api/channels/{id}/mappings", get(get_channel_mappings_handler).put(update_channel_mappings_handler))
         .route("/api/channels/{channel_id}/{type}/points/{point_id}/mapping", get(get_point_mapping_with_type_handler))
-        .route("/api/routing/reload", post(reload_routing_handler))
+        .route("/api/routing/reload", post(reload_routing_handler).layer(manage()))
         // Point CRUD routes - type-specific for all operations
         .route("/api/channels/{channel_id}/T/points/{point_id}",
             get(get_telemetry_point_config_handler)
@@ -368,14 +370,16 @@ fn create_api_routes_with_boundary(
         // Admin endpoints (log level + file access)
         .route(
             "/api/admin/logs/level",
-            get(get_log_level).post(set_log_level),
+            get(get_log_level).merge(post(set_log_level).layer(axum::middleware::from_fn(
+                require_gateway_administrator,
+            ))),
         )
         .route("/api/admin/logs/files", get(list_log_files))
         .route("/api/admin/logs/view", get(view_log_file))
         // Template management endpoints
-        .route("/api/templates", get(list_templates).post(create_template))
-        .route("/api/templates/from-channel/{channel_id}", post(create_template_from_channel))
-        .route("/api/templates/{id}", get(get_template).put(update_template).delete(delete_template))
+        .route("/api/templates", get(list_templates).merge(post(create_template).layer(manage())))
+        .route("/api/templates/from-channel/{channel_id}", post(create_template_from_channel).layer(manage()))
+        .route("/api/templates/{id}", get(get_template).merge(axum::routing::put(update_template).delete(delete_template).layer(manage())))
         .route("/api/templates/{id}/apply/{channel_id}", post(apply_template))
         .layer(axum::Extension(channel_management))
         .layer(axum::Extension(point_topology));

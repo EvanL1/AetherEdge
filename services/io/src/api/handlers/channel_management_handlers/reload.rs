@@ -200,9 +200,11 @@ const fn runtime_projection(
     post,
     path = "/api/routing/reload",
     responses(
+        (status = 403, description = "Missing/invalid Bearer token or io.channel.manage permission"),
         (status = 200, description = "Routing cache reloaded successfully", body = crate::api::dto::RoutingReloadResult),
         (status = 500, description = "Internal server error")
     ),
+    security(("bearer_auth" = [])),
     tag = "io"
 )]
 pub async fn reload_routing_handler(

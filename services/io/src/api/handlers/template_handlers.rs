@@ -616,10 +616,12 @@ pub async fn get_template(
         description = "Template name and optional description"
     ),
     responses(
+        (status = 403, description = "Missing/invalid Bearer token or io.channel.manage permission"),
         (status = 200, description = "Template created from channel snapshot", body = TemplateDetail),
         (status = 404, description = "Channel not found"),
         (status = 409, description = "Template name already exists")
     ),
+    security(("bearer_auth" = [])),
     tag = "templates"
 )]
 pub async fn create_template_from_channel(
@@ -713,9 +715,11 @@ pub async fn create_template_from_channel(
         description = "Template with name, protocol, and point/mapping snapshots"
     ),
     responses(
+        (status = 403, description = "Missing/invalid Bearer token or io.channel.manage permission"),
         (status = 200, description = "Template created", body = TemplateDetail),
         (status = 409, description = "Template name already exists")
     ),
+    security(("bearer_auth" = [])),
     tag = "templates"
 )]
 pub async fn create_template(
@@ -783,10 +787,12 @@ pub async fn create_template(
         description = "Fields to update (name and/or description)"
     ),
     responses(
+        (status = 403, description = "Missing/invalid Bearer token or io.channel.manage permission"),
         (status = 200, description = "Template updated", body = serde_json::Value),
         (status = 404, description = "Template not found"),
         (status = 409, description = "Template name already exists")
     ),
+    security(("bearer_auth" = [])),
     tag = "templates"
 )]
 pub async fn update_template(
@@ -861,9 +867,11 @@ pub async fn update_template(
         ("id" = i64, Path, description = "Template identifier")
     ),
     responses(
+        (status = 403, description = "Missing/invalid Bearer token or io.channel.manage permission"),
         (status = 200, description = "Template deleted", body = serde_json::Value),
         (status = 404, description = "Template not found")
     ),
+    security(("bearer_auth" = [])),
     tag = "templates"
 )]
 pub async fn delete_template(
@@ -928,6 +936,7 @@ pub async fn delete_template(
         (status = 404, description = "Template or channel not found"),
         (status = 400, description = "Protocol mismatch between template and channel")
     ),
+    security(("bearer_auth" = [])),
     tag = "templates"
 )]
 pub async fn apply_template(

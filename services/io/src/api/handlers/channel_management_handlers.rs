@@ -13,6 +13,7 @@ use std::{collections::BTreeMap, sync::Arc};
 use aether_application::{
     ApplicationError, ChannelManagementApplication, ChannelMutationAcceptance,
     ChannelReconciliationAcceptance, ChannelReconciliationApplication, CompletionAuditStatus,
+    MANAGE_CHANNEL_CAPABILITY,
 };
 use aether_auth_jwt::AccessTokenAuthenticator;
 use aether_domain::{ChannelId, TimestampMs};
@@ -23,9 +24,10 @@ use aether_ports::{
 };
 use axum::{
     Extension,
-    extract::{Path, rejection::JsonRejection},
+    extract::{Path, Request, rejection::JsonRejection},
     http::{HeaderMap, StatusCode, header},
-    response::Json,
+    middleware::Next,
+    response::{IntoResponse, Json, Response},
 };
 use serde_json::Value;
 
@@ -92,6 +94,28 @@ impl ChannelManagementHttpBoundary {
     #[must_use]
     pub const fn unavailable() -> Self {
         Self { inner: None }
+    }
+
+    fn require_permission(&self, headers: &HeaderMap, permission: &str) -> Result<(), AppError> {
+        let governed = self.inner.as_ref().ok_or_else(|| {
+            http_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Channel-management application boundary is unavailable",
+            )
+        })?;
+        let holds = headers
+            .get(header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| governed.access_authenticator.authenticate(value).ok())
+            .is_some_and(|actor| actor.has_permission(permission));
+        if holds {
+            Ok(())
+        } else {
+            Err(http_error(
+                StatusCode::FORBIDDEN,
+                format!("A Bearer token holding {permission} is required"),
+            ))
+        }
     }
 
     pub(super) async fn mutate(
@@ -167,6 +191,48 @@ impl ChannelManagementHttpBoundary {
             .reconcile(invocation.context(), scope)
             .await
             .map_err(reconciliation_application_error)
+    }
+}
+
+/// Gate for writes that are not application commands: channel templates,
+/// per-channel log level, and the routing cache reload.
+pub async fn require_channel_manager(
+    Extension(boundary): Extension<ChannelManagementHttpBoundary>,
+    request: Request,
+    next: Next,
+) -> Response {
+    gate(
+        &boundary,
+        MANAGE_CHANNEL_CAPABILITY.required_permission(),
+        request,
+        next,
+    )
+    .await
+}
+
+pub async fn require_gateway_administrator(
+    Extension(boundary): Extension<ChannelManagementHttpBoundary>,
+    request: Request,
+    next: Next,
+) -> Response {
+    gate(
+        &boundary,
+        aether_auth_jwt::GATEWAY_ADMINISTER,
+        request,
+        next,
+    )
+    .await
+}
+
+async fn gate(
+    boundary: &ChannelManagementHttpBoundary,
+    permission: &str,
+    request: Request,
+    next: Next,
+) -> Response {
+    match boundary.require_permission(request.headers(), permission) {
+        Ok(()) => next.run(request).await,
+        Err(error) => error.into_response(),
     }
 }
 
