@@ -42,7 +42,9 @@ impl AlarmNotifier for Notifications {
             .push(notification.status);
     }
 
-    async fn replay_alarm(&self, _notification: AlarmNotification) {}
+    async fn replay_alarm(&self, _notification: AlarmNotification) -> bool {
+        true
+    }
 
     async fn publish_counts(&self, counts: AlarmCountSnapshot) {
         self.counts.lock().expect("counts").push(counts.total);
@@ -85,10 +87,11 @@ async fn fixture() -> (
         alert_resolution_application: Arc::new(
             aether_application::AlertResolutionApplication::new(
                 adapter.clone(),
-                audit,
+                audit.clone(),
                 aether_application::SafetyPolicy,
             ),
         ),
+        command_audit: audit,
         access_authenticator: Arc::new(
             aether_auth_jwt::AccessTokenAuthenticator::new("test-only-alarm-jwt-secret-32-bytes")
                 .expect("test authenticator"),

@@ -199,10 +199,18 @@ const fn runtime_projection(
 #[utoipa::path(
     post,
     path = "/api/routing/reload",
-    responses(
-        (status = 200, description = "Routing cache reloaded successfully", body = crate::api::dto::RoutingReloadResult),
-        (status = 500, description = "Internal server error")
+    params(
+        ("x-request-id" = Option<String>, Header, format = "uuid", description = "Optional UUID audit correlation ID; a UUID is generated when omitted or invalid"),
+        ("x-aether-confirmed" = bool, Header, description = "Required explicit confirmation; must be true"),
     ),
+    responses(
+        (status = 403, description = "Missing/invalid Bearer token or io.channel.manage permission"),
+        (status = 422, description = "Explicit confirmation is missing or false"),
+        (status = 503, description = "Mandatory audit is unavailable; nothing was changed"),
+        (status = 200, description = "Routing cache reloaded successfully", body = crate::api::dto::RoutingReloadResult),
+        (status = 500, description = "Routing could not be reloaded; the previous routes stay in effect")
+    ),
+    security(("bearer_auth" = [])),
     tag = "io"
 )]
 pub async fn reload_routing_handler(
@@ -256,6 +264,9 @@ pub async fn reload_routing_handler(
             result.errors.len(),
             duration_ms
         );
+        return Err(AppError::internal_error(
+            "Failed to reload routing cache; the previous routes stay in effect",
+        ));
     }
 
     Ok(Json(SuccessResponse::new(result)))

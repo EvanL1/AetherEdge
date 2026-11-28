@@ -10,6 +10,7 @@ use crate::api::dto::{
     AppError, ApplyTemplateReq, CreateTemplateFromChannelReq, CreateTemplateReq, PointCounts,
     SuccessResponse, TemplateDetail, TemplateListItem, TemplateListQuery, UpdateTemplateReq,
 };
+use crate::api::handlers::channel_management_handlers::CreatedTemplate;
 use crate::api::routes::AppState;
 use crate::point_topology::{
     PointDefinitionMutation, PointKind, PointTopologyMutation, PointTopologyMutationResult,
@@ -609,6 +610,8 @@ pub async fn get_template(
     post,
     path = "/api/templates/from-channel/{channel_id}",
     params(
+        ("x-request-id" = Option<String>, Header, format = "uuid", description = "Optional UUID audit correlation ID; a UUID is generated when omitted or invalid"),
+        ("x-aether-confirmed" = bool, Header, description = "Required explicit confirmation; must be true"),
         ("channel_id" = u32, Path, description = "Source channel identifier to snapshot")
     ),
     request_body(
@@ -616,17 +619,27 @@ pub async fn get_template(
         description = "Template name and optional description"
     ),
     responses(
+        (status = 403, description = "Missing/invalid Bearer token or io.channel.manage permission"),
+        (status = 422, description = "Explicit confirmation is missing or false"),
+        (status = 503, description = "Mandatory audit is unavailable; nothing was changed"),
         (status = 200, description = "Template created from channel snapshot", body = TemplateDetail),
         (status = 404, description = "Channel not found"),
         (status = 409, description = "Template name already exists")
     ),
+    security(("bearer_auth" = [])),
     tag = "templates"
 )]
 pub async fn create_template_from_channel(
     Path(channel_id): Path<u32>,
     State(state): State<AppState>,
     Json(req): Json<CreateTemplateFromChannelReq>,
-) -> Result<Json<SuccessResponse<TemplateDetail>>, AppError> {
+) -> Result<
+    (
+        Extension<CreatedTemplate>,
+        Json<SuccessResponse<TemplateDetail>>,
+    ),
+    AppError,
+> {
     let name = validate_template_name(&req.name)?;
 
     // Validate channel exists and get protocol
@@ -686,17 +699,20 @@ pub async fn create_template_from_channel(
         row.0
     );
 
-    Ok(Json(SuccessResponse::new(TemplateDetail {
-        template_id: row.0,
-        name,
-        description: req.description,
-        protocol,
-        source_channel_id: Some(channel_id as i64),
-        points_snapshot,
-        mappings_snapshot,
-        created_at: row.1,
-        updated_at: row.2,
-    })))
+    Ok((
+        Extension(CreatedTemplate(row.0)),
+        Json(SuccessResponse::new(TemplateDetail {
+            template_id: row.0,
+            name,
+            description: req.description,
+            protocol,
+            source_channel_id: Some(channel_id as i64),
+            points_snapshot,
+            mappings_snapshot,
+            created_at: row.1,
+            updated_at: row.2,
+        })),
+    ))
 }
 
 /// Upload a complete template as JSON directly (without snapshotting an existing channel).
@@ -708,20 +724,34 @@ pub async fn create_template_from_channel(
 #[utoipa::path(
     post,
     path = "/api/templates",
+    params(
+        ("x-request-id" = Option<String>, Header, format = "uuid", description = "Optional UUID audit correlation ID; a UUID is generated when omitted or invalid"),
+        ("x-aether-confirmed" = bool, Header, description = "Required explicit confirmation; must be true"),
+    ),
     request_body(
         content = CreateTemplateReq,
         description = "Template with name, protocol, and point/mapping snapshots"
     ),
     responses(
+        (status = 403, description = "Missing/invalid Bearer token or io.channel.manage permission"),
+        (status = 422, description = "Explicit confirmation is missing or false"),
+        (status = 503, description = "Mandatory audit is unavailable; nothing was changed"),
         (status = 200, description = "Template created", body = TemplateDetail),
         (status = 409, description = "Template name already exists")
     ),
+    security(("bearer_auth" = [])),
     tag = "templates"
 )]
 pub async fn create_template(
     State(state): State<AppState>,
     Json(req): Json<CreateTemplateReq>,
-) -> Result<Json<SuccessResponse<TemplateDetail>>, AppError> {
+) -> Result<
+    (
+        Extension<CreatedTemplate>,
+        Json<SuccessResponse<TemplateDetail>>,
+    ),
+    AppError,
+> {
     let name = validate_template_name(&req.name)?;
     validate_snapshot_structure(&req.points_snapshot)?;
     validate_snapshot_structure(&req.mappings_snapshot)?;
@@ -754,17 +784,20 @@ pub async fn create_template(
 
     tracing::info!("Template '{}' created manually (id={})", name, row.0);
 
-    Ok(Json(SuccessResponse::new(TemplateDetail {
-        template_id: row.0,
-        name,
-        description: req.description,
-        protocol: req.protocol,
-        source_channel_id: None,
-        points_snapshot: req.points_snapshot,
-        mappings_snapshot: req.mappings_snapshot,
-        created_at: row.1,
-        updated_at: row.2,
-    })))
+    Ok((
+        Extension(CreatedTemplate(row.0)),
+        Json(SuccessResponse::new(TemplateDetail {
+            template_id: row.0,
+            name,
+            description: req.description,
+            protocol: req.protocol,
+            source_channel_id: None,
+            points_snapshot: req.points_snapshot,
+            mappings_snapshot: req.mappings_snapshot,
+            created_at: row.1,
+            updated_at: row.2,
+        })),
+    ))
 }
 
 /// Update template name and/or description (snapshot is not modified).
@@ -776,6 +809,8 @@ pub async fn create_template(
     put,
     path = "/api/templates/{id}",
     params(
+        ("x-request-id" = Option<String>, Header, format = "uuid", description = "Optional UUID audit correlation ID; a UUID is generated when omitted or invalid"),
+        ("x-aether-confirmed" = bool, Header, description = "Required explicit confirmation; must be true"),
         ("id" = i64, Path, description = "Template identifier")
     ),
     request_body(
@@ -783,10 +818,14 @@ pub async fn create_template(
         description = "Fields to update (name and/or description)"
     ),
     responses(
+        (status = 403, description = "Missing/invalid Bearer token or io.channel.manage permission"),
+        (status = 422, description = "Explicit confirmation is missing or false"),
+        (status = 503, description = "Mandatory audit is unavailable; nothing was changed"),
         (status = 200, description = "Template updated", body = serde_json::Value),
         (status = 404, description = "Template not found"),
         (status = 409, description = "Template name already exists")
     ),
+    security(("bearer_auth" = [])),
     tag = "templates"
 )]
 pub async fn update_template(
@@ -858,12 +897,18 @@ pub async fn update_template(
     delete,
     path = "/api/templates/{id}",
     params(
+        ("x-request-id" = Option<String>, Header, format = "uuid", description = "Optional UUID audit correlation ID; a UUID is generated when omitted or invalid"),
+        ("x-aether-confirmed" = bool, Header, description = "Required explicit confirmation; must be true"),
         ("id" = i64, Path, description = "Template identifier")
     ),
     responses(
+        (status = 403, description = "Missing/invalid Bearer token or io.channel.manage permission"),
+        (status = 422, description = "Explicit confirmation is missing or false"),
+        (status = 503, description = "Mandatory audit is unavailable; nothing was changed"),
         (status = 200, description = "Template deleted", body = serde_json::Value),
         (status = 404, description = "Template not found")
     ),
+    security(("bearer_auth" = [])),
     tag = "templates"
 )]
 pub async fn delete_template(
@@ -928,6 +973,7 @@ pub async fn delete_template(
         (status = 404, description = "Template or channel not found"),
         (status = 400, description = "Protocol mismatch between template and channel")
     ),
+    security(("bearer_auth" = [])),
     tag = "templates"
 )]
 pub async fn apply_template(
@@ -1015,6 +1061,7 @@ pub async fn apply_template(
             &headers,
             PointTopologyMutation::Provision {
                 channel_id,
+                template_id: Some(template_id),
                 replace_existing: clear_existing,
                 upsert_existing: !clear_existing,
                 points,

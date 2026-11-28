@@ -204,6 +204,7 @@ fn parse_update_request(payload: serde_json::Value) -> Result<PointUpdateRequest
         (status = 404, description = "Channel not found"),
         (status = 409, description = "Point ID already exists")
     ),
+    security(("bearer_auth" = [])),
     tag = "io"
 )]
 pub async fn create_telemetry_point_handler(
@@ -262,6 +263,7 @@ pub async fn create_telemetry_point_handler(
         (status = 404, description = "Channel not found"),
         (status = 409, description = "Point ID already exists")
     ),
+    security(("bearer_auth" = [])),
     tag = "io"
 )]
 pub async fn create_signal_point_handler(
@@ -366,6 +368,7 @@ async fn create_ca_point_inner(
         (status = 404, description = "Channel not found"),
         (status = 409, description = "Point ID already exists")
     ),
+    security(("bearer_auth" = [])),
     tag = "io"
 )]
 pub async fn create_control_point_handler(
@@ -410,6 +413,7 @@ pub async fn create_control_point_handler(
         (status = 404, description = "Channel not found"),
         (status = 409, description = "Point ID already exists")
     ),
+    security(("bearer_auth" = [])),
     tag = "io"
 )]
 pub async fn create_adjustment_point_handler(
@@ -558,6 +562,7 @@ pub(super) async fn delete_point_handler_inner(
         (status = 400, description = "Invalid update"),
         (status = 404, description = "Channel or telemetry point not found")
     ),
+    security(("bearer_auth" = [])),
     tag = "io"
 )]
 pub async fn update_telemetry_point_handler(
@@ -597,6 +602,7 @@ pub async fn update_telemetry_point_handler(
         (status = 400, description = "Invalid update"),
         (status = 404, description = "Channel or signal point not found")
     ),
+    security(("bearer_auth" = [])),
     tag = "io"
 )]
 pub async fn update_signal_point_handler(
@@ -636,6 +642,7 @@ pub async fn update_signal_point_handler(
         (status = 400, description = "Invalid update"),
         (status = 404, description = "Channel or control point not found")
     ),
+    security(("bearer_auth" = [])),
     tag = "io"
 )]
 pub async fn update_control_point_handler(
@@ -675,6 +682,7 @@ pub async fn update_control_point_handler(
         (status = 400, description = "Invalid update"),
         (status = 404, description = "Channel or adjustment point not found")
     ),
+    security(("bearer_auth" = [])),
     tag = "io"
 )]
 pub async fn update_adjustment_point_handler(
@@ -714,6 +722,7 @@ pub async fn update_adjustment_point_handler(
         (status = 200, description = "Telemetry point deleted", body = PointCrudResult),
         (status = 404, description = "Channel or telemetry point not found")
     ),
+    security(("bearer_auth" = [])),
     tag = "io"
 )]
 pub async fn delete_telemetry_point_handler(
@@ -748,6 +757,7 @@ pub async fn delete_telemetry_point_handler(
         (status = 200, description = "Signal point deleted", body = PointCrudResult),
         (status = 404, description = "Channel or signal point not found")
     ),
+    security(("bearer_auth" = [])),
     tag = "io"
 )]
 pub async fn delete_signal_point_handler(
@@ -782,6 +792,7 @@ pub async fn delete_signal_point_handler(
         (status = 200, description = "Control point deleted", body = PointCrudResult),
         (status = 404, description = "Channel or control point not found")
     ),
+    security(("bearer_auth" = [])),
     tag = "io"
 )]
 pub async fn delete_control_point_handler(
@@ -816,6 +827,7 @@ pub async fn delete_control_point_handler(
         (status = 200, description = "Adjustment point deleted", body = PointCrudResult),
         (status = 404, description = "Channel or adjustment point not found")
     ),
+    security(("bearer_auth" = [])),
     tag = "io"
 )]
 pub async fn delete_adjustment_point_handler(

@@ -185,6 +185,8 @@ pub enum PointTopologyMutation {
     },
     Provision {
         channel_id: u32,
+        /// The template this provision applies, named in its audit event.
+        template_id: Option<i64>,
         replace_existing: bool,
         upsert_existing: bool,
         points: Vec<(PointKind, PointDefinitionMutation)>,
@@ -235,6 +237,13 @@ impl PointTopologyMutation {
         }
     }
 
+    const fn audit_template_id(&self) -> Option<i64> {
+        match self {
+            Self::Provision { template_id, .. } => *template_id,
+            _ => None,
+        }
+    }
+
     fn audit_point_type(&self) -> &'static str {
         match self {
             Self::Single { mutation, .. } => mutation.kind().code(),
@@ -250,6 +259,7 @@ struct PointTopologyAudit {
     operation: &'static str,
     point_type: &'static str,
     point_count: usize,
+    template_id: Option<i64>,
 }
 
 impl From<&PointTopologyMutation> for PointTopologyAudit {
@@ -259,6 +269,7 @@ impl From<&PointTopologyMutation> for PointTopologyAudit {
             operation: mutation.audit_operation(),
             point_type: mutation.audit_point_type(),
             point_count: mutation.point_count(),
+            template_id: mutation.audit_template_id(),
         }
     }
 }
@@ -544,6 +555,9 @@ impl PointTopologyApplication {
             "operation={}; channel_id={}; expected_revision={expected}; point_type={}; point_count={}",
             audit.operation, audit.channel_id, audit.point_type, audit.point_count
         );
+        if let Some(template_id) = audit.template_id {
+            detail.push_str(&format!("; template_id={template_id}"));
+        }
         if let Some(suffix) = suffix {
             detail.push_str("; ");
             detail.push_str(&suffix);
@@ -637,6 +651,7 @@ async fn apply_topology_mutation(
         },
         PointTopologyMutation::Provision {
             channel_id,
+            template_id: _,
             replace_existing,
             upsert_existing,
             points,

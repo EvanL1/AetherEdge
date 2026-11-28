@@ -177,6 +177,36 @@ mod openapi_tests {
         serde_json::to_value(ApiDoc::openapi()).expect("serialize OpenAPI")
     }
 
+    #[test]
+    fn every_documented_write_requires_a_bearer_token() {
+        // check-rule is a diagnostic evaluation: it reads one rule and changes
+        // nothing. The log level is loopback-only: the gateway forwards no
+        // path that reaches it, and `aether logs set-level` sends no token.
+        const READ_ONLY: [&str; 2] = [
+            "post /alarmApi/monitor/check-rule/{id}",
+            "post /api/admin/logs/level",
+        ];
+        let specification = specification();
+        let mut writes = 0;
+        let mut open = Vec::new();
+        for (path, operations) in specification["paths"].as_object().expect("paths") {
+            for (method, operation) in operations.as_object().expect("operations") {
+                let name = format!("{method} {path}");
+                if !matches!(method.as_str(), "post" | "put" | "patch" | "delete")
+                    || READ_ONLY.contains(&name.as_str())
+                {
+                    continue;
+                }
+                writes += 1;
+                if operation["security"][0].get("bearer_auth").is_none() {
+                    open.push(name);
+                }
+            }
+        }
+        assert!(writes >= 7, "the sweep saw only {writes} writes");
+        assert!(open.is_empty(), "writes without bearer_auth: {open:#?}");
+    }
+
     fn resolve_schema<'a>(specification: &'a Value, schema: &'a Value) -> &'a Value {
         match schema["$ref"].as_str() {
             Some(reference) => specification
@@ -1118,36 +1148,211 @@ async fn manual_check_rule(
     }
 }
 
-/// Rebroadcast all currently active alerts to the WebSocket.
+/// Replay every active alert to the uplink and refresh the alarm counters.
 ///
-/// Doesn't change any state — re-publishes the current active alert set on
-/// the broadcast channel and refreshes the alarm-count counter. Used when a
-/// frontend client reconnects or wakes up after sleep and needs to catch up
-/// without polling individual endpoints.
+/// This publishes site data off the host, so it is governed as
+/// `uplink.message.publish`: it needs that permission and explicit
+/// confirmation, and it is audited from attempt to outcome.
 #[utoipa::path(post, path = "/alarmApi/call-data", tag = "Monitor",
-    responses((status = 200, description = "Broadcast all active alerts")))]
-async fn call_data(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let alerts = match db::get_all_active_alerts(&state.db).await {
-        Ok(a) => a,
-        Err(e) => {
-            error!("call_data get alerts: {}", e);
-            return server_error("Failed to get alerts");
-        },
+    params(
+        ("x-request-id" = Option<String>, Header, format = "uuid", description = "Optional UUID audit correlation ID; a UUID is generated when omitted or invalid"),
+        ("x-aether-confirmed" = bool, Header, description = "Required explicit confirmation; must be true")
+    ),
+    responses(
+        (status = 200, description = "Every active alert was accepted by the uplink; the response carries request_id and the audit state"),
+        (status = 403, description = "Missing/invalid Bearer token or uplink.message.publish permission"),
+        (status = 422, description = "Explicit confirmation is required"),
+        (status = 500, description = "Active alerts could not be read; nothing was replayed"),
+        (status = 502, description = "The uplink did not accept every alert; the response carries the delivered count. Do not retry automatically"),
+        (status = 503, description = "Mandatory audit is unavailable; nothing was replayed")
+    ),
+    security(("bearer_auth" = []))
+)]
+async fn call_data(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    let header = |name: &str| headers.get(name).and_then(|value| value.to_str().ok());
+    let timestamp = chrono::Utc::now().timestamp_millis().max(0) as u64;
+    let invocation = state.access_authenticator.invocation(
+        header(header::AUTHORIZATION.as_str()),
+        header("x-request-id"),
+        header("x-aether-confirmed").is_some_and(|value| value.trim().eq_ignore_ascii_case("true")),
+        aether_domain::TimestampMs::new(timestamp),
+    );
+    let audit = ReplayAudit {
+        sink: Arc::clone(&state.command_audit),
+        context: invocation.context().clone(),
     };
+    let capability = aether_application::PUBLISH_UPLINK_MESSAGE_CAPABILITY;
 
-    if alerts.is_empty() {
-        if let Ok(counts) = db::get_active_alarm_counts(&state.db).await {
-            state
-                .notifier
-                .publish_counts(AlarmCountSnapshot::from(&counts))
-                .await;
-        }
-        return Json(ApiResponse::ok(
-            "No active alerts",
-            json!({ "broadcast_count": 0, "alarm_count": 0 }),
-        ))
-        .into_response();
+    if let Err(denied) = aether_application::SafetyPolicy.authorize(capability, &audit.context) {
+        let rejected = audit
+            .record(aether_ports::AuditOutcome::Rejected, &denied.to_string())
+            .await;
+        return match rejected {
+            Ok(()) => application_error_response(denied),
+            Err(()) => replay_audit_unavailable(),
+        };
     }
+    if audit
+        .record(aether_ports::AuditOutcome::Attempted, "")
+        .await
+        .is_err()
+    {
+        return replay_audit_unavailable();
+    }
+
+    // Detached so a caller that disconnects cannot skip the terminal record.
+    let finished = tokio::spawn(async move {
+        let replay = replay_active_alerts(&state).await;
+        let (outcome, detail) = match &replay {
+            Ok(replay) if replay.complete() => {
+                (aether_ports::AuditOutcome::Succeeded, replay.to_string())
+            },
+            Ok(replay) => (aether_ports::AuditOutcome::Failed, replay.to_string()),
+            Err(failure) => (aether_ports::AuditOutcome::Failed, (*failure).to_owned()),
+        };
+        let recorded = match audit.record(outcome, &detail).await {
+            Ok(()) => "recorded",
+            Err(()) => "incomplete",
+        };
+        replay_response(replay, audit.context.request_id(), recorded)
+    });
+    finished.await.unwrap_or_else(|error| {
+        error!(error = %error, "alarm replay task failed");
+        server_error("Alarm replay failed")
+    })
+}
+
+struct ReplayAudit {
+    sink: Arc<dyn aether_ports::AuditSink>,
+    context: aether_application::RequestContext,
+}
+
+impl ReplayAudit {
+    async fn record(&self, outcome: aether_ports::AuditOutcome, detail: &str) -> Result<(), ()> {
+        let detail = if detail.is_empty() {
+            "operation=alarm.replay".to_owned()
+        } else {
+            format!("operation=alarm.replay; {detail}")
+        };
+        self.sink
+            .record(aether_ports::AuditRecord::new(
+                self.context.request_id(),
+                self.context.actor().id(),
+                aether_application::PUBLISH_UPLINK_MESSAGE_CAPABILITY.name(),
+                outcome,
+                self.context.timestamp(),
+                Some(detail),
+            ))
+            .await
+            .map_err(|error| {
+                error!(
+                    request_id = self.context.request_id(),
+                    error = %error,
+                    "alarm replay audit could not be recorded; do not retry"
+                );
+            })
+    }
+}
+
+fn replay_audit_unavailable() -> Response {
+    error_response(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "Mandatory alarm replay audit is unavailable",
+    )
+}
+
+const REPLAY_CONCURRENCY: usize = 8;
+const REPLAY_DEADLINE: std::time::Duration = std::time::Duration::from_secs(20);
+
+#[derive(Debug, Clone, Copy)]
+struct AlarmReplay {
+    active: usize,
+    delivered: usize,
+    timed_out: bool,
+}
+
+impl AlarmReplay {
+    const fn complete(self) -> bool {
+        self.delivered == self.active
+    }
+}
+
+impl std::fmt::Display for AlarmReplay {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "delivered={}; active={}",
+            self.delivered, self.active
+        )?;
+        if self.timed_out {
+            formatter.write_str("; deadline_exceeded")?;
+        }
+        Ok(())
+    }
+}
+
+fn replay_response(
+    replay: Result<AlarmReplay, &'static str>,
+    request_id: &str,
+    audit: &'static str,
+) -> Response {
+    let Ok(replay) = replay else {
+        return server_error("Failed to get alerts");
+    };
+    let data = json!({
+        "broadcast_count": replay.delivered,
+        "alarm_count": replay.active,
+        "request_id": request_id,
+        "audit": { "status": audit, "retryable": false },
+    });
+    if replay.complete() {
+        let message = format!("Broadcast complete: {} alert(s)", replay.delivered);
+        return Json(ApiResponse::ok(message, data)).into_response();
+    }
+    (
+        StatusCode::BAD_GATEWAY,
+        Json(json!({
+            "success": false,
+            "code": "ALARM_REPLAY_INCOMPLETE",
+            "message": format!(
+                "The uplink accepted {} of {} active alert(s)",
+                replay.delivered, replay.active
+            ),
+            "data": data,
+        })),
+    )
+        .into_response()
+}
+
+/// Replays within one deadline, kept well inside the gateway's upstream
+/// timeout so the caller hears the real outcome instead of a gateway timeout
+/// while the replay runs on. Returns what was delivered and whether the
+/// deadline cut it short.
+async fn replay_within(
+    notifier: &dyn crate::notification::AlarmNotifier,
+    notifications: impl Iterator<Item = AlarmNotification>,
+    deadline: std::time::Duration,
+) -> (usize, bool) {
+    use futures::StreamExt;
+
+    let delivered = std::sync::atomic::AtomicUsize::new(0);
+    let sends = futures::stream::iter(notifications).for_each_concurrent(
+        REPLAY_CONCURRENCY,
+        |notification| async {
+            if notifier.replay_alarm(notification).await {
+                delivered.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+        },
+    );
+    let timed_out = tokio::time::timeout(deadline, sends).await.is_err();
+    (delivered.into_inner(), timed_out)
+}
+
+async fn replay_active_alerts(state: &AppState) -> Result<AlarmReplay, &'static str> {
+    let alerts = db::get_all_active_alerts(&state.db).await.map_err(|e| {
+        error!("call_data get alerts: {}", e);
+        "active alerts could not be read"
+    })?;
 
     let mut rule_map: HashMap<i64, crate::models::AlertRule> = HashMap::new();
     for alert in &alerts {
@@ -1158,19 +1363,16 @@ async fn call_data(State(state): State<Arc<AppState>>) -> impl IntoResponse {
         }
     }
 
-    let alarm_count = alerts.len();
-    for alert in &alerts {
-        if let Some(rule) = rule_map.get(&alert.rule_id) {
-            state
-                .notifier
-                .replay_alarm(AlarmNotification::triggered(
-                    alert.id,
-                    rule,
-                    alert.current_value,
-                ))
-                .await;
-        }
-    }
+    let notifications = alerts.iter().filter_map(|alert| {
+        let rule = rule_map.get(&alert.rule_id)?;
+        Some(AlarmNotification::triggered(
+            alert.id,
+            rule,
+            alert.current_value,
+        ))
+    });
+    let (delivered, timed_out) =
+        replay_within(state.notifier.as_ref(), notifications, REPLAY_DEADLINE).await;
 
     if let Ok(counts) = db::get_active_alarm_counts(&state.db).await {
         state
@@ -1179,14 +1381,11 @@ async fn call_data(State(state): State<Arc<AppState>>) -> impl IntoResponse {
             .await;
     }
 
-    Json(ApiResponse::ok(
-        format!("Broadcast complete: {} alert(s)", alarm_count),
-        json!({
-            "broadcast_count": alarm_count,
-            "alarm_count": alarm_count,
-        }),
-    ))
-    .into_response()
+    Ok(AlarmReplay {
+        active: alerts.len(),
+        delivered,
+        timed_out,
+    })
 }
 
 // ============================================================================
@@ -1484,12 +1683,19 @@ mod tests {
     }
 
     fn access_token() -> String {
+        scoped_token(
+            "Engineer",
+            aether_auth_jwt::permissions_for_role(Some("Engineer")),
+        )
+    }
+
+    fn scoped_token(role: &str, scope: Vec<&'static str>) -> String {
         encode(
             &Header::new(Algorithm::HS256),
             &AccessClaims {
                 user_id: 17,
-                role: "Engineer",
-                scope: aether_auth_jwt::permissions_for_role(Some("Engineer")),
+                role,
+                scope,
                 token_type: "access",
                 exp: 4_102_444_800,
                 iat: 1,
@@ -1524,6 +1730,328 @@ mod tests {
         fn watched_slot(&self, _rule: &AlertRule) -> PortResult<Option<usize>> {
             Ok(None)
         }
+    }
+
+    #[derive(Default)]
+    struct CountingNotifier {
+        published: std::sync::atomic::AtomicUsize,
+        refusing: std::sync::atomic::AtomicBool,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::notification::AlarmNotifier for CountingNotifier {
+        async fn publish_alarm(&self, _notification: crate::notification::AlarmNotification) {}
+
+        async fn replay_alarm(
+            &self,
+            _notification: crate::notification::AlarmNotification,
+        ) -> bool {
+            !self.refusing.load(std::sync::atomic::Ordering::SeqCst)
+        }
+
+        async fn publish_counts(&self, _counts: AlarmCountSnapshot) {
+            self.published
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    struct UnavailableAudit;
+
+    #[async_trait::async_trait]
+    impl aether_ports::AuditSink for UnavailableAudit {
+        async fn record(&self, _record: aether_ports::AuditRecord) -> PortResult<()> {
+            Err(aether_ports::PortError::new(
+                aether_ports::PortErrorKind::Unavailable,
+                "audit store offline",
+            ))
+        }
+    }
+
+    struct ReplayFixture {
+        state: Arc<AppState>,
+        notifier: Arc<CountingNotifier>,
+        audit: Arc<aether_store_local::MemoryAuditSink>,
+    }
+
+    impl ReplayFixture {
+        async fn new() -> Self {
+            let notifier = Arc::new(CountingNotifier::default());
+            let audit = Arc::new(aether_store_local::MemoryAuditSink::new());
+            let mut state = Arc::try_unwrap(test_state().await)
+                .unwrap_or_else(|_| panic!("the test state has one owner"));
+            state.notifier = notifier.clone();
+            state.command_audit = audit.clone();
+            Self {
+                state: Arc::new(state),
+                notifier,
+                audit,
+            }
+        }
+
+        async fn replay(&self, token: Option<String>, confirmed: bool) -> Response {
+            let mut request = Request::post("/alarmApi/call-data");
+            if let Some(token) = token {
+                request = request.header("authorization", format!("Bearer {token}"));
+            }
+            if confirmed {
+                request = request.header("x-aether-confirmed", "true");
+            }
+            create_routes(Arc::clone(&self.state))
+                .oneshot(request.body(Body::empty()).expect("request"))
+                .await
+                .expect("response")
+        }
+
+        async fn active_alert(&self, name: &str, point_id: i64) {
+            let mut rule = create_rule_request(name);
+            rule["point_id"] = point_id.into();
+            let created = create_routes(Arc::clone(&self.state))
+                .oneshot(
+                    Request::post("/alarmApi/rules")
+                        .header("content-type", "application/json")
+                        .header("authorization", format!("Bearer {}", access_token()))
+                        .header("x-aether-confirmed", "true")
+                        .body(Body::from(rule.to_string()))
+                        .expect("create request"),
+                )
+                .await
+                .expect("create response");
+            assert_eq!(created.status(), StatusCode::OK);
+            let rule = db::find_rule_by_name(&self.state.db, name)
+                .await
+                .expect("query rule")
+                .expect("created rule");
+            db::insert_alert(&self.state.db, &rule, 95.0)
+                .await
+                .expect("insert active alert")
+                .expect("enabled rule");
+        }
+
+        fn replay_trail(&self) -> Vec<(aether_ports::AuditOutcome, String)> {
+            self.audit
+                .records()
+                .expect("audit records")
+                .iter()
+                .filter(|record| record.capability() == "uplink.message.publish")
+                .map(|record| (record.outcome(), record.detail().unwrap_or("").to_owned()))
+                .collect()
+        }
+
+        fn published(&self) -> usize {
+            self.notifier
+                .published
+                .load(std::sync::atomic::Ordering::SeqCst)
+        }
+
+        fn outcomes(&self) -> Vec<(String, aether_ports::AuditOutcome)> {
+            self.audit
+                .records()
+                .expect("audit records")
+                .iter()
+                .map(|record| (record.capability().to_owned(), record.outcome()))
+                .collect()
+        }
+    }
+
+    #[tokio::test]
+    async fn replaying_active_alarms_needs_the_uplink_publish_permission() {
+        for token in [
+            None,
+            Some("not-a-token".to_owned()),
+            Some(scoped_token(
+                "Viewer",
+                aether_auth_jwt::permissions_for_role(Some("Viewer")),
+            )),
+            Some(scoped_token("Engineer", vec!["alarm.alert.resolve"])),
+            Some(scoped_token("Viewer", vec!["uplink.message.publish"])),
+        ] {
+            let fixture = ReplayFixture::new().await;
+            let response = fixture.replay(token.clone(), true).await;
+
+            assert_eq!(response.status(), StatusCode::FORBIDDEN, "{token:?}");
+            assert_eq!(fixture.published(), 0, "{token:?}");
+            assert_eq!(
+                fixture.outcomes(),
+                vec![(
+                    "uplink.message.publish".to_owned(),
+                    aether_ports::AuditOutcome::Rejected
+                )],
+                "{token:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn replaying_active_alarms_needs_explicit_confirmation() {
+        let fixture = ReplayFixture::new().await;
+        let response = fixture.replay(Some(access_token()), false).await;
+
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(fixture.published(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_confirmed_replay_is_audited_from_attempt_to_outcome() {
+        let fixture = ReplayFixture::new().await;
+        let narrowed = scoped_token("Engineer", vec!["uplink.message.publish"]);
+        let response = fixture.replay(Some(narrowed), true).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(fixture.published(), 1);
+        let publish = "uplink.message.publish".to_owned();
+        assert_eq!(
+            fixture.outcomes(),
+            vec![
+                (publish.clone(), aether_ports::AuditOutcome::Attempted),
+                (publish, aether_ports::AuditOutcome::Succeeded),
+            ]
+        );
+        let payload: Value = serde_json::from_slice(
+            &to_bytes(response.into_body(), usize::MAX)
+                .await
+                .expect("response body"),
+        )
+        .expect("response JSON");
+        assert_eq!(payload["data"]["audit"]["status"], "recorded");
+        assert!(payload["data"]["request_id"].is_string());
+    }
+
+    #[tokio::test]
+    async fn a_replay_that_cannot_be_audited_publishes_nothing() {
+        let mut fixture = ReplayFixture::new().await;
+        let mut state = Arc::try_unwrap(fixture.state)
+            .unwrap_or_else(|_| panic!("the fixture state has one owner"));
+        state.command_audit = Arc::new(UnavailableAudit);
+        fixture.state = Arc::new(state);
+
+        for (token, confirmed) in [(Some(access_token()), true), (None, true)] {
+            let response = fixture.replay(token, confirmed).await;
+            assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        }
+        assert_eq!(fixture.published(), 0);
+    }
+
+    async fn json_body(response: Response) -> Value {
+        serde_json::from_slice(
+            &to_bytes(response.into_body(), usize::MAX)
+                .await
+                .expect("response body"),
+        )
+        .expect("response JSON")
+    }
+
+    #[tokio::test]
+    async fn a_replay_reports_what_the_uplink_accepted() {
+        let fixture = ReplayFixture::new().await;
+        fixture.active_alert("first", 11).await;
+        fixture.active_alert("second", 12).await;
+
+        let response = fixture.replay(Some(access_token()), true).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let payload = json_body(response).await;
+        assert_eq!(payload["data"]["broadcast_count"], 2);
+        assert_eq!(payload["data"]["alarm_count"], 2);
+        assert_eq!(
+            fixture.replay_trail(),
+            vec![
+                (
+                    aether_ports::AuditOutcome::Attempted,
+                    "operation=alarm.replay".to_owned()
+                ),
+                (
+                    aether_ports::AuditOutcome::Succeeded,
+                    "operation=alarm.replay; delivered=2; active=2".to_owned()
+                ),
+            ]
+        );
+    }
+
+    struct StallingNotifier;
+
+    #[async_trait::async_trait]
+    impl crate::notification::AlarmNotifier for StallingNotifier {
+        async fn publish_alarm(&self, _notification: crate::notification::AlarmNotification) {}
+
+        async fn replay_alarm(&self, notification: crate::notification::AlarmNotification) -> bool {
+            if notification.alert_id > 1 {
+                tokio::time::sleep(std::time::Duration::from_secs(600)).await;
+            }
+            true
+        }
+
+        async fn publish_counts(&self, _counts: AlarmCountSnapshot) {}
+    }
+
+    #[tokio::test]
+    async fn a_stalled_uplink_cannot_hold_a_replay_past_its_deadline() {
+        let state = test_state().await;
+        let created = create_routes(Arc::clone(&state))
+            .oneshot(
+                Request::post("/alarmApi/rules")
+                    .header("content-type", "application/json")
+                    .header("authorization", format!("Bearer {}", access_token()))
+                    .header("x-aether-confirmed", "true")
+                    .body(Body::from(create_rule_request("stalled").to_string()))
+                    .expect("create request"),
+            )
+            .await
+            .expect("create response");
+        assert_eq!(created.status(), StatusCode::OK);
+        let rule = db::find_rule_by_name(&state.db, "stalled")
+            .await
+            .expect("query rule")
+            .expect("created rule");
+        let notifications =
+            (1..=3).map(|alert_id| AlarmNotification::triggered(alert_id, &rule, 95.0));
+
+        let started = std::time::Instant::now();
+        let (delivered, timed_out) = replay_within(
+            &StallingNotifier,
+            notifications,
+            std::time::Duration::from_millis(50),
+        )
+        .await;
+
+        assert_eq!((delivered, timed_out), (1, true));
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+        let replay = AlarmReplay {
+            active: 3,
+            delivered,
+            timed_out,
+        };
+        assert!(!replay.complete());
+        assert_eq!(
+            replay.to_string(),
+            "delivered=1; active=3; deadline_exceeded"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_replay_the_uplink_refuses_is_recorded_as_failed() {
+        let fixture = ReplayFixture::new().await;
+        fixture.active_alert("refused", 13).await;
+        fixture
+            .notifier
+            .refusing
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+
+        let response = fixture.replay(Some(access_token()), true).await;
+
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+        let payload = json_body(response).await;
+        assert_eq!(payload["success"], false);
+        assert_eq!(payload["code"], "ALARM_REPLAY_INCOMPLETE");
+        assert_eq!(payload["data"]["broadcast_count"], 0);
+        assert_eq!(payload["data"]["alarm_count"], 1);
+        assert_eq!(payload["data"]["audit"]["status"], "recorded");
+        assert_eq!(
+            fixture.replay_trail().last(),
+            Some(&(
+                aether_ports::AuditOutcome::Failed,
+                "operation=alarm.replay; delivered=0; active=1".to_owned()
+            ))
+        );
     }
 
     async fn test_state() -> Arc<AppState> {
@@ -1567,10 +2095,11 @@ mod tests {
             alert_resolution_application: Arc::new(
                 aether_application::AlertResolutionApplication::new(
                     alarm_store,
-                    audit,
+                    Arc::clone(&audit),
                     aether_application::SafetyPolicy,
                 ),
             ),
+            command_audit: audit,
             access_authenticator: Arc::new(
                 aether_auth_jwt::AccessTokenAuthenticator::new(TEST_JWT_SECRET)
                     .expect("valid test JWT secret"),

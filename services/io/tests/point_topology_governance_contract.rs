@@ -380,6 +380,7 @@ async fn replace_existing_checks_action_routes_before_clearing_any_plane() {
             &context(),
             Some(ChannelRevision::new(1)),
             PointTopologyMutation::Provision {
+                template_id: None,
                 channel_id: 7,
                 replace_existing: true,
                 upsert_existing: false,

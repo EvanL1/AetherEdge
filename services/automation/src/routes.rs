@@ -273,6 +273,39 @@ mod openapi_tests {
     }
 
     #[test]
+    fn every_documented_write_requires_a_credential() {
+        // The gateway refuses every api/admin path, so only a local operator
+        // reaches this one; `aether logs set-level` calls it without a token.
+        const LOOPBACK_ONLY: [&str; 1] = ["post /api/admin/logs/level"];
+        let document = document();
+        let mut writes = 0;
+        let mut open = Vec::new();
+        for (path, operations) in document["paths"].as_object().expect("paths") {
+            for (method, operation) in operations.as_object().expect("operations") {
+                let name = format!("{method} {path}");
+                if !matches!(method.as_str(), "post" | "put" | "patch" | "delete")
+                    || LOOPBACK_ONLY.contains(&name.as_str())
+                {
+                    continue;
+                }
+                writes += 1;
+                let declared = operation["security"].as_array().is_some_and(|schemes| {
+                    !schemes.is_empty()
+                        && schemes.iter().all(|scheme| {
+                            scheme.get("bearer_auth").is_some()
+                                || scheme.get("aether_service_auth").is_some()
+                        })
+                });
+                if !declared {
+                    open.push(name);
+                }
+            }
+        }
+        assert!(writes >= 10, "the sweep saw only {writes} writes");
+        assert!(open.is_empty(), "writes without a credential: {open:#?}");
+    }
+
+    #[test]
     fn openapi_metadata_and_security_match_the_automation_service() {
         let document = document();
 

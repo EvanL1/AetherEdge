@@ -398,6 +398,7 @@ pub async fn get_channel_mappings_handler(
         (status = 404, description = "Channel not found"),
         (status = 500, description = "Internal server error (database operation failed)")
     ),
+    security(("bearer_auth" = [])),
     tag = "io"
 )]
 pub async fn update_channel_mappings_handler(

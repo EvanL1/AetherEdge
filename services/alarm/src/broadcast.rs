@@ -80,17 +80,25 @@ impl HttpAlarmNotifier {
         .await;
     }
 
-    async fn send_uplink(&self, payload: &Value) {
+    async fn send_uplink(&self, payload: &Value) -> bool {
         let url = format!("{}/netApi/alarm/broadcast", self.uplink_url);
-        if let Err(error) = self
+        let sent = self
             .client
             .post(&url)
             .json(payload)
             .timeout(std::time::Duration::from_secs(3))
             .send()
-            .await
-        {
-            warn!("Alarm replay broadcast error: {} err={}", url, error);
+            .await;
+        match sent {
+            Ok(response) if response.status().is_success() => true,
+            Ok(response) => {
+                warn!("Alarm replay refused: {} status={}", url, response.status());
+                false
+            },
+            Err(error) => {
+                warn!("Alarm replay broadcast error: {} err={}", url, error);
+                false
+            },
         }
     }
 }
@@ -101,8 +109,8 @@ impl AlarmNotifier for HttpAlarmNotifier {
         self.broadcast_all(&Self::alarm_payload(notification)).await;
     }
 
-    async fn replay_alarm(&self, notification: AlarmNotification) {
-        self.send_uplink(&Self::alarm_payload(notification)).await;
+    async fn replay_alarm(&self, notification: AlarmNotification) -> bool {
+        self.send_uplink(&Self::alarm_payload(notification)).await
     }
 
     async fn publish_counts(&self, counts: AlarmCountSnapshot) {

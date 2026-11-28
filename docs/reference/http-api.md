@@ -116,8 +116,8 @@ through the gateway as `/io/api/audit/events` and
 Events come back newest first, and `total` counts every match rather than the
 returned page. Rejected commands are recorded too, so a refused attempt is
 visible rather than absent. An unrecognised `outcome` is a 400 rather than an
-ignored filter, because silently widening an audit query answers a narrower
-question than the one asked.
+ignored filter, because silently widening an audit query answers a different
+question from the one asked.
 
 Every access token carries a required `scope` claim listing the permissions it
 may exercise. The role remains the ceiling and the scope selects within it, so
@@ -150,12 +150,29 @@ operation-specific authorization:
 
 - io channel create, update, delete, enable, and disable require an Admin or
   Engineer Bearer JWT with `io.channel.manage`;
+- io channel templates (`POST /io/api/templates`,
+  `POST /io/api/templates/from-channel/{channel_id}`, and `PUT` or `DELETE` on
+  `/io/api/templates/{id}`), the per-channel log level
+  (`PUT /io/api/channels/{id}/logging`), and `POST /io/api/routing/reload`
+  require a Bearer JWT with `io.channel.manage` and `x-aether-confirmed: true`.
+  io audits them under that capability. Each event names the operation and the
+  template or channel it concerns, never the request body, and applying a
+  template records the template id in the point change it makes;
 - automation device actions accept a Bearer access JWT or the dedicated
   `AetherService <token>` uplink credential;
 - automation rule management and manual execution require an Admin or Engineer
   Bearer JWT with the capability documented for the operation;
 - alarm rule mutation and alert resolution require an Admin or Engineer Bearer
   JWT;
+- `POST /alarm/call-data` replays every active alert to the uplink, so it is
+  governed as an upstream publish: it requires `uplink.message.publish` and
+  `x-aether-confirmed: true`, and alarm audits it under that capability. The
+  gateway forwards it, like any change to alarm, only for a token that also
+  holds a permission io, automation, or alarm enforces. The replay runs under
+  one 20-second deadline. When the uplink does not accept every alert in that
+  time it answers 502 with code `ALARM_REPLAY_INCOMPLETE` and the delivered
+  count. A 502 without that code is the gateway's own: supply `x-request-id`
+  and read the outcome from the audit trail before retrying;
 - history configuration and storage changes (`PUT /history/config`,
   `PUT /history/storage`, `POST /history/storage/test`, and
   `POST /history/storage/reconnect`) require an Admin or Engineer Bearer JWT

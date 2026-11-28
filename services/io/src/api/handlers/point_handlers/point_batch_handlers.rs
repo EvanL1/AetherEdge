@@ -34,6 +34,7 @@ use super::point_types::*;
         (status = 400, description = "Invalid batch"),
         (status = 409, description = "Stale expected revision")
     ),
+    security(("bearer_auth" = [])),
     tag = "io"
 )]
 pub async fn batch_point_operations_handler(

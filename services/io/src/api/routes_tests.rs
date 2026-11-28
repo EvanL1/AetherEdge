@@ -27,6 +27,13 @@ const TEST_JWT_SECRET: &str = "0123456789abcdef0123456789abcdef";
 /// follow a change to the claim set, and the one that used to live here went
 /// stale the moment `scope` became required.
 fn admin_access_token() -> String {
+    access_token(
+        "Admin",
+        aether_auth_jwt::permissions_for_role(Some("Admin")),
+    )
+}
+
+fn access_token(role: &'static str, scope: Vec<&'static str>) -> String {
     #[derive(serde::Serialize)]
     struct AccessClaims {
         user_id: i64,
@@ -42,8 +49,8 @@ fn admin_access_token() -> String {
         &jsonwebtoken::Header::new(jsonwebtoken::Algorithm::HS256),
         &AccessClaims {
             user_id: 7,
-            role: "Admin",
-            scope: aether_auth_jwt::permissions_for_role(Some("Admin")),
+            role,
+            scope,
             token_type: "access",
             iat: 1_700_000_000,
             exp: 4_102_444_800,
@@ -93,6 +100,15 @@ async fn create_test_api_with_pool(
     channel_manager: Arc<ChannelManager>,
     sqlite_pool: SqlitePool,
 ) -> Router {
+    let audit = Arc::new(aether_store_local::MemoryAuditSink::new());
+    create_test_api_with_audit(channel_manager, sqlite_pool, audit).await
+}
+
+async fn create_test_api_with_audit(
+    channel_manager: Arc<ChannelManager>,
+    sqlite_pool: SqlitePool,
+    audit: Arc<dyn AuditSink>,
+) -> Router {
     // Channel deletion owns cross-service routing rows in the unified
     // edge database. Mirror the complete production topology so HTTP tests do
     // not exercise the governed adapter against a partial schema.
@@ -105,7 +121,6 @@ async fn create_test_api_with_pool(
     ));
     let mutator: Arc<dyn ChannelMutator> = adapter.clone();
     let reconciler: Arc<dyn ChannelReconciler> = adapter;
-    let audit: Arc<dyn AuditSink> = Arc::new(aether_store_local::MemoryAuditSink::new());
     let application = Arc::new(aether_application::ChannelManagementApplication::new(
         mutator,
         Arc::clone(&audit),
@@ -118,7 +133,7 @@ async fn create_test_api_with_pool(
     ));
     let point_topology = Arc::new(crate::point_topology::PointTopologyApplication::new(
         sqlite_pool.clone(),
-        audit,
+        Arc::clone(&audit),
     ));
     let authenticator = Arc::new(
         aether_auth_jwt::AccessTokenAuthenticator::new(TEST_JWT_SECRET)
@@ -131,6 +146,7 @@ async fn create_test_api_with_pool(
         ChannelManagementHttpBoundary::governed_with_reconciliation(
             application,
             reconciliation,
+            audit,
             Arc::clone(&authenticator),
         ),
         PointTopologyHttpBoundary::governed(point_topology, authenticator),
@@ -346,7 +362,7 @@ async fn recording_channel_router_with_audit(
     );
     let application = Arc::new(aether_application::ChannelManagementApplication::new(
         mutator,
-        audit,
+        Arc::clone(&audit),
         aether_application::SafetyPolicy,
     ));
     let authenticator = Arc::new(
@@ -357,7 +373,7 @@ async fn recording_channel_router_with_audit(
         channel_manager,
         pool,
         None,
-        ChannelManagementHttpBoundary::governed(application, authenticator),
+        ChannelManagementHttpBoundary::governed(application, audit, authenticator),
         PointTopologyHttpBoundary::unavailable(),
     )
 }
@@ -395,7 +411,7 @@ async fn recording_channel_applications_router(
     let channel_reconciliation =
         Arc::new(aether_application::ChannelReconciliationApplication::new(
             reconciler,
-            audit,
+            Arc::clone(&audit),
             aether_application::SafetyPolicy,
         ));
     let authenticator = Arc::new(
@@ -409,6 +425,7 @@ async fn recording_channel_applications_router(
         ChannelManagementHttpBoundary::governed_with_reconciliation(
             channel_management,
             channel_reconciliation,
+            audit,
             authenticator,
         ),
         PointTopologyHttpBoundary::unavailable(),
@@ -3258,11 +3275,14 @@ async fn send_json_request(
         "DELETE" => builder.method("DELETE"),
         _ => builder.method("GET"),
     };
-    if uri.contains("/apply/") {
+    if method != "GET" {
         builder = builder
             .header("authorization", format!("Bearer {}", admin_access_token()))
+            .header("x-aether-confirmed", "true");
+    }
+    if uri.contains("/apply/") {
+        builder = builder
             .header("x-request-id", TEST_REQUEST_ID)
-            .header("x-aether-confirmed", "true")
             .header("x-aether-expected-revision", "1");
     }
 
@@ -3272,6 +3292,364 @@ async fn send_json_request(
     };
 
     app.oneshot(builder.body(body).unwrap()).await.unwrap()
+}
+
+struct WriteCaller {
+    token: Option<String>,
+    confirmed: bool,
+}
+
+impl WriteCaller {
+    fn confirmed(token: Option<String>) -> Self {
+        Self {
+            token,
+            confirmed: true,
+        }
+    }
+}
+
+async fn send_as(
+    app: Router,
+    method: &str,
+    uri: &str,
+    caller: &WriteCaller,
+    body: serde_json::Value,
+) -> Response<Body> {
+    let mut builder = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("content-type", "application/json");
+    if let Some(token) = &caller.token {
+        builder = builder.header("authorization", format!("Bearer {token}"));
+    }
+    if caller.confirmed {
+        builder = builder.header("x-aether-confirmed", "true");
+    }
+    app.oneshot(builder.body(Body::from(body.to_string())).unwrap())
+        .await
+        .unwrap()
+}
+
+async fn template_app_with_audit(pool: SqlitePool, audit: Arc<dyn AuditSink>) -> Router {
+    let channel_manager = Arc::new(
+        ChannelManager::new(
+            crate::test_utils::create_test_shm_handle(),
+            crate::test_utils::create_test_routing_cache(),
+        )
+        .unwrap(),
+    );
+    create_test_api_with_audit(channel_manager, pool, audit).await
+}
+
+async fn seeded_template(pool: &SqlitePool) -> i64 {
+    let template = json!({
+        "name": "Seed", "protocol": "modbus_tcp",
+        "points_snapshot": {}, "mappings_snapshot": {}
+    });
+    let app = rebuild_template_app(pool.clone()).await;
+    let seeded = send_json_request(app, "POST", "/api/templates", Some(template)).await;
+    assert_eq!(seeded.status(), StatusCode::OK);
+    extract_json(seeded).await["data"]["template_id"]
+        .as_i64()
+        .unwrap()
+}
+
+fn writes_without_an_application_command(
+    id: i64,
+) -> [(&'static str, String, serde_json::Value); 6] {
+    [
+        (
+            "POST",
+            "/api/templates".to_owned(),
+            json!({"name": "Forged", "protocol": "modbus_tcp", "points_snapshot": {}, "mappings_snapshot": {}}),
+        ),
+        (
+            "POST",
+            "/api/templates/from-channel/1001".to_owned(),
+            json!({"name": "Forged copy"}),
+        ),
+        (
+            "PUT",
+            format!("/api/templates/{id}"),
+            json!({"name": "Renamed"}),
+        ),
+        ("DELETE", format!("/api/templates/{id}"), json!({})),
+        (
+            "PUT",
+            "/api/channels/1001/logging".to_owned(),
+            json!({"level": "debug"}),
+        ),
+        ("POST", "/api/routing/reload".to_owned(), json!({})),
+    ]
+}
+
+async fn template_names(pool: &SqlitePool) -> Vec<(String,)> {
+    sqlx::query_as("SELECT name FROM channel_templates")
+        .fetch_all(pool)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn writes_outside_the_command_boundary_require_channel_management() {
+    let (_, pool) = create_template_test_app().await;
+    let id = seeded_template(&pool).await;
+    let outsiders = [
+        None,
+        Some("not-a-token".to_owned()),
+        Some(access_token(
+            "Viewer",
+            aether_auth_jwt::permissions_for_role(Some("Viewer")),
+        )),
+        Some(access_token("Admin", vec!["alarm.alert.resolve"])),
+        Some(access_token("Viewer", vec!["io.channel.manage"])),
+    ];
+    for (method, uri, body) in &writes_without_an_application_command(id) {
+        for token in &outsiders {
+            let audit = Arc::new(aether_store_local::MemoryAuditSink::new());
+            let app = template_app_with_audit(pool.clone(), audit.clone()).await;
+            let caller = WriteCaller::confirmed(token.clone());
+            let response = send_as(app, method, uri, &caller, body.clone()).await;
+
+            assert_eq!(
+                response.status(),
+                StatusCode::FORBIDDEN,
+                "{method} {uri} as {token:?}"
+            );
+            let records = audit.records().unwrap();
+            assert_eq!(records.len(), 1, "{method} {uri}");
+            assert_eq!(records[0].outcome(), aether_ports::AuditOutcome::Rejected);
+            assert_eq!(records[0].capability(), "io.channel.manage");
+        }
+    }
+    assert_eq!(template_names(&pool).await, vec![("Seed".to_owned(),)]);
+}
+
+#[tokio::test]
+async fn writes_outside_the_command_boundary_require_confirmation() {
+    let (_, pool) = create_template_test_app().await;
+    let id = seeded_template(&pool).await;
+    let unconfirmed = WriteCaller {
+        token: Some(admin_access_token()),
+        confirmed: false,
+    };
+    for (method, uri, body) in &writes_without_an_application_command(id) {
+        let app = rebuild_template_app(pool.clone()).await;
+        let response = send_as(app, method, uri, &unconfirmed, body.clone()).await;
+        assert_eq!(
+            response.status(),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{method} {uri}"
+        );
+    }
+    assert_eq!(template_names(&pool).await, vec![("Seed".to_owned(),)]);
+}
+
+#[tokio::test]
+async fn a_template_change_is_audited_with_the_template_it_touched() {
+    let (_, pool) = create_template_test_app().await;
+    let id = seeded_template(&pool).await;
+    let audit = Arc::new(aether_store_local::MemoryAuditSink::new());
+    let app = template_app_with_audit(pool.clone(), audit.clone()).await;
+    let narrowed =
+        WriteCaller::confirmed(Some(access_token("Engineer", vec!["io.channel.manage"])));
+    let uri = format!("/api/templates/{id}");
+
+    let response = send_as(app, "PUT", &uri, &narrowed, json!({"name": "Renamed"})).await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["x-aether-audit"], "recorded");
+    let records = audit.records().unwrap();
+    let trail: Vec<_> = records
+        .iter()
+        .map(|record| (record.outcome(), record.actor_id(), record.detail()))
+        .collect();
+    let operation = format!("operation=PUT {uri}");
+    assert_eq!(
+        trail,
+        vec![
+            (
+                aether_ports::AuditOutcome::Attempted,
+                "user:7",
+                Some(operation.as_str())
+            ),
+            (
+                aether_ports::AuditOutcome::Succeeded,
+                "user:7",
+                Some(operation.as_str())
+            ),
+        ]
+    );
+    assert_eq!(response.headers()["x-request-id"], records[0].request_id());
+    assert!(!records[1].detail().unwrap().contains("Renamed"));
+}
+
+#[tokio::test]
+async fn a_refused_template_change_records_why_it_failed() {
+    let (_, pool) = create_template_test_app().await;
+    let audit = Arc::new(aether_store_local::MemoryAuditSink::new());
+    let app = template_app_with_audit(pool, audit.clone()).await;
+    let caller = WriteCaller::confirmed(Some(admin_access_token()));
+
+    let response = send_as(app, "DELETE", "/api/templates/9999", &caller, json!({})).await;
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let records = audit.records().unwrap();
+    assert_eq!(records[1].outcome(), aether_ports::AuditOutcome::Failed);
+    assert_eq!(
+        records[1].detail(),
+        Some("operation=DELETE /api/templates/9999; response_status=404")
+    );
+}
+
+fn details(audit: &aether_store_local::MemoryAuditSink) -> Vec<String> {
+    audit
+        .records()
+        .unwrap()
+        .iter()
+        .map(|record| record.detail().unwrap_or("").to_owned())
+        .collect()
+}
+
+#[tokio::test]
+async fn a_created_template_is_named_in_its_audit_event() {
+    let (_, pool) = create_template_test_app().await;
+    let audit = Arc::new(aether_store_local::MemoryAuditSink::new());
+    let app = template_app_with_audit(pool, audit.clone()).await;
+    let caller = WriteCaller::confirmed(Some(admin_access_token()));
+    let template = json!({
+        "name": "Fresh", "protocol": "modbus_tcp",
+        "points_snapshot": {}, "mappings_snapshot": {}
+    });
+
+    let response = send_as(app, "POST", "/api/templates", &caller, template).await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let id = extract_json(response).await["data"]["template_id"]
+        .as_i64()
+        .unwrap();
+    assert_eq!(
+        details(&audit),
+        vec![
+            "operation=POST /api/templates".to_owned(),
+            format!("operation=POST /api/templates; template_id={id}"),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn an_applied_template_is_named_in_the_provision_audit() {
+    let (_, pool) = create_template_test_app().await;
+    sqlx::query(
+        "INSERT INTO channels (channel_id, name, protocol, enabled, config) VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(2001_i64)
+    .bind("Target#1")
+    .bind("modbus_tcp")
+    .bind(true)
+    .bind("{}")
+    .execute(&pool)
+    .await
+    .unwrap();
+    let template = json!({
+        "name": "Applied", "protocol": "modbus_tcp",
+        "points_snapshot": {
+            "telemetry": [{"point_id": 1, "signal_name": "v", "scale": 1.0, "offset": 0.0, "unit": "V", "data_type": "float32", "reverse": false, "description": "voltage"}]
+        },
+        "mappings_snapshot": {
+            "telemetry": [{"point_id": 1, "signal_name": "v", "protocol_data": {"register_address": 0, "slave_id": 1, "function_code": 3}}]
+        }
+    });
+    let app = rebuild_template_app(pool.clone()).await;
+    let created = send_json_request(app, "POST", "/api/templates", Some(template)).await;
+    let id = extract_json(created).await["data"]["template_id"]
+        .as_i64()
+        .unwrap();
+    let audit = Arc::new(aether_store_local::MemoryAuditSink::new());
+    let app = template_app_with_audit(pool, audit.clone()).await;
+
+    let uri = format!("/api/templates/{id}/apply/2001");
+    let body = json!({ "clear_existing": true });
+    let response = send_json_request(app, "POST", &uri, Some(body)).await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let named = format!("template_id={id}");
+    let provision: Vec<_> = details(&audit)
+        .into_iter()
+        .filter(|detail| detail.starts_with("operation=provision"))
+        .collect();
+    assert_eq!(provision.len(), 2, "{provision:?}");
+    assert!(
+        provision.iter().all(|detail| detail.contains(&named)),
+        "{provision:?}"
+    );
+}
+
+#[tokio::test]
+async fn the_audit_trail_cannot_be_padded_or_forged_through_the_path() {
+    let (_, pool) = create_template_test_app().await;
+    let id = seeded_template(&pool).await;
+    let caller = WriteCaller::confirmed(Some(admin_access_token()));
+    for path in [
+        format!("/api/templates/{id};response_status=200"),
+        format!("/api/templates/{}", "9".repeat(4000)),
+    ] {
+        let audit = Arc::new(aether_store_local::MemoryAuditSink::new());
+        let app = template_app_with_audit(pool.clone(), audit.clone()).await;
+
+        let response = send_as(app, "PUT", &path, &caller, json!({"name": "x"})).await;
+
+        assert!(response.status().is_client_error(), "{path}");
+        let recorded = details(&audit);
+        assert_eq!(recorded[0], "operation=PUT /api/templates/{id}");
+        assert!(recorded.iter().all(|detail| detail.len() < 96));
+    }
+}
+
+#[tokio::test]
+async fn a_failed_routing_reload_is_reported_and_audited_as_failed() {
+    let (_, pool) = create_template_test_app().await;
+    let audit = Arc::new(aether_store_local::MemoryAuditSink::new());
+    let app = template_app_with_audit(pool.clone(), audit.clone()).await;
+    pool.close().await;
+    let caller = WriteCaller::confirmed(Some(admin_access_token()));
+
+    let response = send_as(app, "POST", "/api/routing/reload", &caller, json!({})).await;
+
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let records = audit.records().unwrap();
+    assert_eq!(records[1].outcome(), aether_ports::AuditOutcome::Failed);
+}
+
+struct UnavailableAudit;
+
+#[async_trait::async_trait]
+impl AuditSink for UnavailableAudit {
+    async fn record(&self, _record: aether_ports::AuditRecord) -> aether_ports::PortResult<()> {
+        Err(aether_ports::PortError::new(
+            aether_ports::PortErrorKind::Unavailable,
+            "audit store offline",
+        ))
+    }
+}
+
+#[tokio::test]
+async fn a_write_that_cannot_be_audited_changes_nothing() {
+    let (_, pool) = create_template_test_app().await;
+    let id = seeded_template(&pool).await;
+    for token in [Some(admin_access_token()), None] {
+        for (method, uri, body) in &writes_without_an_application_command(id) {
+            let app = template_app_with_audit(pool.clone(), Arc::new(UnavailableAudit)).await;
+            let caller = WriteCaller::confirmed(token.clone());
+            let response = send_as(app, method, uri, &caller, body.clone()).await;
+            assert_eq!(
+                response.status(),
+                StatusCode::SERVICE_UNAVAILABLE,
+                "{method} {uri}"
+            );
+        }
+    }
+    assert_eq!(template_names(&pool).await, vec![("Seed".to_owned(),)]);
 }
 
 #[tokio::test]
@@ -4396,6 +4774,33 @@ mod openapi_tests {
 
     fn spec() -> serde_json::Value {
         serde_json::to_value(IoApiDoc::openapi()).expect("serialize io OpenAPI document")
+    }
+
+    #[test]
+    fn every_documented_write_requires_a_bearer_token() {
+        let spec = spec();
+        let paths = spec["paths"].as_object().expect("paths");
+        // The gateway refuses every api/admin path, so only a local operator
+        // reaches this one; `aether logs set-level` calls it without a token.
+        const LOOPBACK_ONLY: [&str; 1] = ["post /api/admin/logs/level"];
+        let mut writes = 0;
+        let mut open = Vec::new();
+        for (path, operations) in paths {
+            for (method, operation) in operations.as_object().expect("operations") {
+                let name = format!("{method} {path}");
+                if !matches!(method.as_str(), "post" | "put" | "patch" | "delete")
+                    || LOOPBACK_ONLY.contains(&name.as_str())
+                {
+                    continue;
+                }
+                writes += 1;
+                if operation["security"][0].get("bearer_auth").is_none() {
+                    open.push(name);
+                }
+            }
+        }
+        assert!(writes > 20, "the sweep saw only {writes} writes");
+        assert!(open.is_empty(), "writes without bearer_auth: {open:#?}");
     }
 
     fn assert_path_methods(

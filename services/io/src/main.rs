@@ -560,7 +560,7 @@ async fn run(
         ));
     let point_topology = Arc::new(aether_io::point_topology::PointTopologyApplication::new(
         sqlite_pool.clone(),
-        channel_audit,
+        Arc::clone(&channel_audit),
     ));
     let access_authenticator = Arc::new(
         aether_auth_jwt::AccessTokenAuthenticator::from_env().map_err(|error| {
@@ -573,6 +573,7 @@ async fn run(
         channel_management,
         channel_reconciliation,
         point_topology,
+        channel_audit,
         access_authenticator,
     );
 

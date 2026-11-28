@@ -251,10 +251,15 @@ const fn runtime_projection_result(
     put,
     path = "/api/channels/{id}/logging",
     params(
+        ("x-request-id" = Option<String>, Header, format = "uuid", description = "Optional UUID audit correlation ID; a UUID is generated when omitted or invalid"),
+        ("x-aether-confirmed" = bool, Header, description = "Required explicit confirmation; must be true"),
         ("id" = u32, Path, description = "Channel identifier")
     ),
     request_body = common::admin_api::SetLogLevelRequest,
     responses(
+        (status = 403, description = "Missing/invalid Bearer token or io.channel.manage permission"),
+        (status = 422, description = "Explicit confirmation is missing or false"),
+        (status = 503, description = "Mandatory audit is unavailable; nothing was changed"),
         (status = 200, description = "Channel log level updated", body = String,
             example = json!({
                 "success": true,
@@ -264,6 +269,7 @@ const fn runtime_projection_result(
         (status = 400, description = "Invalid log level"),
         (status = 404, description = "Channel not found")
     ),
+    security(("bearer_auth" = [])),
     tag = "io"
 )]
 pub async fn set_channel_log_level(
