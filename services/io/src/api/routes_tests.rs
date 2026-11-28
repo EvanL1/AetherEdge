@@ -3502,6 +3502,125 @@ async fn a_refused_template_change_records_why_it_failed() {
     );
 }
 
+fn details(audit: &aether_store_local::MemoryAuditSink) -> Vec<String> {
+    audit
+        .records()
+        .unwrap()
+        .iter()
+        .map(|record| record.detail().unwrap_or("").to_owned())
+        .collect()
+}
+
+#[tokio::test]
+async fn a_created_template_is_named_in_its_audit_event() {
+    let (_, pool) = create_template_test_app().await;
+    let audit = Arc::new(aether_store_local::MemoryAuditSink::new());
+    let app = template_app_with_audit(pool, audit.clone()).await;
+    let caller = WriteCaller::confirmed(Some(admin_access_token()));
+    let template = json!({
+        "name": "Fresh", "protocol": "modbus_tcp",
+        "points_snapshot": {}, "mappings_snapshot": {}
+    });
+
+    let response = send_as(app, "POST", "/api/templates", &caller, template).await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let id = extract_json(response).await["data"]["template_id"]
+        .as_i64()
+        .unwrap();
+    assert_eq!(
+        details(&audit),
+        vec![
+            "operation=POST /api/templates".to_owned(),
+            format!("operation=POST /api/templates; template_id={id}"),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn an_applied_template_is_named_in_the_provision_audit() {
+    let (_, pool) = create_template_test_app().await;
+    sqlx::query(
+        "INSERT INTO channels (channel_id, name, protocol, enabled, config) VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(2001_i64)
+    .bind("Target#1")
+    .bind("modbus_tcp")
+    .bind(true)
+    .bind("{}")
+    .execute(&pool)
+    .await
+    .unwrap();
+    let template = json!({
+        "name": "Applied", "protocol": "modbus_tcp",
+        "points_snapshot": {
+            "telemetry": [{"point_id": 1, "signal_name": "v", "scale": 1.0, "offset": 0.0, "unit": "V", "data_type": "float32", "reverse": false, "description": "voltage"}]
+        },
+        "mappings_snapshot": {
+            "telemetry": [{"point_id": 1, "signal_name": "v", "protocol_data": {"register_address": 0, "slave_id": 1, "function_code": 3}}]
+        }
+    });
+    let app = rebuild_template_app(pool.clone()).await;
+    let created = send_json_request(app, "POST", "/api/templates", Some(template)).await;
+    let id = extract_json(created).await["data"]["template_id"]
+        .as_i64()
+        .unwrap();
+    let audit = Arc::new(aether_store_local::MemoryAuditSink::new());
+    let app = template_app_with_audit(pool, audit.clone()).await;
+
+    let uri = format!("/api/templates/{id}/apply/2001");
+    let body = json!({ "clear_existing": true });
+    let response = send_json_request(app, "POST", &uri, Some(body)).await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let named = format!("template_id={id}");
+    let provision: Vec<_> = details(&audit)
+        .into_iter()
+        .filter(|detail| detail.starts_with("operation=provision"))
+        .collect();
+    assert_eq!(provision.len(), 2, "{provision:?}");
+    assert!(
+        provision.iter().all(|detail| detail.contains(&named)),
+        "{provision:?}"
+    );
+}
+
+#[tokio::test]
+async fn the_audit_trail_cannot_be_padded_or_forged_through_the_path() {
+    let (_, pool) = create_template_test_app().await;
+    let id = seeded_template(&pool).await;
+    let caller = WriteCaller::confirmed(Some(admin_access_token()));
+    for path in [
+        format!("/api/templates/{id};response_status=200"),
+        format!("/api/templates/{}", "9".repeat(4000)),
+    ] {
+        let audit = Arc::new(aether_store_local::MemoryAuditSink::new());
+        let app = template_app_with_audit(pool.clone(), audit.clone()).await;
+
+        let response = send_as(app, "PUT", &path, &caller, json!({"name": "x"})).await;
+
+        assert!(response.status().is_client_error(), "{path}");
+        let recorded = details(&audit);
+        assert_eq!(recorded[0], "operation=PUT /api/templates/{id}");
+        assert!(recorded.iter().all(|detail| detail.len() < 96));
+    }
+}
+
+#[tokio::test]
+async fn a_failed_routing_reload_is_reported_and_audited_as_failed() {
+    let (_, pool) = create_template_test_app().await;
+    let audit = Arc::new(aether_store_local::MemoryAuditSink::new());
+    let app = template_app_with_audit(pool.clone(), audit.clone()).await;
+    pool.close().await;
+    let caller = WriteCaller::confirmed(Some(admin_access_token()));
+
+    let response = send_as(app, "POST", "/api/routing/reload", &caller, json!({})).await;
+
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let records = audit.records().unwrap();
+    assert_eq!(records[1].outcome(), aether_ports::AuditOutcome::Failed);
+}
+
 struct UnavailableAudit;
 
 #[async_trait::async_trait]

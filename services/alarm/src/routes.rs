@@ -1261,10 +1261,14 @@ fn replay_audit_unavailable() -> Response {
     )
 }
 
+const REPLAY_CONCURRENCY: usize = 8;
+const REPLAY_DEADLINE: std::time::Duration = std::time::Duration::from_secs(20);
+
 #[derive(Debug, Clone, Copy)]
 struct AlarmReplay {
     active: usize,
     delivered: usize,
+    timed_out: bool,
 }
 
 impl AlarmReplay {
@@ -1279,7 +1283,11 @@ impl std::fmt::Display for AlarmReplay {
             formatter,
             "delivered={}; active={}",
             self.delivered, self.active
-        )
+        )?;
+        if self.timed_out {
+            formatter.write_str("; deadline_exceeded")?;
+        }
+        Ok(())
     }
 }
 
@@ -1305,6 +1313,7 @@ fn replay_response(
         StatusCode::BAD_GATEWAY,
         Json(json!({
             "success": false,
+            "code": "ALARM_REPLAY_INCOMPLETE",
             "message": format!(
                 "The uplink accepted {} of {} active alert(s)",
                 replay.delivered, replay.active
@@ -1313,6 +1322,30 @@ fn replay_response(
         })),
     )
         .into_response()
+}
+
+/// Replays within one deadline, kept well inside the gateway's upstream
+/// timeout so the caller hears the real outcome instead of a gateway timeout
+/// while the replay runs on. Returns what was delivered and whether the
+/// deadline cut it short.
+async fn replay_within(
+    notifier: &dyn crate::notification::AlarmNotifier,
+    notifications: impl Iterator<Item = AlarmNotification>,
+    deadline: std::time::Duration,
+) -> (usize, bool) {
+    use futures::StreamExt;
+
+    let delivered = std::sync::atomic::AtomicUsize::new(0);
+    let sends = futures::stream::iter(notifications).for_each_concurrent(
+        REPLAY_CONCURRENCY,
+        |notification| async {
+            if notifier.replay_alarm(notification).await {
+                delivered.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+        },
+    );
+    let timed_out = tokio::time::timeout(deadline, sends).await.is_err();
+    (delivered.into_inner(), timed_out)
 }
 
 async fn replay_active_alerts(state: &AppState) -> Result<AlarmReplay, &'static str> {
@@ -1330,16 +1363,16 @@ async fn replay_active_alerts(state: &AppState) -> Result<AlarmReplay, &'static 
         }
     }
 
-    let mut delivered = 0;
-    for alert in &alerts {
-        let Some(rule) = rule_map.get(&alert.rule_id) else {
-            continue;
-        };
-        let notification = AlarmNotification::triggered(alert.id, rule, alert.current_value);
-        if state.notifier.replay_alarm(notification).await {
-            delivered += 1;
-        }
-    }
+    let notifications = alerts.iter().filter_map(|alert| {
+        let rule = rule_map.get(&alert.rule_id)?;
+        Some(AlarmNotification::triggered(
+            alert.id,
+            rule,
+            alert.current_value,
+        ))
+    });
+    let (delivered, timed_out) =
+        replay_within(state.notifier.as_ref(), notifications, REPLAY_DEADLINE).await;
 
     if let Ok(counts) = db::get_active_alarm_counts(&state.db).await {
         state
@@ -1351,6 +1384,7 @@ async fn replay_active_alerts(state: &AppState) -> Result<AlarmReplay, &'static 
     Ok(AlarmReplay {
         active: alerts.len(),
         delivered,
+        timed_out,
     })
 }
 
@@ -1933,6 +1967,66 @@ mod tests {
         );
     }
 
+    struct StallingNotifier;
+
+    #[async_trait::async_trait]
+    impl crate::notification::AlarmNotifier for StallingNotifier {
+        async fn publish_alarm(&self, _notification: crate::notification::AlarmNotification) {}
+
+        async fn replay_alarm(&self, notification: crate::notification::AlarmNotification) -> bool {
+            if notification.alert_id > 1 {
+                tokio::time::sleep(std::time::Duration::from_secs(600)).await;
+            }
+            true
+        }
+
+        async fn publish_counts(&self, _counts: AlarmCountSnapshot) {}
+    }
+
+    #[tokio::test]
+    async fn a_stalled_uplink_cannot_hold_a_replay_past_its_deadline() {
+        let state = test_state().await;
+        let created = create_routes(Arc::clone(&state))
+            .oneshot(
+                Request::post("/alarmApi/rules")
+                    .header("content-type", "application/json")
+                    .header("authorization", format!("Bearer {}", access_token()))
+                    .header("x-aether-confirmed", "true")
+                    .body(Body::from(create_rule_request("stalled").to_string()))
+                    .expect("create request"),
+            )
+            .await
+            .expect("create response");
+        assert_eq!(created.status(), StatusCode::OK);
+        let rule = db::find_rule_by_name(&state.db, "stalled")
+            .await
+            .expect("query rule")
+            .expect("created rule");
+        let notifications =
+            (1..=3).map(|alert_id| AlarmNotification::triggered(alert_id, &rule, 95.0));
+
+        let started = std::time::Instant::now();
+        let (delivered, timed_out) = replay_within(
+            &StallingNotifier,
+            notifications,
+            std::time::Duration::from_millis(50),
+        )
+        .await;
+
+        assert_eq!((delivered, timed_out), (1, true));
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+        let replay = AlarmReplay {
+            active: 3,
+            delivered,
+            timed_out,
+        };
+        assert!(!replay.complete());
+        assert_eq!(
+            replay.to_string(),
+            "delivered=1; active=3; deadline_exceeded"
+        );
+    }
+
     #[tokio::test]
     async fn a_replay_the_uplink_refuses_is_recorded_as_failed() {
         let fixture = ReplayFixture::new().await;
@@ -1947,6 +2041,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
         let payload = json_body(response).await;
         assert_eq!(payload["success"], false);
+        assert_eq!(payload["code"], "ALARM_REPLAY_INCOMPLETE");
         assert_eq!(payload["data"]["broadcast_count"], 0);
         assert_eq!(payload["data"]["alarm_count"], 1);
         assert_eq!(payload["data"]["audit"]["status"], "recorded");

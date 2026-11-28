@@ -155,8 +155,9 @@ operation-specific authorization:
   `/io/api/templates/{id}`), the per-channel log level
   (`PUT /io/api/channels/{id}/logging`), and `POST /io/api/routing/reload`
   require a Bearer JWT with `io.channel.manage` and `x-aether-confirmed: true`.
-  io audits them under that capability; the event names the method and path,
-  so it identifies the template, and never the request body;
+  io audits them under that capability. Each event names the operation and the
+  template or channel it concerns, never the request body, and applying a
+  template records the template id in the point change it makes;
 - automation device actions accept a Bearer access JWT or the dedicated
   `AetherService <token>` uplink credential;
 - automation rule management and manual execution require an Admin or Engineer
@@ -167,8 +168,11 @@ operation-specific authorization:
   governed as an upstream publish: it requires `uplink.message.publish` and
   `x-aether-confirmed: true`, and alarm audits it under that capability. The
   gateway forwards it, like any change to alarm, only for a token that also
-  holds a permission io, automation, or alarm enforces. It answers 502 with
-  the delivered count when the uplink does not accept every alert;
+  holds a permission io, automation, or alarm enforces. The replay runs under
+  one 20-second deadline. When the uplink does not accept every alert in that
+  time it answers 502 with code `ALARM_REPLAY_INCOMPLETE` and the delivered
+  count. A 502 without that code is the gateway's own: supply `x-request-id`
+  and read the outcome from the audit trail before retrying;
 - history configuration and storage changes (`PUT /history/config`,
   `PUT /history/storage`, `POST /history/storage/test`, and
   `POST /history/storage/reconnect`) require an Admin or Engineer Bearer JWT

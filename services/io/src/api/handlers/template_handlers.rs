@@ -10,6 +10,7 @@ use crate::api::dto::{
     AppError, ApplyTemplateReq, CreateTemplateFromChannelReq, CreateTemplateReq, PointCounts,
     SuccessResponse, TemplateDetail, TemplateListItem, TemplateListQuery, UpdateTemplateReq,
 };
+use crate::api::handlers::channel_management_handlers::CreatedTemplate;
 use crate::api::routes::AppState;
 use crate::point_topology::{
     PointDefinitionMutation, PointKind, PointTopologyMutation, PointTopologyMutationResult,
@@ -632,7 +633,13 @@ pub async fn create_template_from_channel(
     Path(channel_id): Path<u32>,
     State(state): State<AppState>,
     Json(req): Json<CreateTemplateFromChannelReq>,
-) -> Result<Json<SuccessResponse<TemplateDetail>>, AppError> {
+) -> Result<
+    (
+        Extension<CreatedTemplate>,
+        Json<SuccessResponse<TemplateDetail>>,
+    ),
+    AppError,
+> {
     let name = validate_template_name(&req.name)?;
 
     // Validate channel exists and get protocol
@@ -692,17 +699,20 @@ pub async fn create_template_from_channel(
         row.0
     );
 
-    Ok(Json(SuccessResponse::new(TemplateDetail {
-        template_id: row.0,
-        name,
-        description: req.description,
-        protocol,
-        source_channel_id: Some(channel_id as i64),
-        points_snapshot,
-        mappings_snapshot,
-        created_at: row.1,
-        updated_at: row.2,
-    })))
+    Ok((
+        Extension(CreatedTemplate(row.0)),
+        Json(SuccessResponse::new(TemplateDetail {
+            template_id: row.0,
+            name,
+            description: req.description,
+            protocol,
+            source_channel_id: Some(channel_id as i64),
+            points_snapshot,
+            mappings_snapshot,
+            created_at: row.1,
+            updated_at: row.2,
+        })),
+    ))
 }
 
 /// Upload a complete template as JSON directly (without snapshotting an existing channel).
@@ -735,7 +745,13 @@ pub async fn create_template_from_channel(
 pub async fn create_template(
     State(state): State<AppState>,
     Json(req): Json<CreateTemplateReq>,
-) -> Result<Json<SuccessResponse<TemplateDetail>>, AppError> {
+) -> Result<
+    (
+        Extension<CreatedTemplate>,
+        Json<SuccessResponse<TemplateDetail>>,
+    ),
+    AppError,
+> {
     let name = validate_template_name(&req.name)?;
     validate_snapshot_structure(&req.points_snapshot)?;
     validate_snapshot_structure(&req.mappings_snapshot)?;
@@ -768,17 +784,20 @@ pub async fn create_template(
 
     tracing::info!("Template '{}' created manually (id={})", name, row.0);
 
-    Ok(Json(SuccessResponse::new(TemplateDetail {
-        template_id: row.0,
-        name,
-        description: req.description,
-        protocol: req.protocol,
-        source_channel_id: None,
-        points_snapshot: req.points_snapshot,
-        mappings_snapshot: req.mappings_snapshot,
-        created_at: row.1,
-        updated_at: row.2,
-    })))
+    Ok((
+        Extension(CreatedTemplate(row.0)),
+        Json(SuccessResponse::new(TemplateDetail {
+            template_id: row.0,
+            name,
+            description: req.description,
+            protocol: req.protocol,
+            source_channel_id: None,
+            points_snapshot: req.points_snapshot,
+            mappings_snapshot: req.mappings_snapshot,
+            created_at: row.1,
+            updated_at: row.2,
+        })),
+    ))
 }
 
 /// Update template name and/or description (snapshot is not modified).
@@ -1042,6 +1061,7 @@ pub async fn apply_template(
             &headers,
             PointTopologyMutation::Provision {
                 channel_id,
+                template_id: Some(template_id),
                 replace_existing: clear_existing,
                 upsert_existing: !clear_existing,
                 points,

@@ -209,7 +209,7 @@ pub async fn govern_channel_write(
         GovernedWrite {
             audit: governed.audit,
             context: invocation.context().clone(),
-            operation: format!("{} {}", request.method(), request.uri().path()),
+            operation: audited_operation(&request),
         }
     };
 
@@ -231,7 +231,13 @@ pub async fn govern_channel_write(
         let mut response = next.run(request).await;
         let status = response.status();
         let terminal = if status.is_success() {
-            write.record(AuditOutcome::Succeeded, None).await
+            let created = response
+                .extensions()
+                .get::<CreatedTemplate>()
+                .map(|created| format!("template_id={}", created.0));
+            write
+                .record(AuditOutcome::Succeeded, created.as_deref())
+                .await
         } else {
             let failure = format!("response_status={}", status.as_u16());
             write.record(AuditOutcome::Failed, Some(&failure)).await
@@ -257,6 +263,31 @@ pub async fn govern_channel_write(
     })
 }
 
+/// The template a successful create produced, for its audit event.
+#[derive(Debug, Clone, Copy)]
+pub struct CreatedTemplate(pub i64);
+
+/// Names the write for the audit trail. The raw path is recorded only when it
+/// is short and plain, so a caller cannot pad the trail or forge its fields;
+/// anything else is recorded as the route it matched.
+fn audited_operation(request: &Request) -> String {
+    const LONGEST_RECORDED_PATH: usize = 96;
+    let path = request.uri().path();
+    let plain = path.len() <= LONGEST_RECORDED_PATH
+        && path
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'-' | b'_'));
+    let recorded = if plain {
+        path
+    } else {
+        request
+            .extensions()
+            .get::<axum::extract::MatchedPath>()
+            .map_or("unrecognized", axum::extract::MatchedPath::as_str)
+    };
+    format!("{} {recorded}", request.method())
+}
+
 struct GovernedWrite {
     audit: Arc<dyn AuditSink>,
     context: RequestContext,
@@ -265,11 +296,11 @@ struct GovernedWrite {
 
 impl GovernedWrite {
     /// Records one outcome. The request body never reaches the audit trail.
-    async fn record(&self, outcome: AuditOutcome, failure: Option<&str>) -> Result<(), ()> {
+    async fn record(&self, outcome: AuditOutcome, note: Option<&str>) -> Result<(), ()> {
         let operation = &self.operation;
-        let detail = failure.map_or_else(
+        let detail = note.map_or_else(
             || format!("operation={operation}"),
-            |failure| format!("operation={operation}; {failure}"),
+            |note| format!("operation={operation}; {note}"),
         );
         self.audit
             .record(AuditRecord::new(

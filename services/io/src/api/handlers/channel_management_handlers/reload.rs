@@ -208,7 +208,7 @@ const fn runtime_projection(
         (status = 422, description = "Explicit confirmation is missing or false"),
         (status = 503, description = "Mandatory audit is unavailable; nothing was changed"),
         (status = 200, description = "Routing cache reloaded successfully", body = crate::api::dto::RoutingReloadResult),
-        (status = 500, description = "Internal server error")
+        (status = 500, description = "Routing could not be reloaded; the previous routes stay in effect")
     ),
     security(("bearer_auth" = [])),
     tag = "io"
@@ -264,6 +264,9 @@ pub async fn reload_routing_handler(
             result.errors.len(),
             duration_ms
         );
+        return Err(AppError::internal_error(
+            "Failed to reload routing cache; the previous routes stay in effect",
+        ));
     }
 
     Ok(Json(SuccessResponse::new(result)))
