@@ -160,7 +160,7 @@ authority a role does not already have. A token scoped to reads is refused at
 the gateway and again by each service, whichever route the request takes:
 
 ```json
-{ "user_id": 42, "role": "Engineer", "scope": ["data_processing.read"], "type": "access", "exp": 4102444800, "iat": 1 }
+{ "user_id": 42, "username": "assistant", "role": "Engineer", "scope": ["data_processing.read"], "type": "access", "exp": 4102444800, "iat": 1 }
 ```
 
 `scope` is required. A token that does not state its permissions is rejected
@@ -169,6 +169,13 @@ grant, which is the fail-open path the claim exists to close. Login issues a
 token carrying everything its role may hold; issue a narrowed one for any
 assistant that should read but never command, and use `--allow-write` to decide
 what the model is shown, not what it is permitted to do.
+
+The scope narrows commands, not reads: any valid token can still read through
+the gateway. The gateway's own management routes need `gateway.administer` or
+`gateway.operate` by name, so an Admin token scoped to one command, such as
+`alarm.alert.resolve`, cannot manage users, import configuration, or start an
+upgrade. See
+[HTTP API and Swagger](../reference/http-api.md#authentication-model).
 
 Starting the server with `--allow-write` is a deliberate act, but the flag is
 only a registration gate. It is not confirmation for any command. The MCP

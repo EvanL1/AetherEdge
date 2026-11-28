@@ -61,6 +61,31 @@ fn administrative_access_tokens_receive_the_shared_command_permissions() {
 }
 
 #[test]
+fn gateway_authority_follows_the_role_ceiling() {
+    let authenticator = AccessTokenAuthenticator::new(SECRET).expect("valid secret");
+    let actor = |role: &str| {
+        authenticator
+            .authenticate(&format!("Bearer {}", token(role, "access")))
+            .expect("valid access token")
+    };
+
+    assert!(actor("Admin").has_permission("gateway.operate"));
+    assert!(actor("Admin").has_permission("gateway.administer"));
+    assert!(actor("Engineer").has_permission("gateway.operate"));
+    assert!(!actor("Engineer").has_permission("gateway.administer"));
+    assert!(!actor("Viewer").has_permission("gateway.operate"));
+    assert!(!actor("Viewer").has_permission("gateway.administer"));
+
+    let claimed = authenticator
+        .authenticate(&format!(
+            "Bearer {}",
+            scoped_token("Engineer", vec!["gateway.administer"])
+        ))
+        .expect("valid access token");
+    assert!(!claimed.has_permission("gateway.administer"));
+}
+
+#[test]
 fn viewer_refresh_and_malformed_credentials_never_gain_command_permissions() {
     let authenticator = AccessTokenAuthenticator::new(SECRET).expect("valid secret");
     let viewer = authenticator

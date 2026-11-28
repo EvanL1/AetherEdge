@@ -895,6 +895,96 @@ mod local_route_authorization_tests {
         );
     }
 
+    fn scoped_request(method: &str, uri: &str, role: &str, scope: &[&str]) -> Request<Body> {
+        let mut request = Request::builder()
+            .method(method)
+            .uri(uri)
+            .body(Body::empty())
+            .expect("valid request");
+        request
+            .headers_mut()
+            .extend(narrowed_authorization_headers(role, scope));
+        request
+    }
+
+    #[tokio::test]
+    async fn one_command_permission_does_not_open_the_gateway_own_routes() {
+        let state = app_state().await;
+        let point_id = seed_homepage_point(&state.db).await;
+        let app = build_router(state.clone());
+
+        let narrow_scopes = aether_auth_jwt::SERVICE_COMMAND_PERMISSIONS
+            .into_iter()
+            .chain(aether_auth_jwt::GATEWAY_COMMAND_PERMISSIONS);
+        for permission in narrow_scopes {
+            for (method, uri) in [
+                ("GET", "/api/v1/auth/users"),
+                ("GET", "/api/admin/logs/level"),
+                ("POST", "/api/v1/broadcast"),
+                ("POST", "/api/v1/config/restart-services"),
+                ("POST", "/api/v1/homepage/reset"),
+            ] {
+                let response = app
+                    .clone()
+                    .oneshot(scoped_request(method, uri, "Admin", &[permission]))
+                    .await
+                    .expect("narrowed token response");
+                assert_eq!(
+                    response.status(),
+                    StatusCode::FORBIDDEN,
+                    "{permission} {method} {uri}"
+                );
+            }
+        }
+        assert!(
+            db::get_calculated_point_by_id(&state.db, point_id)
+                .await
+                .expect("query homepage point")
+                .is_some(),
+            "a refused reset must leave the point in place"
+        );
+    }
+
+    #[tokio::test]
+    async fn each_gateway_permission_opens_only_its_own_routes() {
+        let state = app_state().await;
+        seed_homepage_point(&state.db).await;
+        let app = build_router(state);
+        let status = |scope: &'static [&'static str], method: &'static str, uri: &'static str| {
+            let app = app.clone();
+            async move {
+                app.oneshot(scoped_request(method, uri, "Admin", scope))
+                    .await
+                    .expect("scoped token response")
+                    .status()
+            }
+        };
+
+        let administer: &[&str] = &["gateway.administer"];
+        assert_eq!(
+            status(administer, "GET", "/api/admin/logs/level").await,
+            StatusCode::OK
+        );
+        assert_eq!(
+            status(administer, "GET", "/api/v1/auth/users").await,
+            StatusCode::OK
+        );
+        assert_eq!(
+            status(administer, "POST", "/api/v1/homepage/reset").await,
+            StatusCode::FORBIDDEN
+        );
+
+        let operate: &[&str] = &["gateway.operate"];
+        assert_eq!(
+            status(operate, "GET", "/api/admin/logs/level").await,
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            status(operate, "POST", "/api/v1/homepage/reset").await,
+            StatusCode::OK
+        );
+    }
+
     #[tokio::test]
     async fn pushing_to_every_websocket_client_requires_an_administrator() {
         let app = build_router(app_state().await);

@@ -325,33 +325,22 @@ pub async fn refresh_token(
         },
     };
 
-    // Check token_id is in our store
-    let now = Utc::now().timestamp();
-    {
-        let stored = state.refresh_tokens.get(&token_id);
-        match stored {
-            None => {
-                return (
-                    StatusCode::UNAUTHORIZED,
-                    Json(json!({"success": false, "message": "Refresh token has been revoked"})),
-                )
-                    .into_response();
-            },
-            Some(info) if info.expires_at < now => {
-                drop(info);
-                state.refresh_tokens.remove(&token_id);
-                return (
-                    StatusCode::UNAUTHORIZED,
-                    Json(json!({"success": false, "message": "Refresh token has expired"})),
-                )
-                    .into_response();
-            },
-            _ => {},
-        }
+    // Take the token out of the store in one step. Looking it up and removing
+    // it separately let concurrent requests all rotate the same token.
+    let Some((_, stored)) = state.refresh_tokens.remove(&token_id) else {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"success": false, "message": "Refresh token has been revoked"})),
+        )
+            .into_response();
+    };
+    if stored.expires_at < Utc::now().timestamp() {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"success": false, "message": "Refresh token has expired"})),
+        )
+            .into_response();
     }
-
-    // Revoke old refresh token
-    state.refresh_tokens.remove(&token_id);
 
     // Issue new token pair
     let user = match db::get_user_with_role(&state.db, claims.user_id).await {
@@ -1171,6 +1160,56 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
         assert!(!state.refresh_tokens.contains_key(&token_id));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    async fn a_refresh_token_rotates_exactly_once_under_concurrent_use() {
+        let state = app_state().await;
+        db::create_user(&state.db, "racing-refresh", "unused-test-hash", 3)
+            .await
+            .expect("create refresh test user");
+        let user = db::get_user_with_role_by_username(&state.db, "racing-refresh")
+            .await
+            .expect("query refresh test user")
+            .expect("refresh test user exists");
+
+        for _ in 0..20 {
+            let (tokens, token_id, token_info) = create_token_pair(
+                &user,
+                &state.config.jwt_secret,
+                state.config.access_token_expire_minutes,
+                state.config.refresh_token_expire_days,
+            )
+            .expect("create refresh test token");
+            state.refresh_tokens.insert(token_id, token_info);
+
+            let barrier = Arc::new(tokio::sync::Barrier::new(8));
+            let attempts = (0..8).map(|_| {
+                let state = Arc::clone(&state);
+                let barrier = Arc::clone(&barrier);
+                let refresh_token_value = tokens.refresh_token.clone();
+                tokio::spawn(async move {
+                    barrier.wait().await;
+                    refresh_token(
+                        State(state),
+                        Json(RefreshTokenRequest {
+                            refresh_token: refresh_token_value,
+                        }),
+                    )
+                    .await
+                    .into_response()
+                    .status()
+                })
+            });
+            let mut rotated = 0;
+            for attempt in attempts.collect::<Vec<_>>() {
+                if attempt.await.expect("refresh attempt") == StatusCode::OK {
+                    rotated += 1;
+                }
+            }
+            assert_eq!(rotated, 1);
+            state.refresh_tokens.clear();
+        }
     }
 
     #[tokio::test]

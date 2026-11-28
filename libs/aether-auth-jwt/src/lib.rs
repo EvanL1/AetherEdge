@@ -27,11 +27,8 @@ struct AccessClaims {
     iat: usize,
 }
 
-/// Command permissions an administrative role may hold.
-///
-/// Exported so the gateway gates on the same list the services enforce, rather
-/// than keeping a second copy that can drift out of agreement with this one.
-pub const ROLE_COMMAND_PERMISSIONS: [&str; 11] = [
+/// Command permissions that io, automation, and alarm enforce themselves.
+pub const SERVICE_COMMAND_PERMISSIONS: [&str; 8] = [
     "device.control",
     "automation.rule.execute",
     "automation.rule.manage",
@@ -40,10 +37,22 @@ pub const ROLE_COMMAND_PERMISSIONS: [&str; 11] = [
     "io.channel.manage",
     "alarm.rule.manage",
     "alarm.alert.resolve",
+];
+
+/// Command permissions the gateway enforces for history and uplink, which
+/// cannot verify a caller.
+pub const GATEWAY_COMMAND_PERMISSIONS: [&str; 3] = [
     "history.config.manage",
     "uplink.config.manage",
     "uplink.message.publish",
 ];
+
+/// Edit what the gateway itself owns and an operator maintains.
+pub const GATEWAY_OPERATE: &str = "gateway.operate";
+
+/// Administer the gateway: users, configuration import, upgrade, restart,
+/// host network, logs, and pushing to every connected client.
+pub const GATEWAY_ADMINISTER: &str = "gateway.administer";
 
 /// Gateway-local capabilities that are not device or automation commands.
 pub const DATA_PROCESSING_READ: &str = "data_processing.read";
@@ -58,12 +67,15 @@ pub const DATA_PROCESSING_RUN: &str = "data_processing.run";
 /// what a role means.
 #[must_use]
 pub fn permissions_for_role(role: Option<&str>) -> Vec<&'static str> {
+    let operator = || {
+        SERVICE_COMMAND_PERMISSIONS
+            .into_iter()
+            .chain(GATEWAY_COMMAND_PERMISSIONS)
+            .chain([GATEWAY_OPERATE, DATA_PROCESSING_READ, DATA_PROCESSING_RUN])
+    };
     match role {
-        Some("Admin" | "Engineer") => ROLE_COMMAND_PERMISSIONS
-            .iter()
-            .copied()
-            .chain([DATA_PROCESSING_READ, DATA_PROCESSING_RUN])
-            .collect(),
+        Some("Admin") => operator().chain([GATEWAY_ADMINISTER]).collect(),
+        Some("Engineer") => operator().collect(),
         Some("Viewer") => vec![DATA_PROCESSING_READ],
         _ => Vec::new(),
     }

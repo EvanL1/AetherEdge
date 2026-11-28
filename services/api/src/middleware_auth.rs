@@ -119,7 +119,7 @@ pub async fn require_jwt(
 
 pub async fn require_operator(req: Request, next: Next) -> Response {
     match req.extensions().get::<crate::auth::Claims>() {
-        Some(claims) if claims.may_mutate_application_state() => next.run(req).await,
+        Some(claims) if claims.may_operate_gateway() => next.run(req).await,
         Some(claims) => crate::routes_auth::authority_denied(claims, "Engineer or Admin"),
         None => AuthFailure::AuthenticationRequired.into_response(),
     }

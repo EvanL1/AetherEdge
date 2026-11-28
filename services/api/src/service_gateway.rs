@@ -314,7 +314,7 @@ fn authorize_service_request(
     if !is_governed_mutation(service, path, method) {
         return Ok(());
     }
-    if !claims.may_mutate_application_state() {
+    if !claims.may_command_services() {
         return Err(GatewayAuthorizationError::MutationForbidden);
     }
     if headers
@@ -642,6 +642,27 @@ mod tests {
             &confirmed,
         )
         .expect("command-scoped mutation must pass");
+
+        // A permission no proxied service enforces is no reason to forward: the
+        // route might be one the service does not guard itself.
+        for permission in aether_auth_jwt::GATEWAY_COMMAND_PERMISSIONS
+            .into_iter()
+            .chain(["gateway.operate", "gateway.administer"])
+        {
+            let forbidden = authorize_service_request(
+                &scoped_claims("Admin", vec![permission]),
+                ServiceName::Alarm,
+                "rules",
+                &Method::POST,
+                &confirmed,
+            )
+            .expect_err("a gateway-only scope must not reach a proxied service");
+            assert_eq!(
+                forbidden,
+                GatewayAuthorizationError::MutationForbidden,
+                "{permission}"
+            );
+        }
 
         // Reads are never governed mutations, so a narrow scope keeps them.
         authorize_service_request(
