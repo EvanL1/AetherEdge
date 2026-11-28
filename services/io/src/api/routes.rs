@@ -251,7 +251,6 @@ impl utoipa::Modify for SecurityAddon {
                 ),
             );
         }
-        common::admin_api::document_log_level_bearer(openapi);
     }
 }
 
@@ -288,6 +287,7 @@ pub fn create_api_routes_with_channel_applications(
     channel_management: Arc<ChannelManagementApplication>,
     channel_reconciliation: Arc<ChannelReconciliationApplication>,
     point_topology: Arc<crate::point_topology::PointTopologyApplication>,
+    audit: Arc<dyn aether_ports::AuditSink>,
     access_authenticator: Arc<AccessTokenAuthenticator>,
 ) -> Router {
     let state_reconciliation = Arc::clone(&channel_reconciliation);
@@ -299,6 +299,7 @@ pub fn create_api_routes_with_channel_applications(
         ChannelManagementHttpBoundary::governed_with_reconciliation(
             channel_management,
             channel_reconciliation,
+            audit,
             access_authenticator,
         ),
         PointTopologyHttpBoundary::governed(point_topology, point_authenticator),
@@ -313,7 +314,7 @@ fn create_api_routes_with_boundary(
     point_topology: PointTopologyHttpBoundary,
 ) -> Router {
     let state = AppState::new(channel_manager, sqlite_pool, channel_reconciliation);
-    let manage = || axum::middleware::from_fn(require_channel_manager);
+    let manage = || axum::middleware::from_fn(govern_channel_write);
 
     let router = Router::new()
         // Health check (top-level for monitoring systems)
@@ -370,9 +371,7 @@ fn create_api_routes_with_boundary(
         // Admin endpoints (log level + file access)
         .route(
             "/api/admin/logs/level",
-            get(get_log_level).merge(post(set_log_level).layer(axum::middleware::from_fn(
-                require_gateway_administrator,
-            ))),
+            get(get_log_level).post(set_log_level),
         )
         .route("/api/admin/logs/files", get(list_log_files))
         .route("/api/admin/logs/view", get(view_log_file))

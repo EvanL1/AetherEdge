@@ -90,6 +90,7 @@ impl From<&crate::db::AlarmCounts> for AlarmCountSnapshot {
 #[async_trait]
 pub trait AlarmNotifier: Send + Sync {
     async fn publish_alarm(&self, notification: AlarmNotification);
-    async fn replay_alarm(&self, notification: AlarmNotification);
+    /// Returns whether the uplink accepted the replayed alarm.
+    async fn replay_alarm(&self, notification: AlarmNotification) -> bool;
     async fn publish_counts(&self, counts: AlarmCountSnapshot);
 }

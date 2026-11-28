@@ -83,7 +83,7 @@ async fn create_test_app() -> Result<axum::Router> {
         ));
     let point_topology = Arc::new(aether_io::point_topology::PointTopologyApplication::new(
         pool.clone(),
-        audit,
+        Arc::clone(&audit),
     ));
     let access_authenticator = Arc::new(
         aether_auth_jwt::AccessTokenAuthenticator::new(TEST_JWT_SECRET)
@@ -95,6 +95,7 @@ async fn create_test_app() -> Result<axum::Router> {
         channel_management,
         channel_reconciliation,
         point_topology,
+        audit,
         access_authenticator,
     );
     Ok(router)

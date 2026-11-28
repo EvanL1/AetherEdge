@@ -154,21 +154,21 @@ operation-specific authorization:
   `POST /io/api/templates/from-channel/{channel_id}`, and `PUT` or `DELETE` on
   `/io/api/templates/{id}`), the per-channel log level
   (`PUT /io/api/channels/{id}/logging`), and `POST /io/api/routing/reload`
-  require a Bearer JWT with `io.channel.manage`. They are not application
-  commands, so they take no confirmation and write no audit event; applying a
-  template to a channel is a governed, audited point change;
+  require a Bearer JWT with `io.channel.manage` and `x-aether-confirmed: true`.
+  io audits them under that capability; the event names the method and path,
+  so it identifies the template, and never the request body;
 - automation device actions accept a Bearer access JWT or the dedicated
   `AetherService <token>` uplink credential;
 - automation rule management and manual execution require an Admin or Engineer
   Bearer JWT with the capability documented for the operation;
 - alarm rule mutation and alert resolution require an Admin or Engineer Bearer
   JWT;
-- `POST /alarm/alarmApi/call-data` replays every active alert to the uplink, so
-  it is governed as an upstream publish: it requires `uplink.message.publish`
-  and `x-aether-confirmed: true`, and the alarm service audits it under that
-  capability;
-- changing the log level of io, automation, or alarm
-  (`POST /<service>/api/admin/logs/level`) requires `gateway.administer`;
+- `POST /alarm/call-data` replays every active alert to the uplink, so it is
+  governed as an upstream publish: it requires `uplink.message.publish` and
+  `x-aether-confirmed: true`, and alarm audits it under that capability. The
+  gateway forwards it, like any change to alarm, only for a token that also
+  holds a permission io, automation, or alarm enforces. It answers 502 with
+  the delivered count when the uplink does not accept every alert;
 - history configuration and storage changes (`PUT /history/config`,
   `PUT /history/storage`, `POST /history/storage/test`, and
   `POST /history/storage/reconnect`) require an Admin or Engineer Bearer JWT

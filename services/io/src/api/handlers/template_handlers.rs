@@ -609,6 +609,8 @@ pub async fn get_template(
     post,
     path = "/api/templates/from-channel/{channel_id}",
     params(
+        ("x-request-id" = Option<String>, Header, format = "uuid", description = "Optional UUID audit correlation ID; a UUID is generated when omitted or invalid"),
+        ("x-aether-confirmed" = bool, Header, description = "Required explicit confirmation; must be true"),
         ("channel_id" = u32, Path, description = "Source channel identifier to snapshot")
     ),
     request_body(
@@ -617,6 +619,8 @@ pub async fn get_template(
     ),
     responses(
         (status = 403, description = "Missing/invalid Bearer token or io.channel.manage permission"),
+        (status = 422, description = "Explicit confirmation is missing or false"),
+        (status = 503, description = "Mandatory audit is unavailable; nothing was changed"),
         (status = 200, description = "Template created from channel snapshot", body = TemplateDetail),
         (status = 404, description = "Channel not found"),
         (status = 409, description = "Template name already exists")
@@ -710,12 +714,18 @@ pub async fn create_template_from_channel(
 #[utoipa::path(
     post,
     path = "/api/templates",
+    params(
+        ("x-request-id" = Option<String>, Header, format = "uuid", description = "Optional UUID audit correlation ID; a UUID is generated when omitted or invalid"),
+        ("x-aether-confirmed" = bool, Header, description = "Required explicit confirmation; must be true"),
+    ),
     request_body(
         content = CreateTemplateReq,
         description = "Template with name, protocol, and point/mapping snapshots"
     ),
     responses(
         (status = 403, description = "Missing/invalid Bearer token or io.channel.manage permission"),
+        (status = 422, description = "Explicit confirmation is missing or false"),
+        (status = 503, description = "Mandatory audit is unavailable; nothing was changed"),
         (status = 200, description = "Template created", body = TemplateDetail),
         (status = 409, description = "Template name already exists")
     ),
@@ -780,6 +790,8 @@ pub async fn create_template(
     put,
     path = "/api/templates/{id}",
     params(
+        ("x-request-id" = Option<String>, Header, format = "uuid", description = "Optional UUID audit correlation ID; a UUID is generated when omitted or invalid"),
+        ("x-aether-confirmed" = bool, Header, description = "Required explicit confirmation; must be true"),
         ("id" = i64, Path, description = "Template identifier")
     ),
     request_body(
@@ -788,6 +800,8 @@ pub async fn create_template(
     ),
     responses(
         (status = 403, description = "Missing/invalid Bearer token or io.channel.manage permission"),
+        (status = 422, description = "Explicit confirmation is missing or false"),
+        (status = 503, description = "Mandatory audit is unavailable; nothing was changed"),
         (status = 200, description = "Template updated", body = serde_json::Value),
         (status = 404, description = "Template not found"),
         (status = 409, description = "Template name already exists")
@@ -864,10 +878,14 @@ pub async fn update_template(
     delete,
     path = "/api/templates/{id}",
     params(
+        ("x-request-id" = Option<String>, Header, format = "uuid", description = "Optional UUID audit correlation ID; a UUID is generated when omitted or invalid"),
+        ("x-aether-confirmed" = bool, Header, description = "Required explicit confirmation; must be true"),
         ("id" = i64, Path, description = "Template identifier")
     ),
     responses(
         (status = 403, description = "Missing/invalid Bearer token or io.channel.manage permission"),
+        (status = 422, description = "Explicit confirmation is missing or false"),
+        (status = 503, description = "Mandatory audit is unavailable; nothing was changed"),
         (status = 200, description = "Template deleted", body = serde_json::Value),
         (status = 404, description = "Template not found")
     ),

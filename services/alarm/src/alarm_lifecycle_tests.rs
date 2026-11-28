@@ -42,7 +42,9 @@ impl AlarmNotifier for Notifications {
             .push(notification.status);
     }
 
-    async fn replay_alarm(&self, _notification: AlarmNotification) {}
+    async fn replay_alarm(&self, _notification: AlarmNotification) -> bool {
+        true
+    }
 
     async fn publish_counts(&self, counts: AlarmCountSnapshot) {
         self.counts.lock().expect("counts").push(counts.total);

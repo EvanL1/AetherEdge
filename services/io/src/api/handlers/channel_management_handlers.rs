@@ -13,14 +13,14 @@ use std::{collections::BTreeMap, sync::Arc};
 use aether_application::{
     ApplicationError, ChannelManagementApplication, ChannelMutationAcceptance,
     ChannelReconciliationAcceptance, ChannelReconciliationApplication, CompletionAuditStatus,
-    MANAGE_CHANNEL_CAPABILITY,
+    MANAGE_CHANNEL_CAPABILITY, RequestContext, SafetyPolicy,
 };
 use aether_auth_jwt::AccessTokenAuthenticator;
 use aether_domain::{ChannelId, TimestampMs};
 use aether_ports::{
-    ChannelDefinition, ChannelLoggingPolicy, ChannelMutation, ChannelMutationKind,
-    ChannelParameterValue, ChannelParameters, ChannelPatch, ChannelReconciliationScope,
-    ChannelRevision, ChannelRuntimeProjection, PortErrorKind,
+    AuditOutcome, AuditRecord, AuditSink, ChannelDefinition, ChannelLoggingPolicy, ChannelMutation,
+    ChannelMutationKind, ChannelParameterValue, ChannelParameters, ChannelPatch,
+    ChannelReconciliationScope, ChannelRevision, ChannelRuntimeProjection, PortErrorKind,
 };
 use axum::{
     Extension,
@@ -54,6 +54,7 @@ pub struct ChannelManagementHttpBoundary {
 struct GovernedChannelManagement {
     application: Arc<ChannelManagementApplication>,
     reconciliation: Option<Arc<ChannelReconciliationApplication>>,
+    audit: Arc<dyn AuditSink>,
     access_authenticator: Arc<AccessTokenAuthenticator>,
 }
 
@@ -62,12 +63,14 @@ impl ChannelManagementHttpBoundary {
     #[must_use]
     pub fn governed(
         application: Arc<ChannelManagementApplication>,
+        audit: Arc<dyn AuditSink>,
         access_authenticator: Arc<AccessTokenAuthenticator>,
     ) -> Self {
         Self {
             inner: Some(GovernedChannelManagement {
                 application,
                 reconciliation: None,
+                audit,
                 access_authenticator,
             }),
         }
@@ -79,12 +82,14 @@ impl ChannelManagementHttpBoundary {
     pub fn governed_with_reconciliation(
         application: Arc<ChannelManagementApplication>,
         reconciliation: Arc<ChannelReconciliationApplication>,
+        audit: Arc<dyn AuditSink>,
         access_authenticator: Arc<AccessTokenAuthenticator>,
     ) -> Self {
         Self {
             inner: Some(GovernedChannelManagement {
                 application,
                 reconciliation: Some(reconciliation),
+                audit,
                 access_authenticator,
             }),
         }
@@ -94,28 +99,6 @@ impl ChannelManagementHttpBoundary {
     #[must_use]
     pub const fn unavailable() -> Self {
         Self { inner: None }
-    }
-
-    fn require_permission(&self, headers: &HeaderMap, permission: &str) -> Result<(), AppError> {
-        let governed = self.inner.as_ref().ok_or_else(|| {
-            http_error(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "Channel-management application boundary is unavailable",
-            )
-        })?;
-        let holds = headers
-            .get(header::AUTHORIZATION)
-            .and_then(|value| value.to_str().ok())
-            .and_then(|value| governed.access_authenticator.authenticate(value).ok())
-            .is_some_and(|actor| actor.has_permission(permission));
-        if holds {
-            Ok(())
-        } else {
-            Err(http_error(
-                StatusCode::FORBIDDEN,
-                format!("A Bearer token holding {permission} is required"),
-            ))
-        }
     }
 
     pub(super) async fn mutate(
@@ -194,46 +177,122 @@ impl ChannelManagementHttpBoundary {
     }
 }
 
-/// Gate for writes that are not application commands: channel templates,
-/// per-channel log level, and the routing cache reload.
-pub async fn require_channel_manager(
+/// Governs the writes that have no application command of their own: channel
+/// templates, the per-channel log level, and the routing cache reload.
+pub async fn govern_channel_write(
     Extension(boundary): Extension<ChannelManagementHttpBoundary>,
     request: Request,
     next: Next,
 ) -> Response {
-    gate(
-        &boundary,
-        MANAGE_CHANNEL_CAPABILITY.required_permission(),
-        request,
-        next,
-    )
-    .await
-}
+    let Some(governed) = boundary.inner else {
+        return http_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Channel-management application boundary is unavailable",
+        )
+        .into_response();
+    };
+    let write = {
+        let header = |name: &str| {
+            request
+                .headers()
+                .get(name)
+                .and_then(|value| value.to_str().ok())
+        };
+        let timestamp = chrono::Utc::now().timestamp_millis().max(0) as u64;
+        let invocation = governed.access_authenticator.invocation(
+            header(header::AUTHORIZATION.as_str()),
+            header(REQUEST_ID_HEADER),
+            header(CONFIRMATION_HEADER)
+                .is_some_and(|value| value.trim().eq_ignore_ascii_case("true")),
+            TimestampMs::new(timestamp),
+        );
+        GovernedWrite {
+            audit: governed.audit,
+            context: invocation.context().clone(),
+            operation: format!("{} {}", request.method(), request.uri().path()),
+        }
+    };
 
-pub async fn require_gateway_administrator(
-    Extension(boundary): Extension<ChannelManagementHttpBoundary>,
-    request: Request,
-    next: Next,
-) -> Response {
-    gate(
-        &boundary,
-        aether_auth_jwt::GATEWAY_ADMINISTER,
-        request,
-        next,
-    )
-    .await
-}
-
-async fn gate(
-    boundary: &ChannelManagementHttpBoundary,
-    permission: &str,
-    request: Request,
-    next: Next,
-) -> Response {
-    match boundary.require_permission(request.headers(), permission) {
-        Ok(()) => next.run(request).await,
-        Err(error) => error.into_response(),
+    if let Err(denied) = SafetyPolicy.authorize(MANAGE_CHANNEL_CAPABILITY, &write.context) {
+        let rejected = write
+            .record(AuditOutcome::Rejected, Some(&denied.to_string()))
+            .await;
+        return match rejected {
+            Ok(()) => application_error(denied).into_response(),
+            Err(()) => write_audit_unavailable(),
+        };
     }
+    if write.record(AuditOutcome::Attempted, None).await.is_err() {
+        return write_audit_unavailable();
+    }
+
+    // Detached so a caller that disconnects cannot skip the terminal record.
+    let finished = tokio::spawn(async move {
+        let mut response = next.run(request).await;
+        let status = response.status();
+        let terminal = if status.is_success() {
+            write.record(AuditOutcome::Succeeded, None).await
+        } else {
+            let failure = format!("response_status={}", status.as_u16());
+            write.record(AuditOutcome::Failed, Some(&failure)).await
+        };
+        let audit = if terminal.is_ok() {
+            "recorded"
+        } else {
+            "incomplete"
+        };
+        let headers = response.headers_mut();
+        headers.insert(
+            "x-aether-audit",
+            axum::http::HeaderValue::from_static(audit),
+        );
+        if let Ok(request_id) = axum::http::HeaderValue::from_str(write.context.request_id()) {
+            headers.insert(REQUEST_ID_HEADER, request_id);
+        }
+        response
+    });
+    finished.await.unwrap_or_else(|error| {
+        tracing::error!(error = %error, "governed channel write task failed");
+        AppError::internal_error("Channel write failed").into_response()
+    })
+}
+
+struct GovernedWrite {
+    audit: Arc<dyn AuditSink>,
+    context: RequestContext,
+    operation: String,
+}
+
+impl GovernedWrite {
+    /// Records one outcome. The request body never reaches the audit trail.
+    async fn record(&self, outcome: AuditOutcome, failure: Option<&str>) -> Result<(), ()> {
+        let operation = &self.operation;
+        let detail = failure.map_or_else(
+            || format!("operation={operation}"),
+            |failure| format!("operation={operation}; {failure}"),
+        );
+        self.audit
+            .record(AuditRecord::new(
+                self.context.request_id(),
+                self.context.actor().id(),
+                MANAGE_CHANNEL_CAPABILITY.name(),
+                outcome,
+                self.context.timestamp(),
+                Some(detail),
+            ))
+            .await
+            .map_err(|error| {
+                tracing::error!(
+                    request_id = self.context.request_id(),
+                    error = %error,
+                    "channel write audit could not be recorded"
+                );
+            })
+    }
+}
+
+fn write_audit_unavailable() -> Response {
+    AppError::service_unavailable("Mandatory channel write audit is unavailable").into_response()
 }
 
 /// Create one commissioned channel. The desired enabled state defaults to
