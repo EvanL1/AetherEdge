@@ -88,6 +88,7 @@ pub async fn get_measurement_point(
         (status = 404, description = "Instance not found"),
         (status = 500, description = "Database error")
     ),
+    security(("bearer_auth" = [])),
     tag = "automation"
 )]
 pub async fn upsert_measurement_routing(
@@ -133,6 +134,7 @@ pub async fn upsert_measurement_routing(
         (status = 404, description = "Instance or routing not found"),
         (status = 500, description = "Database error")
     ),
+    security(("bearer_auth" = [])),
     tag = "automation"
 )]
 pub async fn delete_measurement_routing(
@@ -186,6 +188,7 @@ pub async fn delete_measurement_routing(
         (status = 404, description = "Instance or routing not found"),
         (status = 500, description = "Database error")
     ),
+    security(("bearer_auth" = [])),
     tag = "automation"
 )]
 pub async fn toggle_measurement_routing(

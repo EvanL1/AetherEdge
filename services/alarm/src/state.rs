@@ -19,5 +19,6 @@ pub struct AppState {
     pub monitor_status: Arc<RwLock<MonitorStatus>>,
     pub rule_application: Arc<aether_application::AlarmRuleApplication>,
     pub alert_resolution_application: Arc<aether_application::AlertResolutionApplication>,
+    pub command_audit: Arc<dyn aether_ports::AuditSink>,
     pub access_authenticator: Arc<aether_auth_jwt::AccessTokenAuthenticator>,
 }

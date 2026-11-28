@@ -169,6 +169,7 @@ impl utoipa::Modify for SecurityAddon {
                 ),
             );
         }
+        common::admin_api::document_log_level_bearer(openapi);
     }
 }
 
@@ -179,6 +180,33 @@ pub fn openapi_document() -> utoipa::openapi::OpenApi {
 }
 
 /// Create all API routes for the Model Service
+async fn require_gateway_administrator(
+    axum::extract::State(state): axum::extract::State<Arc<AppState>>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    let administers = request
+        .headers()
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| state.control_authenticator.authenticate(value).ok())
+        .is_some_and(|actor| actor.has_permission(aether_auth_jwt::GATEWAY_ADMINISTER));
+    if administers {
+        next.run(request).await
+    } else {
+        (
+            axum::http::StatusCode::FORBIDDEN,
+            axum::Json(serde_json::json!({
+                "success": false,
+                "message": "A Bearer token holding gateway.administer is required",
+            })),
+        )
+            .into_response()
+    }
+}
+
 pub fn create_routes(state: Arc<AppState>) -> Router {
     Router::new()
         // Health check
@@ -252,7 +280,12 @@ pub fn create_routes(state: Arc<AppState>) -> Router {
         // Admin endpoints (log level + file access)
         .route(
             "/api/admin/logs/level",
-            get(get_log_level).post(set_log_level),
+            get(get_log_level).merge(post(set_log_level).layer(
+                axum::middleware::from_fn_with_state(
+                    Arc::clone(&state),
+                    require_gateway_administrator,
+                ),
+            )),
         )
         .route("/api/admin/logs/files", get(list_log_files))
         .route("/api/admin/logs/view", get(view_log_file))
@@ -270,6 +303,33 @@ mod openapi_tests {
     fn document() -> serde_json::Value {
         let openapi = AutomationApiDoc::openapi().nest("", RuleApiDoc::openapi());
         serde_json::to_value(openapi).expect("OpenAPI document should serialize")
+    }
+
+    #[test]
+    fn every_documented_write_requires_a_credential() {
+        let document = document();
+        let mut writes = 0;
+        let mut open = Vec::new();
+        for (path, operations) in document["paths"].as_object().expect("paths") {
+            for (method, operation) in operations.as_object().expect("operations") {
+                if !matches!(method.as_str(), "post" | "put" | "patch" | "delete") {
+                    continue;
+                }
+                writes += 1;
+                let declared = operation["security"].as_array().is_some_and(|schemes| {
+                    !schemes.is_empty()
+                        && schemes.iter().all(|scheme| {
+                            scheme.get("bearer_auth").is_some()
+                                || scheme.get("aether_service_auth").is_some()
+                        })
+                });
+                if !declared {
+                    open.push(format!("{method} {path}"));
+                }
+            }
+        }
+        assert!(writes >= 10, "the sweep saw only {writes} writes");
+        assert!(open.is_empty(), "writes without a credential: {open:#?}");
     }
 
     #[test]

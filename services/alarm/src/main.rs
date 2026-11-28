@@ -93,7 +93,7 @@ async fn main() -> anyhow::Result<()> {
     let alert_resolution_application =
         Arc::new(aether_application::AlertResolutionApplication::new(
             resolver,
-            audit,
+            Arc::clone(&audit),
             aether_application::SafetyPolicy,
         ));
 
@@ -113,6 +113,7 @@ async fn main() -> anyhow::Result<()> {
         monitor_status,
         rule_application,
         alert_resolution_application,
+        command_audit: audit,
         access_authenticator,
     });
 

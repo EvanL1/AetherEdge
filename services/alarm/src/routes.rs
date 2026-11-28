@@ -61,7 +61,15 @@ pub fn create_routes(state: Arc<AppState>) -> Router {
         .route("/alarmApi/monitor/check-rule/{id}", post(manual_check_rule))
         .route("/alarmApi/call-data", post(call_data))
         // Admin API (shared endpoints from common lib)
-        .route("/api/admin/logs/level", get(common::admin_api::get_log_level).post(common::admin_api::set_log_level))
+        .route(
+            "/api/admin/logs/level",
+            get(common::admin_api::get_log_level).merge(
+                post(common::admin_api::set_log_level).layer(axum::middleware::from_fn_with_state(
+                    Arc::clone(&state),
+                    require_gateway_administrator,
+                )),
+            ),
+        )
         .route("/api/admin/logs/files", get(common::admin_api::list_log_files))
         .route("/api/admin/logs/view", get(common::admin_api::view_log_file))
         .with_state(state);
@@ -166,6 +174,7 @@ impl utoipa::Modify for SecurityAddon {
                 ),
             );
         }
+        common::admin_api::document_log_level_bearer(openapi);
     }
 }
 
@@ -175,6 +184,31 @@ mod openapi_tests {
 
     fn specification() -> Value {
         serde_json::to_value(ApiDoc::openapi()).expect("serialize OpenAPI")
+    }
+
+    #[test]
+    fn every_documented_write_requires_a_bearer_token() {
+        // A diagnostic evaluation: it reads one rule and changes nothing.
+        const READ_ONLY: [&str; 1] = ["post /alarmApi/monitor/check-rule/{id}"];
+        let specification = specification();
+        let mut writes = 0;
+        let mut open = Vec::new();
+        for (path, operations) in specification["paths"].as_object().expect("paths") {
+            for (method, operation) in operations.as_object().expect("operations") {
+                let name = format!("{method} {path}");
+                if !matches!(method.as_str(), "post" | "put" | "patch" | "delete")
+                    || READ_ONLY.contains(&name.as_str())
+                {
+                    continue;
+                }
+                writes += 1;
+                if operation["security"][0].get("bearer_auth").is_none() {
+                    open.push(name);
+                }
+            }
+        }
+        assert!(writes >= 8, "the sweep saw only {writes} writes");
+        assert!(open.is_empty(), "writes without bearer_auth: {open:#?}");
     }
 
     fn resolve_schema<'a>(specification: &'a Value, schema: &'a Value) -> &'a Value {
@@ -1118,36 +1152,115 @@ async fn manual_check_rule(
     }
 }
 
-/// Rebroadcast all currently active alerts to the WebSocket.
+/// Replay every active alert to the uplink and refresh the alarm counters.
 ///
-/// Doesn't change any state — re-publishes the current active alert set on
-/// the broadcast channel and refreshes the alarm-count counter. Used when a
-/// frontend client reconnects or wakes up after sleep and needs to catch up
-/// without polling individual endpoints.
+/// This publishes site data off the host, so it is governed as
+/// `uplink.message.publish`: it needs that permission and explicit
+/// confirmation, and it is audited from attempt to outcome.
 #[utoipa::path(post, path = "/alarmApi/call-data", tag = "Monitor",
-    responses((status = 200, description = "Broadcast all active alerts")))]
-async fn call_data(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let alerts = match db::get_all_active_alerts(&state.db).await {
-        Ok(a) => a,
-        Err(e) => {
-            error!("call_data get alerts: {}", e);
-            return server_error("Failed to get alerts");
+    params(
+        ("x-request-id" = Option<String>, Header, format = "uuid", description = "Optional UUID audit correlation ID; a UUID is generated when omitted or invalid"),
+        ("x-aether-confirmed" = bool, Header, description = "Required explicit confirmation; must be true")
+    ),
+    responses(
+        (status = 200, description = "Active alerts replayed; the response carries request_id and the audit state"),
+        (status = 403, description = "Missing/invalid Bearer token or uplink.message.publish permission"),
+        (status = 422, description = "Explicit confirmation is required"),
+        (status = 500, description = "Active alerts could not be read; nothing was replayed"),
+        (status = 503, description = "Mandatory audit is unavailable; nothing was replayed")
+    ),
+    security(("bearer_auth" = []))
+)]
+async fn call_data(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    let header = |name: &str| headers.get(name).and_then(|value| value.to_str().ok());
+    let timestamp = chrono::Utc::now().timestamp_millis().max(0) as u64;
+    let invocation = state.access_authenticator.invocation(
+        header(header::AUTHORIZATION.as_str()),
+        header("x-request-id"),
+        header("x-aether-confirmed").is_some_and(|value| value.trim().eq_ignore_ascii_case("true")),
+        aether_domain::TimestampMs::new(timestamp),
+    );
+    let context = invocation.context();
+    let capability = aether_application::PUBLISH_UPLINK_MESSAGE_CAPABILITY;
+    let record = |outcome, failure: Option<String>| {
+        let detail = failure.map_or_else(
+            || "operation=alarm.replay".to_owned(),
+            |failure| format!("operation=alarm.replay; {failure}"),
+        );
+        state.command_audit.record(aether_ports::AuditRecord::new(
+            context.request_id(),
+            context.actor().id(),
+            capability.name(),
+            outcome,
+            context.timestamp(),
+            Some(detail),
+        ))
+    };
+    let audit_unavailable = |error: aether_ports::PortError| {
+        error!(error = %error, "mandatory alarm replay audit unavailable");
+        error_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Mandatory alarm replay audit is unavailable",
+        )
+    };
+
+    if let Err(denied) = aether_application::SafetyPolicy.authorize(capability, context) {
+        let rejected = record(
+            aether_ports::AuditOutcome::Rejected,
+            Some(denied.to_string()),
+        );
+        return match rejected.await {
+            Ok(()) => application_error_response(denied),
+            Err(error) => audit_unavailable(error),
+        };
+    }
+    if let Err(error) = record(aether_ports::AuditOutcome::Attempted, None).await {
+        return audit_unavailable(error);
+    }
+
+    let replayed = replay_active_alerts(&state).await;
+    let terminal = match &replayed {
+        Ok(_) => record(aether_ports::AuditOutcome::Succeeded, None).await,
+        Err(failure) => {
+            record(
+                aether_ports::AuditOutcome::Failed,
+                Some((*failure).to_owned()),
+            )
+            .await
+        },
+    };
+    let audit = match terminal {
+        Ok(()) => "recorded",
+        Err(error) => {
+            error!(
+                request_id = context.request_id(),
+                error = %error,
+                "alarm replay ran but its terminal audit is incomplete; do not retry"
+            );
+            "incomplete"
         },
     };
 
-    if alerts.is_empty() {
-        if let Ok(counts) = db::get_active_alarm_counts(&state.db).await {
-            state
-                .notifier
-                .publish_counts(AlarmCountSnapshot::from(&counts))
-                .await;
-        }
-        return Json(ApiResponse::ok(
-            "No active alerts",
-            json!({ "broadcast_count": 0, "alarm_count": 0 }),
+    match replayed {
+        Ok(count) => Json(ApiResponse::ok(
+            format!("Broadcast complete: {count} alert(s)"),
+            json!({
+                "broadcast_count": count,
+                "alarm_count": count,
+                "request_id": context.request_id(),
+                "audit": { "status": audit, "retryable": false },
+            }),
         ))
-        .into_response();
+        .into_response(),
+        Err(_) => server_error("Failed to get alerts"),
     }
+}
+
+async fn replay_active_alerts(state: &AppState) -> Result<usize, &'static str> {
+    let alerts = db::get_all_active_alerts(&state.db).await.map_err(|e| {
+        error!("call_data get alerts: {}", e);
+        "active alerts could not be read"
+    })?;
 
     let mut rule_map: HashMap<i64, crate::models::AlertRule> = HashMap::new();
     for alert in &alerts {
@@ -1158,7 +1271,6 @@ async fn call_data(State(state): State<Arc<AppState>>) -> impl IntoResponse {
         }
     }
 
-    let alarm_count = alerts.len();
     for alert in &alerts {
         if let Some(rule) = rule_map.get(&alert.rule_id) {
             state
@@ -1179,14 +1291,28 @@ async fn call_data(State(state): State<Arc<AppState>>) -> impl IntoResponse {
             .await;
     }
 
-    Json(ApiResponse::ok(
-        format!("Broadcast complete: {} alert(s)", alarm_count),
-        json!({
-            "broadcast_count": alarm_count,
-            "alarm_count": alarm_count,
-        }),
-    ))
-    .into_response()
+    Ok(alerts.len())
+}
+
+async fn require_gateway_administrator(
+    State(state): State<Arc<AppState>>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let administers = request
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| state.access_authenticator.authenticate(value).ok())
+        .is_some_and(|actor| actor.has_permission(aether_auth_jwt::GATEWAY_ADMINISTER));
+    if administers {
+        next.run(request).await
+    } else {
+        error_response(
+            StatusCode::FORBIDDEN,
+            "A Bearer token holding gateway.administer is required",
+        )
+    }
 }
 
 // ============================================================================
@@ -1484,12 +1610,19 @@ mod tests {
     }
 
     fn access_token() -> String {
+        scoped_token(
+            "Engineer",
+            aether_auth_jwt::permissions_for_role(Some("Engineer")),
+        )
+    }
+
+    fn scoped_token(role: &str, scope: Vec<&'static str>) -> String {
         encode(
             &Header::new(Algorithm::HS256),
             &AccessClaims {
                 user_id: 17,
-                role: "Engineer",
-                scope: aether_auth_jwt::permissions_for_role(Some("Engineer")),
+                role,
+                scope,
                 token_type: "access",
                 exp: 4_102_444_800,
                 iat: 1,
@@ -1524,6 +1657,205 @@ mod tests {
         fn watched_slot(&self, _rule: &AlertRule) -> PortResult<Option<usize>> {
             Ok(None)
         }
+    }
+
+    #[derive(Default)]
+    struct CountingNotifier {
+        published: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::notification::AlarmNotifier for CountingNotifier {
+        async fn publish_alarm(&self, _notification: crate::notification::AlarmNotification) {}
+
+        async fn replay_alarm(&self, _notification: crate::notification::AlarmNotification) {}
+
+        async fn publish_counts(&self, _counts: AlarmCountSnapshot) {
+            self.published
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    struct UnavailableAudit;
+
+    #[async_trait::async_trait]
+    impl aether_ports::AuditSink for UnavailableAudit {
+        async fn record(&self, _record: aether_ports::AuditRecord) -> PortResult<()> {
+            Err(aether_ports::PortError::new(
+                aether_ports::PortErrorKind::Unavailable,
+                "audit store offline",
+            ))
+        }
+    }
+
+    struct ReplayFixture {
+        state: Arc<AppState>,
+        notifier: Arc<CountingNotifier>,
+        audit: Arc<aether_store_local::MemoryAuditSink>,
+    }
+
+    impl ReplayFixture {
+        async fn new() -> Self {
+            let notifier = Arc::new(CountingNotifier::default());
+            let audit = Arc::new(aether_store_local::MemoryAuditSink::new());
+            let mut state = Arc::try_unwrap(test_state().await)
+                .unwrap_or_else(|_| panic!("the test state has one owner"));
+            state.notifier = notifier.clone();
+            state.command_audit = audit.clone();
+            Self {
+                state: Arc::new(state),
+                notifier,
+                audit,
+            }
+        }
+
+        async fn replay(&self, token: Option<String>, confirmed: bool) -> Response {
+            let mut request = Request::post("/alarmApi/call-data");
+            if let Some(token) = token {
+                request = request.header("authorization", format!("Bearer {token}"));
+            }
+            if confirmed {
+                request = request.header("x-aether-confirmed", "true");
+            }
+            create_routes(Arc::clone(&self.state))
+                .oneshot(request.body(Body::empty()).expect("request"))
+                .await
+                .expect("response")
+        }
+
+        fn published(&self) -> usize {
+            self.notifier
+                .published
+                .load(std::sync::atomic::Ordering::SeqCst)
+        }
+
+        fn outcomes(&self) -> Vec<(String, aether_ports::AuditOutcome)> {
+            self.audit
+                .records()
+                .expect("audit records")
+                .iter()
+                .map(|record| (record.capability().to_owned(), record.outcome()))
+                .collect()
+        }
+    }
+
+    #[tokio::test]
+    async fn replaying_active_alarms_needs_the_uplink_publish_permission() {
+        for token in [
+            None,
+            Some("not-a-token".to_owned()),
+            Some(scoped_token(
+                "Viewer",
+                aether_auth_jwt::permissions_for_role(Some("Viewer")),
+            )),
+            Some(scoped_token("Engineer", vec!["alarm.alert.resolve"])),
+            Some(scoped_token("Viewer", vec!["uplink.message.publish"])),
+        ] {
+            let fixture = ReplayFixture::new().await;
+            let response = fixture.replay(token.clone(), true).await;
+
+            assert_eq!(response.status(), StatusCode::FORBIDDEN, "{token:?}");
+            assert_eq!(fixture.published(), 0, "{token:?}");
+            assert_eq!(
+                fixture.outcomes(),
+                vec![(
+                    "uplink.message.publish".to_owned(),
+                    aether_ports::AuditOutcome::Rejected
+                )],
+                "{token:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn replaying_active_alarms_needs_explicit_confirmation() {
+        let fixture = ReplayFixture::new().await;
+        let response = fixture.replay(Some(access_token()), false).await;
+
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(fixture.published(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_confirmed_replay_is_audited_from_attempt_to_outcome() {
+        let fixture = ReplayFixture::new().await;
+        let narrowed = scoped_token("Engineer", vec!["uplink.message.publish"]);
+        let response = fixture.replay(Some(narrowed), true).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(fixture.published(), 1);
+        let publish = "uplink.message.publish".to_owned();
+        assert_eq!(
+            fixture.outcomes(),
+            vec![
+                (publish.clone(), aether_ports::AuditOutcome::Attempted),
+                (publish, aether_ports::AuditOutcome::Succeeded),
+            ]
+        );
+        let payload: Value = serde_json::from_slice(
+            &to_bytes(response.into_body(), usize::MAX)
+                .await
+                .expect("response body"),
+        )
+        .expect("response JSON");
+        assert_eq!(payload["data"]["audit"]["status"], "recorded");
+        assert!(payload["data"]["request_id"].is_string());
+    }
+
+    #[tokio::test]
+    async fn a_replay_that_cannot_be_audited_publishes_nothing() {
+        let mut fixture = ReplayFixture::new().await;
+        let mut state = Arc::try_unwrap(fixture.state)
+            .unwrap_or_else(|_| panic!("the fixture state has one owner"));
+        state.command_audit = Arc::new(UnavailableAudit);
+        fixture.state = Arc::new(state);
+
+        for (token, confirmed) in [(Some(access_token()), true), (None, true)] {
+            let response = fixture.replay(token, confirmed).await;
+            assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        }
+        assert_eq!(fixture.published(), 0);
+    }
+
+    #[tokio::test]
+    async fn changing_the_alarm_log_level_requires_a_gateway_administrator() {
+        let state = test_state().await;
+        for token in [
+            None,
+            Some(access_token()),
+            Some(scoped_token("Admin", vec!["alarm.rule.manage"])),
+        ] {
+            let mut request =
+                Request::post("/api/admin/logs/level").header("content-type", "application/json");
+            if let Some(token) = &token {
+                request = request.header("authorization", format!("Bearer {token}"));
+            }
+            let response = create_routes(Arc::clone(&state))
+                .oneshot(
+                    request
+                        .body(Body::from(r#"{"level":"info"}"#))
+                        .expect("request"),
+                )
+                .await
+                .expect("response");
+            assert_eq!(response.status(), StatusCode::FORBIDDEN, "{token:?}");
+        }
+
+        let admin = scoped_token(
+            "Admin",
+            aether_auth_jwt::permissions_for_role(Some("Admin")),
+        );
+        let response = create_routes(state)
+            .oneshot(
+                Request::post("/api/admin/logs/level")
+                    .header("content-type", "application/json")
+                    .header("authorization", format!("Bearer {admin}"))
+                    .body(Body::from("{}"))
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
     }
 
     async fn test_state() -> Arc<AppState> {
@@ -1567,10 +1899,11 @@ mod tests {
             alert_resolution_application: Arc::new(
                 aether_application::AlertResolutionApplication::new(
                     alarm_store,
-                    audit,
+                    Arc::clone(&audit),
                     aether_application::SafetyPolicy,
                 ),
             ),
+            command_audit: audit,
             access_authenticator: Arc::new(
                 aether_auth_jwt::AccessTokenAuthenticator::new(TEST_JWT_SECRET)
                     .expect("valid test JWT secret"),

@@ -197,13 +197,20 @@ struct AccessClaims<'a> {
 }
 
 fn access_token() -> String {
+    scoped_token(
+        "Engineer",
+        aether_auth_jwt::permissions_for_role(Some("Engineer")),
+    )
+}
+
+fn scoped_token(role: &str, scope: Vec<&'static str>) -> String {
     let now = chrono::Utc::now().timestamp();
     encode(
         &Header::new(Algorithm::HS256),
         &AccessClaims {
             user_id: 7,
-            role: "Engineer",
-            scope: aether_auth_jwt::permissions_for_role(Some("Engineer")),
+            role,
+            scope,
             exp: (now + 3_600) as usize,
             iat: now as usize,
             token_type: "access",
@@ -292,6 +299,45 @@ fn route(instance_id: u32, action_id: u32, channel_id: u32, point_id: u32) -> Ac
         .expect("command-owned destination"),
         true,
     )
+}
+
+#[tokio::test]
+async fn changing_the_service_log_level_requires_a_gateway_administrator() {
+    let fixture = RoutingFixture::complete().await;
+    let send = |token: Option<String>, body: &'static str| {
+        let mut request =
+            Request::post("/api/admin/logs/level").header("content-type", "application/json");
+        if let Some(token) = token {
+            request = request.header("authorization", format!("Bearer {token}"));
+        }
+        request.body(Body::from(body)).expect("request")
+    };
+
+    for token in [
+        None,
+        Some(access_token()),
+        Some(scoped_token("Admin", vec!["automation.rule.manage"])),
+    ] {
+        let response = fixture
+            .router()
+            .await
+            .oneshot(send(token.clone(), r#"{"level":"info"}"#))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::FORBIDDEN, "{token:?}");
+    }
+
+    let admin = scoped_token(
+        "Admin",
+        aether_auth_jwt::permissions_for_role(Some("Admin")),
+    );
+    let response = fixture
+        .router()
+        .await
+        .oneshot(send(Some(admin), "{}"))
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
 }
 
 #[tokio::test]

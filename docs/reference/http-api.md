@@ -116,8 +116,8 @@ through the gateway as `/io/api/audit/events` and
 Events come back newest first, and `total` counts every match rather than the
 returned page. Rejected commands are recorded too, so a refused attempt is
 visible rather than absent. An unrecognised `outcome` is a 400 rather than an
-ignored filter, because silently widening an audit query answers a narrower
-question than the one asked.
+ignored filter, because silently widening an audit query answers a different
+question from the one asked.
 
 Every access token carries a required `scope` claim listing the permissions it
 may exercise. The role remains the ceiling and the scope selects within it, so
@@ -150,12 +150,25 @@ operation-specific authorization:
 
 - io channel create, update, delete, enable, and disable require an Admin or
   Engineer Bearer JWT with `io.channel.manage`;
+- io channel templates (`POST /io/api/templates`,
+  `POST /io/api/templates/from-channel/{channel_id}`, and `PUT` or `DELETE` on
+  `/io/api/templates/{id}`), the per-channel log level
+  (`PUT /io/api/channels/{id}/logging`), and `POST /io/api/routing/reload`
+  require a Bearer JWT with `io.channel.manage`. They are not application
+  commands, so they take no confirmation and write no audit event; applying a
+  template to a channel is a governed, audited point change;
 - automation device actions accept a Bearer access JWT or the dedicated
   `AetherService <token>` uplink credential;
 - automation rule management and manual execution require an Admin or Engineer
   Bearer JWT with the capability documented for the operation;
 - alarm rule mutation and alert resolution require an Admin or Engineer Bearer
   JWT;
+- `POST /alarm/alarmApi/call-data` replays every active alert to the uplink, so
+  it is governed as an upstream publish: it requires `uplink.message.publish`
+  and `x-aether-confirmed: true`, and the alarm service audits it under that
+  capability;
+- changing the log level of io, automation, or alarm
+  (`POST /<service>/api/admin/logs/level`) requires `gateway.administer`;
 - history configuration and storage changes (`PUT /history/config`,
   `PUT /history/storage`, `POST /history/storage/test`, and
   `POST /history/storage/reconnect`) require an Admin or Engineer Bearer JWT
